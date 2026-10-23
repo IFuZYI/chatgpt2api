@@ -383,11 +383,20 @@ func readSSEPayloads(body io.Reader, out chan<- string) error {
 }
 
 // StreamImage 实现 protocol.ImageUpstream.StreamImage：
-// 走图片专用链路并把 SSE payload 转成 channel。
+// 按模型分流到两条独立链路，并把 SSE payload 转成 channel。
+//
+//   - codex 系列（codex-gpt-image-2 及 plus-/team-/pro- 前缀别名）
+//     → /backend-api/codex/responses（Responses 协议，图片内联 base64）
+//   - 其余图片模型 → /backend-api/f/conversation（prepare → generate）
 func (c *Client) StreamImage(
 	ctx context.Context,
 	request protocol.ImageStreamRequest,
 ) (<-chan string, <-chan error, error) {
+	if protocol.IsCodexImageModel(request.Model) {
+		return c.streamCodexImage(ctx, request.Prompt, request.Model, request.Images,
+			request.Size, request.Quality, request.Progress)
+	}
+
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, nil, err
 	}

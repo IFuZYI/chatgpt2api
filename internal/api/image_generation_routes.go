@@ -166,7 +166,7 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 	pool := &protocol.ImagePool{
 		Parallel: d.Config.ImageParallelGeneration(),
 		Acquire: func(ctx context.Context, index int) (*protocol.ImageGenerator, func(), error) {
-			return d.acquireImageGenerator(ctx, index)
+			return d.acquireImageGenerator(ctx, request.Model, index)
 		},
 	}
 
@@ -193,14 +193,40 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 	c.JSON(http.StatusOK, collected)
 }
 
+// imageSlotOptions 复刻 Python _generate_single_image 的取号条件：
+//
+//	plan_type, _ := split_image_model(request.model)
+//	codex_model := is_codex_image_model(request.model)
+//	get_available_access_token(
+//	    plan_type=plan_type,
+//	    source_type="codex" if codex_model else None,
+//	    plan_types=("plus", "team", "pro") if codex_model and not plan_type else None,
+//	)
+//
+// codex 链路必须只挑 source_type=codex 的号：Codex 端点用的是 Codex 那份额度，
+// 拿 web 号去打会 401/403，或者扣到 web 额度上。
+// 带套餐前缀的别名（team-codex-gpt-image-2）已经指定了套餐，就不再叠加 plan_types。
+func imageSlotOptions(model string) service.SlotOptions {
+	planType, _ := protocol.SplitImageModel(model)
+	if !protocol.IsCodexImageModel(model) {
+		return service.SlotOptions{PlanType: planType}
+	}
+	opts := service.SlotOptions{PlanType: planType, SourceType: service.SourceCodex}
+	if planType == "" {
+		opts.PlanTypes = []string{"plus", "team", "pro"}
+	}
+	return opts
+}
+
 // acquireImageGenerator 取一个账号槽位并构造 generator。
-func (d *Deps) acquireImageGenerator(ctx context.Context, index int) (*protocol.ImageGenerator, func(), error) {
+//
+// model 参与取号筛选（codex 模型要挑 codex 来源的号），必须由调用方传入。
+func (d *Deps) acquireImageGenerator(ctx context.Context, model string, index int) (*protocol.ImageGenerator, func(), error) {
 	if d.ImageUpstream == nil {
 		return nil, nil, protocol.ErrorfImage("image upstream factory is not configured")
 	}
 
-	opts := service.SlotOptions{}
-	token, err := d.Accts.AcquireImageSlot(ctx, opts)
+	token, err := d.Accts.AcquireImageSlot(ctx, imageSlotOptions(model))
 	if err != nil {
 		return nil, nil, err
 	}

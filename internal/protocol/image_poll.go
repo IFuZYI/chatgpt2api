@@ -32,9 +32,15 @@ type ImageUpstream interface {
 
 // ImageStreamRequest 是图片链路需要的输入。
 type ImageStreamRequest struct {
-	Prompt   string
-	Model    string
-	Images   [][3]string
+	Prompt string
+	Model  string
+	Images [][3]string
+	// Size / Quality 只被 codex 链路使用（tools[0].size / tools[0].quality）。
+	//
+	// web 链路把它们拼进提示词（promptWithImageHints），所以这里不需要再传；
+	// codex 的 Responses 协议把它们作为工具参数发送，拼进提示词反而会干扰模型。
+	Size     string
+	Quality  string
 	Progress func(step string)
 	// DefaultUpstreamModel / DefaultThinkingEffort 由 api 层从配置注入。
 	//

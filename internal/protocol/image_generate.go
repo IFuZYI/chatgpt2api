@@ -45,6 +45,13 @@ func (g *ImageGenerator) Generate(ctx context.Context, request ImageRequest) ([]
 		}
 	}
 
+	// codex 模型走 /backend-api/codex/responses，是另一套协议：
+	// 图片以 base64 内联返回，没有 conversation/file_id，因此不需要轮询、
+	// 下载与对话清理。走 web 链路会 4xx/5xx 或扣错额度（D3-C4）。
+	if IsCodexImageModel(request.Model) {
+		return g.generateCodexImage(ctx, request)
+	}
+
 	conversationID, message, fileIDs, sedimentIDs, blocked, turnUseCase, err :=
 		g.consumeStream(ctx, request, &outputs, index, total)
 	if err != nil {

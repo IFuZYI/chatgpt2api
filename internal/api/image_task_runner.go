@@ -84,7 +84,7 @@ func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.T
 	pool := &protocol.ImagePool{
 		Parallel: d.Config.ImageParallelGeneration(),
 		Acquire: func(acquireCtx context.Context, index int) (*protocol.ImageGenerator, func(), error) {
-			generator, release, err := d.acquireImageGenerator(acquireCtx, index)
+			generator, release, err := d.acquireImageGenerator(acquireCtx, request.Model, index)
 			if err != nil {
 				return nil, nil, err
 			}
