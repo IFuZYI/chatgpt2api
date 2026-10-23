@@ -224,7 +224,12 @@ func joinHistoryText(history []string) string {
 			filtered = append(filtered, item)
 		}
 	}
-	return strings.Join(filtered, "\n\n")
+	// 用空串拼接：Python 是 `"".join(...)`（conversation.py:210）。
+	//
+	// 不能用 "\n\n"：真实输出里两段 assistant 回答之间没有分隔符，
+	// 用带分隔符的前缀去 StripHistory 会找不到，导致历史不被剥离、
+	// 客户端看到 "上一轮回答" 粘在 "本轮回答" 前面。
+	return strings.Join(filtered, "")
 }
 
 // AssistantEventText 复刻 Python 的 event_assistant_text：

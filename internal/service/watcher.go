@@ -94,6 +94,18 @@ func (w *AccountWatcher) run(verify RefreshVerifier, refresh func(ctx context.Co
 //  2. keepalive 列表要排除已过期的那批（它们走 refresh_accounts）
 //  3. 先 refresh_accounts，再 keepalive
 func (w *AccountWatcher) tick(verify RefreshVerifier, refresh func(ctx context.Context, token string) (string, error)) {
+	// 单轮 panic 不能杀死整个 watcher goroutine。
+	//
+	// 后果对比：没有 recover 时，一次 panic（上游返回畸形数据、空指针、
+	// 并发 map 访问…）会让 run() 退出，进程还活着但限流账号**永不自动恢复**，
+	// 且日志里只有一次 goroutine panic，之后完全静默。
+	// Python 对应实现（api/support.py:87-109）是整轮 try/except。
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			fmt.Printf("[account-watcher] tick panicked, recovered: %v\n", recovered)
+		}
+	}()
+
 	// 单轮最多 30 分钟，避免卡死整个循环。
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()

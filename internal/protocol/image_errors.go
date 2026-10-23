@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // 图片链路的错误类型。三者对应不同的对外状态码与文案，不能合并：
@@ -202,9 +203,17 @@ type ImageOutput struct {
 //   - message：换成 object=image.generation.message + message 字段，删掉上面两个
 //   - result：换成 object=image.generation.result + data 字段，同样删掉
 func (o ImageOutput) ToChunk() map[string]any {
+	// Python 的 created 是 field(default_factory=lambda: int(time.time()))
+	// （conversation.py:330）—— 构造时自动赋当前时间，调用方从不显式传。
+	// Go 的 int64 零值是 0，所有构造点也都没设它，所以这里补上默认值，
+	// 否则每个 chunk 的 created 都是 0（前端按时间排序/去重会失效）。
+	created := o.Created
+	if created == 0 {
+		created = time.Now().Unix()
+	}
 	chunk := map[string]any{
 		"object":              "image.generation.chunk",
-		"created":             o.Created,
+		"created":             created,
 		"model":               o.Model,
 		"index":               o.Index,
 		"total":               o.Total,

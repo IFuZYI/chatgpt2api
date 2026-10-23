@@ -16,7 +16,7 @@ import (
 type ImageUpstreamFactory func(ctx context.Context, accessToken string) (protocol.ImageUpstream, func(), error)
 
 // pollOptions 把配置转成轮询参数。
-func (d *Deps) pollOptions() protocol.PollOptions {
+func (d *Deps) pollOptions(accessToken string) protocol.PollOptions {
 	return protocol.PollOptions{
 		TimeoutSecs:     float64(d.Config.ImagePollTimeoutSecs()),
 		IntervalSecs:    d.Config.ImagePollIntervalSecs(),
@@ -25,7 +25,10 @@ func (d *Deps) pollOptions() protocol.PollOptions {
 		CheckBeforeHit:  d.Config.ImageCheckBeforeHitEnabled(),
 		SettleSecs:      d.Config.ImageSettleSecs(),
 		RemoveConversation: func(conversationID string, success bool) {
-			d.removeConversationLater(conversationID, success)
+			// 必须带上生成时那个账号的 token：Python 用的是已认证的
+			// backend 实例（conversation.py:826），空 token 会被上游 401，
+			// 清理永远失败。
+			d.removeConversationLater(accessToken, conversationID, success)
 		},
 	}
 }
@@ -35,20 +38,20 @@ func (d *Deps) pollOptions() protocol.PollOptions {
 //
 // 注意：这里刻意用 context.WithoutCancel —— 客户端可能已经断开，
 // 但清理是「用户走了更需要做」的动作（ADR-0007）。
-func (d *Deps) removeConversationLater(conversationID string, success bool) {
+func (d *Deps) removeConversationLater(accessToken, conversationID string, success bool) {
 	removeAfterResult := d.Config.ImageRemoveConversationAfterResult()
 	removeAlways := d.Config.ImageRemoveConversationAlways()
 	if !removeAlways && !(success && removeAfterResult) {
 		return
 	}
-	if conversationID == "" || d.ImageUpstream == nil {
+	if conversationID == "" || d.ImageUpstream == nil || accessToken == "" {
 		return
 	}
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		upstream, closeFn, err := d.ImageUpstream(ctx, "")
+		upstream, closeFn, err := d.ImageUpstream(ctx, accessToken)
 		if err != nil {
 			return
 		}
@@ -255,7 +258,7 @@ func (d *Deps) acquireImageGenerator(ctx context.Context, model string, index in
 
 	generator := &protocol.ImageGenerator{
 		Upstream: upstream,
-		Config:   d.pollOptions(),
+		Config:   d.pollOptions(token),
 		SaveImage: func(payload []byte, baseURL string) (string, error) {
 			_, url, saveErr := d.Images.SaveImageBytes(payload, baseURL)
 			return url, saveErr

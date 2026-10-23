@@ -40,8 +40,9 @@ func TestJoinHistoryText(t *testing.T) {
 	if got := joinHistoryText(nil); got != "" {
 		t.Errorf("nil history = %q", got)
 	}
-	if got := joinHistoryText([]string{"a", "", "b"}); got != "a\n\nb" {
-		t.Errorf("join = %q, want %q", got, "a\n\nb")
+	// Python 是 `"".join(...)`（conversation.py:210），不带分隔符。
+	if got := joinHistoryText([]string{"a", "", "b"}); got != "ab" {
+		t.Errorf("join = %q, want %q", got, "ab")
 	}
 }
 

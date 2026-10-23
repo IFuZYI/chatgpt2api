@@ -19,6 +19,152 @@ type ImagePool struct {
 	// Acquire 取一个账号槽位并返回一个 generator。
 	// 返回的 release 必须调用（内部用 defer）。
 	Acquire func(ctx context.Context, index int) (*ImageGenerator, func(), error)
+	// Generate 执行一次生成。nil 时用 generator.Generate。
+	// 抽成字段只为让测试能注入失败序列，验证换号重试。
+	Generate func(ctx context.Context, generator *ImageGenerator, request ImageRequest) ([]ImageOutput, error)
+}
+
+// 四类重试预算，逐字对齐 Python conversation.py:1301-1307。
+const (
+	// maxTextReplyRetries 模型返回文本而非图片。
+	maxTextReplyRetries = 3
+	// maxTLSRetries TLS 连接错误。
+	maxTLSRetries = 3
+	// maxConnTimeoutRetries 连接超时（同账号短退避）。
+	maxConnTimeoutRetries = 3
+	// maxPollTimeoutRetries 轮询超时（换账号）。
+	maxPollTimeoutRetries = 4
+)
+
+// retryKind 是一次失败属于哪一类预算。
+type retryKind int
+
+const (
+	retryNone retryKind = iota
+	retryTextReply
+	retryTLS
+	retryConnTimeout
+	retryPollTimeout
+)
+
+// classifyRetry 把错误归类到预算桶。未识别的错误不重试（快速失败）。
+//
+// Python 用异常类型判断（ImagePollTimeoutError 等）；Go 只有错误码/文案，
+// 所以按 Code 优先、文案兜底。
+func classifyRetry(err error) retryKind {
+	if err == nil {
+		return retryNone
+	}
+	var genErr *ImageGenerationError
+	if errors.As(err, &genErr) {
+		switch genErr.Code {
+		case "upstream_text_reply", "text_reply":
+			return retryTextReply
+		case "image_poll_timeout":
+			return retryPollTimeout
+		}
+		if genErr.StatusCode == 504 {
+			return retryPollTimeout
+		}
+	}
+	if IsModelTextReplyInsteadOfImage(err.Error()) {
+		return retryTextReply
+	}
+	if IsTLSConnectionError(err.Error()) {
+		return retryTLS
+	}
+	if IsConnectionTimeoutError(err.Error()) {
+		return retryConnTimeout
+	}
+	return retryNone
+}
+
+// generateOnce 走可注入的 Generate 或默认方法。
+func (p *ImagePool) generateOnce(ctx context.Context, generator *ImageGenerator, request ImageRequest) ([]ImageOutput, error) {
+	if p.Generate != nil {
+		return p.Generate(ctx, generator, request)
+	}
+	return generator.Generate(ctx, request)
+}
+
+// generateWithRetry 按四类预算换号重试，返回最终输出与错误。
+//
+// 与 Python 一致：每次重试都重新 Acquire（换号），且 release 必须先调，
+// 否则槽位泄漏、账号永远处于 inflight。
+func (p *ImagePool) generateWithRetry(ctx context.Context, request ImageRequest, index int) ([]ImageOutput, error) {
+	var (
+		outputs   []ImageOutput
+		lastErr   error
+		textReply int
+		tlsRetry  int
+		connRetry int
+		pollRetry int
+	)
+
+	for {
+		generator, release, acquireErr := p.Acquire(ctx, index)
+		if acquireErr != nil {
+			// 取号失败（号池空/全部占用）：不重试，直接返回。
+			return outputs, acquireErr
+		}
+
+		generated, genErr := p.generateOnce(ctx, generator, request)
+		release()
+
+		if genErr == nil {
+			return generated, nil
+		}
+
+		outputs = generated
+		lastErr = genErr
+
+		switch classifyRetry(genErr) {
+		case retryTextReply:
+			textReply++
+			if textReply > maxTextReplyRetries {
+				return outputs, textReplyExhaustedError(genErr)
+			}
+			continue
+		case retryTLS:
+			tlsRetry++
+			if tlsRetry > maxTLSRetries {
+				return outputs, genErr
+			}
+			continue
+		case retryConnTimeout:
+			connRetry++
+			if connRetry > maxConnTimeoutRetries {
+				return outputs, genErr
+			}
+			continue
+		case retryPollTimeout:
+			pollRetry++
+			if pollRetry > maxPollTimeoutRetries {
+				return outputs, genErr
+			}
+			continue
+		default:
+			// 未识别错误：快速失败（Python 同样只对四类重试）。
+			return outputs, lastErr
+		}
+	}
+}
+
+// textReplyExhaustedError 构造预算耗尽后的错误（文案逐字对齐 Python）。
+func textReplyExhaustedError(cause error) error {
+	genErr := &ImageGenerationError{
+		Message: "Image generation failed: the upstream model returned a text description " +
+			"instead of generating an image. Please try again later.",
+		StatusCode: 502,
+		ErrorType:  "server_error",
+		Code:       "upstream_text_reply",
+	}
+	var previous *ImageGenerationError
+	if errors.As(cause, &previous) {
+		genErr.AccountEmail = previous.AccountEmail
+		genErr.ConversationID = previous.ConversationID
+	}
+	return genErr
 }
 
 // PoolResult 是一次并行生成的结果。
@@ -46,13 +192,7 @@ func (p *ImagePool) Run(ctx context.Context, request ImageRequest) (PoolResult, 
 }
 
 func (p *ImagePool) runSingle(ctx context.Context, request ImageRequest, index, total int) (PoolResult, error) {
-	generator, release, err := p.Acquire(ctx, index)
-	if err != nil {
-		return PoolResult{}, err
-	}
-	defer release()
-
-	outputs, err := generator.Generate(ctx, request)
+	outputs, err := p.generateWithRetry(ctx, request, index)
 	if err != nil {
 		return PoolResult{Outputs: outputs}, err
 	}
@@ -62,13 +202,7 @@ func (p *ImagePool) runSingle(ctx context.Context, request ImageRequest, index, 
 func (p *ImagePool) runSerial(ctx context.Context, request ImageRequest) (PoolResult, error) {
 	result := PoolResult{Failures: map[int]string{}}
 	for index := 1; index <= request.N; index++ {
-		generator, release, err := p.Acquire(ctx, index)
-		if err != nil {
-			result.Failures[index] = err.Error()
-			continue
-		}
-		outputs, genErr := generator.Generate(ctx, request)
-		release()
+		outputs, genErr := p.generateWithRetry(ctx, request, index)
 		result.Outputs = append(result.Outputs, outputs...)
 		if genErr != nil {
 			result.Failures[index] = genErr.Error()

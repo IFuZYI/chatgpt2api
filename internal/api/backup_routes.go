@@ -184,6 +184,11 @@ func (d *Deps) runBackup(ctx context.Context) (map[string]any, error) {
 		DataDir:            d.Config.DataDir(),
 		Version:            d.Config.AppVersion(),
 		StorageBackendInfo: d.Storage.BackendInfo(),
+		// 必须注入：不注入时 Build() 里 `if s.Accounts != nil` 恒 false，
+		// snapshots/accounts.json 与 auth_keys.json 永远不写入 ——
+		// 备份能成功、能恢复，但恢复出来没有任何账号和密钥。
+		Accounts: d.Accts,
+		Auth:     d.Auth,
 	}
 	archive, buildErr := builder.Build(settings, "manual")
 	if buildErr != nil {

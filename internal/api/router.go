@@ -58,6 +58,16 @@ func NewRouter(d *Deps) *gin.Engine {
 	}
 
 	r.NoRoute(func(c *gin.Context) {
+		// API 前缀不走 SPA。
+		//
+		// 不回退的理由：客户端（OpenAI SDK / 前端 fetch）期望 JSON 错误。
+		// 吞成 200 + HTML 会让 SDK 把 HTML 当成功响应去解析，报一个
+		// 与真实原因无关的错误；拼错路径的排查成本也大幅上升。
+		// FastAPI 对未知 API 路径返回 404 {"detail":"Not Found"}。
+		if isAPIPath(c.Request.URL.Path) {
+			WriteError(c, StatusError(http.StatusNotFound, "Not Found"))
+			return
+		}
 		if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead {
 			spa(c)
 			return
@@ -139,4 +149,16 @@ func corsMiddleware() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// isAPIPath 判断路径是否是 API（而非前端路由）。
+//
+// 这些前缀下没有「前端页面」，未注册即意味着路径错误。
+func isAPIPath(requestPath string) bool {
+	for _, prefix := range []string{"/api/", "/v1/", "/files/", "/images/", "/image-thumbnails/", "/auth/"} {
+		if strings.HasPrefix(requestPath, prefix) {
+			return true
+		}
+	}
+	return requestPath == "/api" || requestPath == "/v1"
 }

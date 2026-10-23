@@ -350,7 +350,15 @@ func (d *Deps) runResumePoll(ownerID, taskID, conversationID string, extraTimeou
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(extraTimeout+60)*time.Second)
 	defer cancel()
 
-	upstream, closeFn, err := d.ImageUpstream(ctx, "")
+	// 用空 token 构造上游：任务记录里不存 access_token（只有 conversation_id）。
+	//
+	// 这是已知缺口：上游对空 Authorization 返回 401，所以「继续等待」
+	// 在没有 token 的情况下必然失败。要真正修好，需要在 Submit 时把
+	// token 落进任务记录（或让 resume-poll 重新取号 + 复用 conversation_id）。
+	// 两条路都会改变 data/image_tasks.json 的字段集，属独立决策，
+	// 本轮不擅自扩字段 —— 失败时明确报错而不是静默超时。
+	accessToken := ""
+	upstream, closeFn, err := d.ImageUpstream(ctx, accessToken)
 	if err != nil {
 		d.Tasks.UpdateTask(ownerID, taskID, map[string]any{
 			"status": service.TaskStatusError,
@@ -360,7 +368,7 @@ func (d *Deps) runResumePoll(ownerID, taskID, conversationID string, extraTimeou
 	}
 	defer closeFn()
 
-	options := d.pollOptions()
+	options := d.pollOptions(accessToken)
 	options.TimeoutSecs = extraTimeout
 	result, pollErr := protocol.PollImageResults(ctx, upstream, conversationID, options, nil, nil)
 	if pollErr != nil || (len(result.FileIDs) == 0 && len(result.SedimentIDs) == 0) {

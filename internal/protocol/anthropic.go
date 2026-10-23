@@ -102,6 +102,12 @@ func BuildToolPrompt(tools any) string {
 			continue
 		}
 		schemaJSON, _ := json.Marshal(meta.Schema)
+		// 工具块之间必须有换行：Python 是 `"\n".join(blocks)`
+		// （anthropic_v1_messages.py:49）。少了它两个工具会粘成
+		// `}}}Tool: next_tool`，上游无法解析。
+		if blocks > 0 {
+			builder.WriteString("\n")
+		}
 		builder.WriteString("Tool: " + meta.Name + "\nDescription: " + meta.Description +
 			"\nParameters: " + string(schemaJSON))
 		blocks++

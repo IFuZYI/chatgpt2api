@@ -12,6 +12,8 @@ import (
 	"github.com/basketikun/chatgpt2api/internal/protocol"
 	"github.com/basketikun/chatgpt2api/internal/service"
 	"github.com/basketikun/chatgpt2api/internal/storage"
+	"github.com/basketikun/chatgpt2api/internal/web"
+	"github.com/gin-gonic/gin"
 )
 
 // newTestDeps 构造一套最小依赖（临时目录 + JSON 存储）。
@@ -120,3 +122,16 @@ func stringValueOfTest(value any) string {
 func sleepShort() { time.Sleep(20 * time.Millisecond) }
 
 func timeoutChan() <-chan time.Time { return time.After(3 * time.Second) }
+
+// newTestRouter 构造注入了 Dist 的路由（复刻生产路径）。
+//
+// 关键差异：golden harness 不注入 Dist，所以 `NoRoute` 走的是 404 分支，
+// 而生产环境 Dist 非空、会走 SPA fallback —— 这正是「未知 /api/* 返回
+// 200 HTML」这个缺陷在 golden 里测不出来的原因。
+func newTestRouter(t *testing.T, deps *api.Deps) *gin.Engine {
+	t.Helper()
+	if deps.Dist == nil {
+		deps.Dist = web.NewDist()
+	}
+	return api.NewRouter(deps)
+}
