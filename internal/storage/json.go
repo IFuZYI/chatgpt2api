@@ -49,8 +49,14 @@ func loadJSONList(path string) []map[string]any {
 	return items
 }
 
+// saveJSONValue 原子写：先写同目录临时文件 + fsync，再 rename 覆盖。
+//
+// 为什么不能用 os.WriteFile：进程在写入中途退出（SIGKILL、容器 stop 超时）
+// 会留下截断的 JSON，下次启动读不出来，等于整份账号全丢。
+// rename 在同一文件系统上是原子的 —— 读者要么看到旧文件、要么看到新文件。
 func saveJSONValue(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	payload, err := json.MarshalIndent(value, "", "  ")
@@ -58,7 +64,39 @@ func saveJSONValue(path string, value any) error {
 		return err
 	}
 	payload = append(payload, '\n')
-	return os.WriteFile(path, payload, 0o644)
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmpPath)
+	}
+
+	if _, err := tmp.Write(payload); err != nil {
+		cleanup()
+		return err
+	}
+	// fsync 数据：没有它，rename 之后断电仍可能拿到空文件。
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func (b *JSONBackend) LoadAccounts() ([]map[string]any, error) {

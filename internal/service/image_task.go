@@ -90,6 +90,10 @@ type ImageTaskService struct {
 	// 永远等不到已经过去的 Add）。
 	closeDone chan struct{}
 	closeOnce sync.Once
+
+	// background 登记会写 data/ 的可取消后台工作（账号刷新、CPA/sub2api 导入）。
+	// 单靠 inFlight 等不完它们：刷新用 30 分钟 ctx，硬等会让关闭永久超时。
+	background *BackgroundWork
 }
 
 // NewImageTaskService 构造。runner 为 nil 时任务只会停在 queued（M4 前）。
@@ -99,10 +103,11 @@ func NewImageTaskService(cfg interface {
 }) *ImageTaskService {
 	path := cfg.DataDir() + "/image_tasks.json"
 	s := &ImageTaskService{
-		cfg:       cfg,
-		path:      path,
-		tasks:     map[string]map[string]any{},
-		closeDone: make(chan struct{}),
+		cfg:        cfg,
+		path:       path,
+		tasks:      map[string]map[string]any{},
+		closeDone:  make(chan struct{}),
+		background: NewBackgroundWork(),
 	}
 	s.mu.Lock()
 	s.tasks = s.loadLocked()
@@ -119,7 +124,8 @@ func NewImageTaskService(cfg interface {
 // （生图请求打到一半被砍，上游那边会留下孤儿对话，反而更难清理）。
 // 超时后仍在跑的任务会被记录日志，不会静默吞掉。
 //
-// 幂等：重复调用只有第一次真正等待，后续调用立即返回 nil。
+// 幂等：重复调用共享同一个等待 channel —— 每次调用都会阻塞到所有在途任务退出
+// （或自己的 ctx 到期）才返回，不会因为「已经等过一轮」就提前放行。
 func (s *ImageTaskService) Close(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	s.closing = true
@@ -133,18 +139,43 @@ func (s *ImageTaskService) Close(ctx context.Context) error {
 		}()
 	})
 
+	// 可取消的后台工作（账号刷新、导入）：先取消，让它们尽快收尾。
+	s.background.shutdown()
+
 	select {
 	case <-s.closeDone:
-		s.mu.Lock()
-		s.saveLocked()
-		s.mu.Unlock()
-		return nil
 	case <-ctx.Done():
-		pending := s.pendingCount()
-		fmt.Printf("[image-task] close timed out with %d task(s) still running; "+
-			"their results may be lost (image_tasks.json will be re-checked on next start)\n", pending)
+		fmt.Printf("[image-task] close timed out with %d image task(s) and %d background job(s) "+
+			"still running; their results may be lost (files will be re-checked on next start)\n",
+			s.pendingCount(), s.background.pending())
 		return ctx.Err()
 	}
+
+	// 图片任务退出后再等可取消的工作 —— 它们在收到取消后通常秒级退出。
+	backgroundDone := make(chan struct{})
+	go func() {
+		s.background.wait()
+		close(backgroundDone)
+	}()
+	select {
+	case <-backgroundDone:
+	case <-ctx.Done():
+		fmt.Printf("[image-task] close timed out with %d background job(s) still running\n",
+			s.background.pending())
+		return ctx.Err()
+	}
+
+	s.mu.Lock()
+	s.saveLocked()
+	s.mu.Unlock()
+	return nil
+}
+
+// StartBackground 派生一个受管的后台工作 ctx（账号刷新、导入等）。
+//
+// 返回的 finish 必须 defer 调用。服务已关闭时 ok=false，调用方应放弃执行。
+func (s *ImageTaskService) StartBackground(parent context.Context, timeout time.Duration) (context.Context, func(), bool) {
+	return s.background.Start(parent, timeout)
 }
 
 // pendingCount 统计仍处于 queued/running 的任务数（仅用于超时日志）。

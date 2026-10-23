@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/basketikun/chatgpt2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -170,12 +171,23 @@ func (d *Deps) startCPAImport(pool map[string]any, names []string) map[string]an
 	}
 	snapshot, _ := saved["import_job"].(map[string]any)
 
+	// 导入会写 accounts.json，必须能随服务关闭取消。
+	importCtx, finishImport, importOK := d.Tasks.StartBackground(contextBackground(), 30*time.Minute)
+	if !importOK {
+		return snapshot
+	}
 	go func() {
-		added, failed := 0, 0
+		defer finishImport()
+		added, failed, processed := 0, 0, 0
 		errorsList := make([]any, 0)
 		for index, name := range names {
+			// 每一轮的远程拉取都受 importCtx 约束：服务关闭后不再继续下一个账号。
+			if importCtx.Err() != nil {
+				break
+			}
+			processed = index + 1
 			token, fetchErr := service.FetchRemoteAccessToken(
-				contextBackground(), stringValueOf(pool["base_url"]),
+				importCtx, stringValueOf(pool["base_url"]),
 				stringValueOf(pool["secret_key"]), name)
 			if fetchErr != nil {
 				failed++
@@ -202,13 +214,20 @@ func (d *Deps) startCPAImport(pool map[string]any, names []string) map[string]an
 		if failed > 0 && added == 0 {
 			status = "failed"
 		}
+		// 被关闭取消时 completed 只能报真实处理过的数量，不能写 len(names) 假装跑完。
+		if processed < len(names) && status == "success" {
+			status = "failed"
+			errorsList = append(errorsList, map[string]any{
+				"name": "import", "error": "import cancelled: server is shutting down",
+			})
+		}
 		d.CPA.SetImportJob(poolID, map[string]any{
 			"job_id":     job["job_id"],
 			"status":     status,
 			"created_at": job["created_at"],
 			"updated_at": nowISO(),
 			"total":      len(names),
-			"completed":  len(names),
+			"completed":  processed,
 			"added":      added,
 			"skipped":    0,
 			"refreshed":  0,
@@ -395,8 +414,14 @@ func (d *Deps) startSub2APIImport(server map[string]any, accountIDs []string) ma
 	}
 	snapshot, _ := saved["import_job"].(map[string]any)
 
+	// sub2api 导入同样会写 accounts.json。
+	importCtx, finishImport, importOK := d.Tasks.StartBackground(contextBackground(), 30*time.Minute)
+	if !importOK {
+		return snapshot
+	}
 	go func() {
-		ctx := contextBackground()
+		defer finishImport()
+		ctx := importCtx
 		tokens, failures, fetchErr := d.Sub2API.FetchAccessTokens(ctx, server, accountIDs)
 		errorsList := make([]any, 0, len(failures))
 		for _, failure := range failures {

@@ -3,6 +3,9 @@ services:
     image: ghcr.io/basketikun/chatgpt2api:latest
     container_name: chatgpt2api
     restart: unless-stopped
+    # 关闭预算 = server.Shutdown(10s) + image tasks Close(30s) = 40s。
+    # Docker 默认只给 10s 就 SIGKILL，会让「等在途任务写完 image_tasks.json」被截断。
+    stop_grace_period: 45s
     ports:
       - "3000:80"
     volumes:

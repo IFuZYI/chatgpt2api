@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     image: chatgpt2api:local
     container_name: chatgpt2api-local
+    # 关闭预算 = server.Shutdown(10s) + image tasks Close(30s) = 40s。
+    stop_grace_period: 45s
     ports:
       - "8000:80"
     volumes:

@@ -115,7 +115,15 @@ func TestImageTaskCloseTimeoutReturnsError(t *testing.T) {
 		t.Errorf("pendingCount = %d, want 1 (used by the timeout log)", pending)
 	}
 
+	// 放行任务后必须再等它真正退出：否则 t.TempDir 的清理会和写入者竞争，
+	// 偶发 "directory not empty"。这正是本文件要验证的关闭语义，
+	// 测试自己也得遵守（第一版漏了这一步，40 次里会红 1~4 次）。
 	close(block)
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer finalCancel()
+	if err := svc.Close(finalCtx); err != nil {
+		t.Fatalf("final Close after unblocking: %v", err)
+	}
 }
 
 // Close 必须幂等：重复调用不能 panic、不能死锁。
@@ -178,4 +186,64 @@ func waitForStatus(t *testing.T, svc *ImageTaskService, ownerID, taskID, status 
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("task %s never reached status %q", taskID, status)
+}
+
+// 关闭时必须**先取消**长跑的后台工作（账号刷新 30 分钟 ctx），再等它们退出。
+// 只等不取消会让关闭必然超时。
+func TestImageTaskCloseCancelsBackgroundWork(t *testing.T) {
+	svc, _ := newCloseTestService(t)
+
+	workCtx, finish, ok := svc.StartBackground(context.Background(), 30*time.Minute)
+	if !ok {
+		t.Fatal("StartBackground refused before Close")
+	}
+	stopped := make(chan struct{})
+	go func() {
+		defer finish()
+		defer close(stopped)
+		<-workCtx.Done() // 只有被取消才会走到这里
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := svc.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("background work was not cancelled by Close")
+	}
+	if workCtx.Err() == nil {
+		t.Error("background ctx should be cancelled after Close")
+	}
+}
+
+// 关闭后不再接受新的后台工作。
+func TestImageTaskStartBackgroundRejectsAfterClose(t *testing.T) {
+	svc, _ := newCloseTestService(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := svc.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, _, ok := svc.StartBackground(context.Background(), time.Minute); ok {
+		t.Fatal("StartBackground should refuse after Close")
+	}
+}
+
+// finish 必须可重复调用（defer 与显式清理同时出现时不能 double Done）。
+func TestBackgroundWorkFinishIsIdempotent(t *testing.T) {
+	work := NewBackgroundWork()
+	_, finish, ok := work.Start(context.Background(), time.Minute)
+	if !ok {
+		t.Fatal("Start refused")
+	}
+	finish()
+	finish()
+	if pending := work.pending(); pending != 0 {
+		t.Errorf("pending = %d, want 0", pending)
+	}
 }

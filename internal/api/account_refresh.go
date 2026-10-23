@@ -34,10 +34,18 @@ func (d *Deps) registerAccountRefresh(r *gin.Engine) {
 		progressID := newUUIDString()
 		// 异步跑：前端拿 progress_id 轮询。这里必须脱离请求 ctx，
 		// 否则客户端断开就中断刷新（与 Python 的 asyncio.create_task 语义对齐）。
+		//
+		// 但也不能裸跑：刷新会写 accounts.json，进程退出时必须能取消它，
+		// 否则 JSON 后端可能正写到一半。登记到 Tasks.StartBackground，
+		// 关闭时先取消再等待（30 分钟的 ctx 不可能硬等）。
+		refreshCtx, finishRefresh, ok := d.Tasks.StartBackground(context.Background(), 30*time.Minute)
+		if !ok {
+			writeErr(c, Errorf(http.StatusServiceUnavailable, "server is shutting down"))
+			return
+		}
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-			defer cancel()
-			d.Accts.RefreshAccounts(ctx, tokens, progressID, d.refreshVerifier())
+			defer finishRefresh()
+			d.Accts.RefreshAccounts(refreshCtx, tokens, progressID, d.refreshVerifier())
 		}()
 		c.JSON(http.StatusOK, gin.H{"progress_id": progressID})
 	})
