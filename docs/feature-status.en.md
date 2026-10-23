@@ -17,7 +17,7 @@
 | 前端图片工作台 | ✅  | 已支持图片生成、图片编辑、模型选择、历史记录与查看大图。 |
 | 前端图片懒加载与滚动优化 | ✅  | LazyImage 懒加载、会话切换滚动位置保存与恢复、bfcache 页面恢复同步。 |
 | 前端图片输入 / 参考图交互 | ✅  | 已支持参考图上传、预览、移除和编辑模式工作流。 |
-| Codex 画图接口逆向 | ✅  | 已支持，仅 `Plus` / `Team` / `Pro` 订阅可用，模型别名为 `codex-gpt-image-2`；如有需要可自行在其他场景映射回 `gpt-image-2`。这是 Codex 逆向链路，用于和官网画图区分，同一账号通常会同时支持官网和 Codex 两份生图额度。 |
+| Codex 画图接口逆向 | ⚠️  | 走 `/backend-api/codex/responses`，仅 `Plus` / `Team` / `Pro` 且 `source_type=codex` 的账号可用，模型别名为 `codex-gpt-image-2`。请求侧与 Python 逐字对齐；**响应事件格式未经真实上游验证**，若上游改用分片事件会报 `No image result found in response`。详见 `docs/adr/0010-codex-responses-response-shape-unverified.md`。 |
 | Cherry Studio 接入 | ✅  | 已支持作为绘图接口接入 Cherry Studio。 |
 | New API 接入 | ✅  | 已支持接入 New API。 |
 | 账号池管理 | ✅  | 已支持列表、筛选、批量操作、导出、手动编辑、刷新和删除。 |
@@ -73,7 +73,7 @@
 | `gpt-image-2.5` | ✅ | 模型名直接作为上游 slug 透传 |
 | `gpt-image-2.5-flare` | ✅ | 同上 |
 | `gpt-image-2.5-sunburst` | ✅ | 同上 |
-| `codex-gpt-image-2` | ✅ | Codex 链路专用，带套餐前缀别名 |
+| `codex-gpt-image-2` | ⚠️ | Codex 链路专用，带套餐前缀别名；响应格式待真实上游验证（ADR-0010） |
 
 2.5 系列三个变体在同 prompt 下产出字节数各不相同（839KB / 853KB / 943KB，
 均 1254×1254），确认是不同模型而非别名。

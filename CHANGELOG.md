@@ -38,6 +38,14 @@
   原走文本端点导致整条链路不可用。
 + [修复] 刷新账号后回写 `email`/`quota`/`type` 等字段（原只计数不回写，刷新「成功」但数据全空）。
 + [修复] 图片成功计数改为按实际出图判定（原无条件记 success，失败也扣额度）。
++ [修复] codex 图片模型（`codex-gpt-image-2` 及 `plus-`/`team-`/`pro-` 别名）改走
+  `/backend-api/codex/responses`，按 `source_type=codex` 选号。原被塞进 web 的
+  `/f/conversation` 链路，导致 4xx/5xx 或扣错额度，而 `/v1/models` 一直宣告可用。
+  响应事件格式按 Python 解析器复刻、未经真实上游验证，见
+  `docs/adr/0010-codex-responses-response-shape-unverified.md`。
++ [修复] 图片任务服务补齐关闭语义：`Close(ctx)` 等待在途任务 goroutine 退出后再落盘。
+  原实现进程退出时不等待，`image_tasks.json` 可能写到一半（重启后任务损坏或丢失）。
+  优雅关闭顺序为 `server.Shutdown` → 停后台调度器 → `Tasks.Close(30s)`；超时记日志不静默。
 
 ### 已知问题
 
@@ -45,6 +53,9 @@
   payload 与 header 已逐字段核对一致，非实现缺陷。详见 `docs/adr/0008-anonymous-conversation-unavailable.md`。
 + 密码重新登录（`/api/accounts/re-login`）返回明确的「未实现」而非假装成功。
 + 可编辑 PPT/PSD 生成、网页搜索、Responses 图片工具调用尚未接入（返回 501）。
++ codex 图片链路的**响应事件格式**未经真实上游验证（请求侧已逐字对齐 Python）：
+  若上游改用分片事件（`partial_image_b64`）而非一次性 `result`，会报
+  `No image result found in response`。详见 `docs/adr/0010-codex-responses-response-shape-unverified.md`。
 
 ## 1.8.0 - 2026-07-28
 
