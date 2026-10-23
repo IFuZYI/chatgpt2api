@@ -14,7 +14,10 @@ type maskGoldenCase struct {
 	ExpectedAlpha    []uint8 `json:"expected_alpha"`
 	ExpectedMime     string  `json:"expected_mime"`
 	ExpectedFilename string  `json:"expected_filename"`
-	Exact            bool    `json:"exact"`
+	// Tolerance 是单像素 alpha 允许的最大偏差。
+	// 0 = 逐像素精确比对（不需要缩放、或缩放对结果无影响的用例）。
+	// >0 = 需要缩放（CatmullRom vs LANCZOS）或有损编码差异，按容差比对。
+	Tolerance int `json:"tolerance"`
 }
 
 type maskGoldenFile struct {
@@ -74,23 +77,15 @@ func TestMaskMatchesPythonGolden(t *testing.T) {
 					want := tc.ExpectedAlpha[index]
 					index++
 					gotAlpha := alphaAt(decoded, x, y)
-					if tc.Exact {
-						if gotAlpha != want {
-							mismatches++
-							if mismatches <= 8 {
-								t.Errorf("alpha at (%d,%d) = %d, want %d", x, y, gotAlpha, want)
-							}
-						}
-						continue
-					}
 					diff := int(gotAlpha) - int(want)
 					if diff < 0 {
 						diff = -diff
 					}
-					if diff > 16 {
+					if diff > tc.Tolerance {
 						mismatches++
 						if mismatches <= 8 {
-							t.Errorf("alpha at (%d,%d) = %d, want ~%d (diff %d)", x, y, gotAlpha, want, diff)
+							t.Errorf("alpha at (%d,%d) = %d, want %d (diff %d > tolerance %d)",
+								x, y, gotAlpha, want, diff, tc.Tolerance)
 						}
 					}
 				}

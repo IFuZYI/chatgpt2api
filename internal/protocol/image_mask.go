@@ -188,15 +188,62 @@ func maskMode(payload []byte, decoded image.Image) string {
 	if mode, ok := pngMaskMode(payload); ok {
 		return mode
 	}
-	// 非 PNG（JPEG / WebP / GIF…）：PIL 里带真实 alpha 的模式只有 RGBA，
-	// Go 的 webp 解码器把带 alpha 的图解成 NRGBA，正好对应。
+	if mode, ok := webpMaskMode(payload); ok {
+		return mode
+	}
+	// 其余格式（JPEG / GIF…）：PIL 里带真实 alpha 的模式只有 RGBA，
+	// Go 的 webp 解码器把带 alpha 的图解成 NRGBA/NYCbCrA，正好对应。
 	// GIF 解成 Paletted、JPEG 解成 YCbCr，都归到「转灰度」。
 	switch decoded.(type) {
-	case *image.NRGBA, *image.NRGBA64:
+	case *image.NRGBA, *image.NRGBA64, *image.NYCbCrA:
 		return maskModeRGBA
 	default:
 		return maskModeGray
 	}
+}
+
+// webpMaskMode 判定 WebP 在 PIL 里的模式。
+//
+// 不能只看 Go 的解码类型：无损 WebP（VP8L）无论码流带不带 alpha，Go 都返回
+// *image.NRGBA，而 PIL 只在码流真的带 alpha 时才报 RGBA —— 不带 alpha 时报
+// RGB，走 convert("L")。把无 alpha 的 VP8L 当 RGBA 去取 alpha，会得到 255
+// （解码器把缺失的 alpha 填满），等于把整张 mask 读成「全部保留」。
+//
+// 判定依据是容器里的 alpha 标志位：
+//   - VP8X（扩展格式）：byte 20 的 bit 4（0x10）是 Alpha 标志
+//   - VP8L（无损）：5 字节头里第 21..24 字节组成的 32 位小端值的 bit 28
+//   - VP8（有损，无扩展头）：格式本身不支持 alpha，恒为 RGB
+func webpMaskMode(payload []byte) (string, bool) {
+	if len(payload) < 21 || !bytes.HasPrefix(payload, []byte("RIFF")) ||
+		!bytes.Equal(payload[8:12], []byte("WEBP")) {
+		return "", false
+	}
+	switch string(payload[12:16]) {
+	case "VP8X":
+		// 扩展格式：flags 在 byte 20，Alpha 是 bit 4。
+		if len(payload) < 21 {
+			return "", false
+		}
+		if payload[20]&0x10 != 0 {
+			return maskModeRGBA, true
+		}
+		return maskModeGray, true
+	case "VP8L":
+		// 无损：5 字节头在 20..24，签名 0x2F + 14 位宽 + 14 位高 + 1 位 alpha + 3 位版本。
+		if len(payload) < 25 || payload[20] != 0x2f {
+			return "", false
+		}
+		bits := uint32(payload[21]) | uint32(payload[22])<<8 |
+			uint32(payload[23])<<16 | uint32(payload[24])<<24
+		if (bits>>28)&1 != 0 {
+			return maskModeRGBA, true
+		}
+		return maskModeGray, true
+	case "VP8 ":
+		// 有损且没有 VP8X 扩展头：格式本身不携带 alpha。
+		return maskModeGray, true
+	}
+	return "", false
 }
 
 // pngMaskMode 从 PNG 的 IHDR 读位深与颜色类型，按 PIL 的 _MODES 映射表判定模式。

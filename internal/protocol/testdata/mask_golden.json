@@ -64,7 +64,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": false
+   "tolerance": 16
   },
   {
    "name": "mask_l",
@@ -126,7 +126,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
   },
   {
    "name": "mask_rgb",
@@ -188,7 +188,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
   },
   {
    "name": "mask_p",
@@ -250,7 +250,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
   },
   {
    "name": "mask_la",
@@ -312,7 +312,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
   },
   {
    "name": "mask_i16",
@@ -374,7 +374,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
   },
   {
    "name": "mask_1",
@@ -436,7 +436,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
   },
   {
    "name": "mask_small",
@@ -498,7 +498,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": false
+   "tolerance": 16
   },
   {
    "name": "mask_jpeg",
@@ -560,7 +560,7 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
   },
   {
    "name": "mask_webp",
@@ -622,7 +622,131 @@
    ],
    "expected_mime": "image/png",
    "expected_filename": "photo.jpg",
-   "exact": true
+   "tolerance": 0
+  },
+  {
+   "name": "mask_webp_noalpha",
+   "mask_b64": "UklGRiYAAABXRUJQVlA4TBkAAAAvB0ABAA8w//M///MfeAAIIsF/r4mI/ocAAA==",
+   "mask_filename": "mask",
+   "expected_size": [
+    8,
+    6
+   ],
+   "expected_alpha": [
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0
+   ],
+   "expected_mime": "image/png",
+   "expected_filename": "photo.jpg",
+   "tolerance": 0
+  },
+  {
+   "name": "mask_webp_lossy",
+   "mask_b64": "UklGRi4AAABXRUJQVlA4ICIAAACQAQCdASoIAAYAAAAAJaQAAp1HI1AA/v//vjp//8OHAAAA",
+   "mask_filename": "mask",
+   "expected_size": [
+    8,
+    6
+   ],
+   "expected_alpha": [
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0
+   ],
+   "expected_mime": "image/png",
+   "expected_filename": "photo.jpg",
+   "tolerance": 32
   }
  ]
 }
