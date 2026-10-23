@@ -99,8 +99,9 @@ services:
         condition: service_started
       flaresolverr:
         condition: service_started
+    # 容器内固定 8080（distroless nonroot 不能绑 <1024）。
     ports:
-      - "${CHATGPT2API_PORT:-3000}:80"
+      - "${CHATGPT2API_PORT:-3000}:8080"
     volumes:
       - ./data:/app/data
       - ./config.json:/app/config.json
@@ -109,3 +110,11 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:-}
       CHATGPT2API_BASE_URL: ${CHATGPT2API_BASE_URL:-}
+
+    healthcheck:
+      # distroless 没有 curl/wget，用二进制自带的探针。
+      test: ["CMD", "/app/chatgpt2api", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

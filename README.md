@@ -43,6 +43,8 @@ docker compose up -d
 
 - Web 面板：`http://localhost:3000`
 - API 地址：`http://localhost:3000/v1`
+
+> 容器内监听 **8080**（distroless nonroot 无法绑 <1024）。对外端口用 `CHATGPT2API_PORT` 覆盖，默认 3000。
 - 数据目录：`./data`
 
 ### WARP / FlareSolverr 稳定代理部署
@@ -130,11 +132,11 @@ environment:
 - 兼容 `POST /v1/images/edits` 图片编辑接口
 - 兼容面向图片场景的 `POST /v1/chat/completions`
 - 兼容面向图片场景的 `POST /v1/responses`
-- `GET /v1/models` 返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
-  `gpt-5-mini`
-- 支持通过 `n` 返回多张生成结果
-- 支持生成可编辑 PPT 文件
-- 支持生成可编辑 PSD 文件
+- `GET /v1/models` 动态聚合：文本模型来自上游（当前 `auto`、`gpt-5-6`、`gpt-5-6-mini`、`gpt-6`、`gpt-6-mini`、
+  `research` 等，随号池变化），图片模型为内置表（`gpt-image-2`、`gpt-image-2.5`、`gpt-image-2.5-flare`、
+  `gpt-image-2.5-sunburst`）
+- 支持通过 `n` 返回多张生成结果（`1`–`4`，越界报错而不是静默夹取）
+- 可编辑 PPT / PSD 生成：**未实现**，`/v1/ppt/generations` 与 `/v1/psd/generations` 返回 `501`
 - 支持 Codex 中的画图接口逆向，仅 `Plus` / `Team` / `Pro` 且 `source_type=codex` 的账号可用，模型别名为 `codex-gpt-image-2`，
   如有需要可自行在其他场景映射回 `gpt-image-2`，用于和官网画图区分；也就意味着同一账号会同时有官网和 Codex 两份生图额度。
   注意：该链路走 `/backend-api/codex/responses`，**请求侧已对齐 Python，响应事件格式尚未经真实上游验证**；

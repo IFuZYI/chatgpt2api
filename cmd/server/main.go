@@ -16,6 +16,7 @@ import (
 
 	"github.com/basketikun/chatgpt2api/internal/api"
 	"github.com/basketikun/chatgpt2api/internal/config"
+	"github.com/basketikun/chatgpt2api/internal/health"
 	"github.com/basketikun/chatgpt2api/internal/protocol"
 	"github.com/basketikun/chatgpt2api/internal/service"
 	"github.com/basketikun/chatgpt2api/internal/storage"
@@ -25,10 +26,28 @@ import (
 
 func main() {
 	var (
-		addr    = flag.String("addr", envOr("CHATGPT2API_ADDR", ":80"), "listen address")
+		addr = flag.String("addr", envOr("CHATGPT2API_ADDR", ":8080"), "listen address")
+		// 默认 8080 而不是 80：容器里以 nonroot（uid 65532）运行，
+		// 绑定 <1024 的端口需要 CAP_NET_BIND_SERVICE，distroless 不授予。
 		baseDir = flag.String("base-dir", "", "project root holding config.json / data / VERSION")
+		// healthcheck 供容器 HEALTHCHECK 使用（distroless 没有 curl/wget）。
+		healthcheck = flag.Bool("healthcheck", false, "probe /health on --addr and exit 0 if healthy")
 	)
 	flag.Parse()
+
+	if *healthcheck {
+		probeAddr := *addr
+		// :8080 → http://127.0.0.1:8080
+		if strings.HasPrefix(probeAddr, ":") {
+			probeAddr = "127.0.0.1" + probeAddr
+		}
+		probeURL := "http://" + probeAddr
+		if err := health.Check(context.Background(), probeURL, 5*time.Second); err != nil {
+			fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	if *baseDir == "" {
 		*baseDir = config.ResolveBaseDir()

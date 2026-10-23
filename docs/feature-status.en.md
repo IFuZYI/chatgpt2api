@@ -8,7 +8,7 @@
 | OpenAI 兼容 `POST /v1/images/edits` | ✅  | 已支持，可上传图片进行编辑。 |
 | 面向图片工作流的 `POST /v1/chat/completions` | ✅  | 已支持图片相关请求。 |
 | 面向图片工作流的 `POST /v1/responses` | ✅  | 已支持图片生成工具调用。 |
-| `GET /v1/models` 接口 | ✅  | 当前返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、`gpt-5-mini`。 |
+| `GET /v1/models` 接口 | ✅  | 动态聚合：文本模型来自上游 `/backend-api/models`（当前为 `auto`、`gpt-5-6`、`gpt-5-6-mini`、`gpt-6`、`gpt-6-mini`、`research` 等），图片模型为内置表（`gpt-image-2`、`gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`）。具体列表随号池变化。 |
 | 同时生成多张图片 | ✅  | 已支持，后端与前端都可进行多图生成。 |
 | 图片并行生成 | ✅  | 多张图片使用独立线程和账号同时生成，可通过 `image_parallel_generation` 配置关闭。 |
 | 图片生成进度追踪 | ✅  | 任务显示当前步骤（上传/预热/获取token/生成中等），支持耗时统计。 |
@@ -35,9 +35,9 @@
 | 更高级的 Token 调度策略 | ⚠️ | 当前已有轮询、限流刷新、槽位并发控制；更复杂的调度策略仍在完善中。 |
 | Render / Vercel 等部署表述 | ⚠️ | 当前主要以 Docker 部署为主，其他平台部署方式暂未重点说明。 |
 | `/v1/complete` 文本补全 | ❌  | 该端点从未存在，文档早期误记。文本能力走 `/v1/chat/completions`。 |
-| 流式输出支持 | ✅  | 已实现。 |
+| 流式输出支持 | ⚠️  | 协议层已实现（SSE 分块、`data: [DONE]` 结尾、chunk 形状与 Python 一致），但**生成期间不产生增量**：图片与文本都是先跑完再一次性写出所有 chunk。长请求期间客户端收不到字节，nginx/Cloudflare 的 60s 空闲会切断连接。 |
 | 文本补全缓存与重复请求合并 | ✅  | `/v1/chat/completions` 文本链路默认启用 60 秒短缓存、流式结果回放、in-flight 请求合并和相邻重复消息清理；可通过 `chat_completion_cache` 配置关闭或调整。 |
-| 图片尺寸参数 | ❌  | 待实现。 |
+| 图片尺寸参数 | ✅  | `size` 与 `quality` 在 `/v1/images/generations`、`/v1/images/edits` 与任务接口均透传给上游。 |
 | 服务端图片 URL 缓存 | ✅  | 已实现。 |
 | `rt_token` 刷新 | ✅  | 通过 `refresh_token` 刷新 access_token，含 keepalive 周期。 |
 | 代理配置功能 | ✅  | 已支持网页端配置全局 HTTP / HTTPS / SOCKS5 / SOCKS5H 代理，并应用到出站请求。 |

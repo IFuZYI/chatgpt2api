@@ -62,6 +62,10 @@ API 基础地址：
 http://localhost:3000/v1
 ```
 
+> 容器内固定监听 **8080**（distroless 的 nonroot 用户无法绑定 80 等 <1024 端口）。
+> 对外端口由 `CHATGPT2API_PORT` 决定（默认 3000）。改端口只需改这个环境变量，
+> 不要改 Dockerfile 里的 `--addr`。
+
 查看日志：
 
 ```bash
@@ -219,7 +223,11 @@ tar -czf backups/chatgpt2api-$(date +%Y%m%d-%H%M%S).tgz config.json .env data
 tar -czf backups/chatgpt2api-$(date +%Y%m%d-%H%M%S).tgz config.json data
 ```
 
-也可以在后台设置页配置 Cloudflare R2 备份，用于定时备份关键数据。
+也可以在后台设置页配置 Cloudflare R2 备份，手动触发把 config.json 与 data/ 打包上传。
+
+> **注意**：当前版本**没有周期性备份调度器**。`backup.interval_minutes` 会被保存，
+> 但没有任何组件按它定时执行 —— 自动备份不会发生。需要定时备份请用宿主机的
+> cron 调 `POST /api/backups`，或在容器外做快照。
 
 ## 升级：普通 Docker 部署
 
