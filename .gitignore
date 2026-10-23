@@ -1,27 +1,32 @@
-# Python-generated files
+# Go build artifacts
+/chatgpt2api
+/cmd/server/server
+/goldenrecord
+*.test
+
+# Python 遗留（重构期间保留，M7 移除）
 __pycache__/
 *.py[oc]
+.venv
+web_dist
 build/
 dist/
 wheels/
 *.egg-info
-web_dist
-# Virtual environments
-.venv
-.idea
+
+# 运行时数据
 data
 config.json
 edit
 
 docker-compose-local.yml
-
 .claude/settings.local.json
 
-# Environment variables
+# 环境变量
 .env
 .env.local
 
-# Database files
+# 数据库文件
 *.db
 *.sqlite
 *.sqlite3

@@ -1,6 +1,50 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 - 2026-10-23
+
+### 重大变更：后端从 Python/FastAPI 全量重写为 Go/Gin
+
+后端 17,642 行 Python 重写为 Go，单二进制部署。前端与 `data/` 存量数据零迁移。
+
++ [重构] 后端全量重写为 Go 1.27 + Gin，单静态二进制（CGO_ENABLED=0），镜像改用 distroless。
++ [重构] 前端静态资源用 `go:embed` 打进二进制，运行时可用 `CHATGPT2API_WEB_DIST` 覆盖。
++ [重构] 上游 HTTP 客户端改用 `bogdanfinn/tls-client`，复刻 curl_cffi 的浏览器指纹（TLS + header 顺序）。
++ [重构] 备份加密从 shell out `openssl enc` 改为原生 `crypto/aes` + PBKDF2，产物仍与 OpenSSL 双向兼容。
++ [优化] 图片并行生成改用 goroutine + 每账号 channel 信号量，槽位获取/释放成对，消除泄漏。
++ [优化] 文本对话缓存改为进程内 LRU + in-flight 去重，同 key 并发只算一次。
+
+### 兼容性
+
++ 全部 78 条 HTTP 路由、三套错误信封（管理面 / OpenAI / Anthropic）、`config.json` 语义、`data/` 文件格式逐字保留。
++ 认证哈希保持裸 SHA-256（无盐），存量 `data/auth_keys.json` 直接可用。
++ `logs.jsonl`、`accounts.json`、`image_tasks.json`、`cpa_config.json`、`sub2api_config.json` 字段集不变。
+
+### 修复
+
++ [修复] `download_images_zip` 恢复 WebDAV 回退分支（Python 版被同名函数覆盖，WebDAV 模式下 zip 下载实际不可用）。
++ [修复] 匿名链路不再发送空 `Authorization: Bearer `（空 token 会被上游判为无效凭据）。
++ [修复] `/v1/models` 补齐全部文本模型（`gpt-6` / `gpt-5-6` / `research` 等 11 个）。
+  根因是 `NewModelCatalog` 的 fetcher 传了 nil，目录永远为空，接口只剩图片模型。
+  文本模型改为运行时拉上游 `/backend-api/models`（TTL 300s，账号变更即失效），
+  新增文本模型不再需要改代码。
++ [新增] 图片模型清单补齐 `gpt-image-2.5` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
+  这三个 slug 不在上游 `/backend-api/models` 返回里，实测出图确认后收录；
+  模型名直接作为上游 slug 透传，不走 `default_upstream_model_name` 映射。
++ [修复] `conversation/init` 改为 POST + body（原用 GET，稳定 400，导致账号刷新拿不到 email/quota）。
++ [修复] 图片下载补 `Authorization`（`/backend-api/estuary/content` 带签名仍要求登录态，否则 404）。
++ [修复] PoW 三段静态 JSON 的裁剪规则（`static_3` 必须保留尾部 `]`）。
+  少一个字符会让 sentinel token 格式正确但上游稳定 500。
++ [修复] 图片链路改走 `/backend-api/f/conversation`（prepare 换 conduit_token），
+  原走文本端点导致整条链路不可用。
++ [修复] 刷新账号后回写 `email`/`quota`/`type` 等字段（原只计数不回写，刷新「成功」但数据全空）。
++ [修复] 图片成功计数改为按实际出图判定（原无条件记 success，失败也扣额度）。
+
+### 已知问题
+
++ 匿名对话链路（`/backend-anon/conversation`）当前被上游限制：Python 返回 403、Go 返回 500。
+  payload 与 header 已逐字段核对一致，非实现缺陷。详见 `docs/adr/0008-anonymous-conversation-unavailable.md`。
++ 密码重新登录（`/api/accounts/re-login`）返回明确的「未实现」而非假装成功。
++ 可编辑 PPT/PSD 生成、网页搜索、Responses 图片工具调用尚未接入（返回 501）。
 
 ## 1.8.0 - 2026-07-28
 
@@ -75,6 +119,5 @@
 ## 1.2.0 - 2026-05-28
 
 + [新增] 当前版本基线，包含 Web 面板、画图、号池管理、注册机、图片管理、日志管理和设置能力。
-+ [新增] 前端版本号支持点击查看版本更新弹窗，展示当前版本、最新版本和更新日志。
 + [优化] 优化注册机效率，成功率大幅提高。
 + [优化] 优化生图页面配置选项。

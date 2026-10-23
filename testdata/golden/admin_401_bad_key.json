@@ -1,0 +1,13 @@
+{
+  "name": "admin_401_bad_key",
+  "method": "GET",
+  "path": "/api/accounts",
+  "status": 401,
+  "content_type": "application/json",
+  "body": "{\"detail\":{\"error\":\"密钥无效或已失效，请重新登录\"}}",
+  "request_headers": {
+    "Authorization": "Bearer definitely-wrong"
+  },
+  "request_body": "",
+  "compare": "json"
+}

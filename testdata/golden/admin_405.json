@@ -1,0 +1,11 @@
+{
+  "name": "admin_405",
+  "method": "PUT",
+  "path": "/api/accounts",
+  "status": 405,
+  "content_type": "application/json",
+  "body": "{\"detail\":\"Method Not Allowed\"}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}

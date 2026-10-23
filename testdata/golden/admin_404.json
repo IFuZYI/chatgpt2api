@@ -1,0 +1,11 @@
+{
+  "name": "admin_404",
+  "method": "GET",
+  "path": "/api/does-not-exist",
+  "status": 404,
+  "content_type": "application/json",
+  "body": "{\"detail\":\"Not Found\"}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}

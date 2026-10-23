@@ -1,0 +1,11 @@
+{
+  "name": "spa_next_asset",
+  "method": "GET",
+  "path": "/_next/static/missing.js",
+  "status": 404,
+  "content_type": "application/json",
+  "body": "{\"detail\":\"Not Found\"}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}

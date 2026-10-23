@@ -1,0 +1,14 @@
+{
+  "name": "admin_422_accounts_tokens_not_list",
+  "method": "POST",
+  "path": "/api/accounts",
+  "status": 422,
+  "content_type": "application/json",
+  "body": "{\"detail\":[{\"type\":\"list_type\",\"loc\":[\"body\",\"tokens\"],\"msg\":\"Input should be a valid list\",\"input\":\"nope\"}]}",
+  "request_headers": {
+    "Authorization": "Bearer chatgpt2api",
+    "Content-Type": "application/json"
+  },
+  "request_body": "{\"tokens\":\"nope\"}",
+  "compare": "json"
+}

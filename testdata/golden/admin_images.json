@@ -1,0 +1,13 @@
+{
+  "name": "admin_images",
+  "method": "GET",
+  "path": "/api/images",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"items\":[],\"groups\":[]}",
+  "request_headers": {
+    "Authorization": "Bearer chatgpt2api"
+  },
+  "request_body": "",
+  "compare": "json"
+}

@@ -131,15 +131,15 @@ docker compose -f docker-compose.warp.yml down
 
 ## 方式三：源码运行
 
-适合本地开发或临时调试。
+适合本地开发或临时调试。2.0 起后端是 Go，前端仍是 Next.js。
 
-后端：
+后端（Go 1.27+）：
 
 ```bash
 git clone git@github.com:basketikun/chatgpt2api.git
 cd chatgpt2api
-uv sync
-uv run main.py
+go build -o chatgpt2api ./cmd/server
+./chatgpt2api --addr :8000
 ```
 
 前端开发服务：
@@ -150,7 +150,26 @@ bun install
 bun run dev
 ```
 
-源码方式运行时，后端默认读取项目根目录的 `config.json` 和 `data/`。
+前端开发服务需要指向后端 `http://127.0.0.1:8000`（见 `web/src/constants/common-env.ts`）。
+
+源码方式运行时，后端默认读取项目根目录的 `config.json`、`data/` 和 `VERSION`。
+可用 `--base-dir` 指定其他目录，或用 `CHATGPT2API_BASE_DIR` 环境变量。
+
+### 前端静态资源
+
+生产镜像里前端产物用 `go:embed` 打进二进制，不需要额外文件。
+开发时若想改前端不重编译 Go，可指向目录：
+
+```bash
+CHATGPT2API_WEB_DIST=/path/to/web/out ./chatgpt2api --addr :8000
+```
+
+### 跑测试
+
+```bash
+go test ./...                    # 单元 + golden + 路由对齐
+go test -tags live ./internal/upstream/ -v   # 真实上游握手（需要外网）
+```
 
 ## 存储后端
 

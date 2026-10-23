@@ -5,6 +5,7 @@ import { ChevronDown, FileArchive, FileText, KeyRound, ListChecks, type LucideIc
 
 import { Card, CardContent } from "@/components/ui/card";
 import webConfig from "@/constants/common-env";
+import { fetchModels } from "@/lib/api";
 import { getStoredAuthSession } from "@/store/auth";
 
 type ParamRow = [string, string, string];
@@ -40,7 +41,7 @@ const docs: ApiDoc[] = [
     path: "/v1/chat/completions",
     icon: FileText,
     input: [
-      ["model", "string", "模型名，例如 gpt-5-mini，也可用于图片兼容场景。"],
+      ["model", "string", "模型名，例如 gpt-6，也可用于图片兼容场景。"],
       ["messages", "array", "OpenAI 兼容消息数组。"],
       ["stream", "boolean", "可选，是否流式返回。"],
       ["n", "number", "可选，图片兼容场景会解析为生成数量。"],
@@ -53,7 +54,7 @@ const docs: ApiDoc[] = [
     example: (baseUrl: string, key: string) => `curl ${baseUrl}/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${key}" \\
-  -d '{"model":"gpt-5-mini","messages":[{"role":"user","content":"你好"}]}'`,
+  -d '{"model":"gpt-6","messages":[{"role":"user","content":"你好"}]}'`,
   },
   {
     title: "Responses",
@@ -74,7 +75,7 @@ const docs: ApiDoc[] = [
     example: (baseUrl: string, key: string) => `curl ${baseUrl}/responses \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${key}" \\
-  -d '{"model":"gpt-5-mini","input":"生成一张未来城市图片"}'`,
+  -d '{"model":"gpt-6","input":"生成一张未来城市图片"}'`,
   },
   {
     title: "搜索",
@@ -215,7 +216,6 @@ const docs: ApiDoc[] = [
   },
 ];
 
-const usableModels = ["gpt-image-2", "codex-gpt-image-2", "auto", "gpt-5", "gpt-5-1", "gpt-5-2", "gpt-5-3", "gpt-5-3-mini", "gpt-5-mini"];
 
 function ParamTable({ rows }: { rows: ParamRow[] }) {
   return (
@@ -244,6 +244,7 @@ function ParamTable({ rows }: { rows: ParamRow[] }) {
 
 export function ApiDocsCard() {
   const [authKey, setAuthKey] = useState("");
+  const [models, setModels] = useState<string[]>([]);
   const serviceBaseUrl = webConfig.apiUrl.replace(/\/$/, "") || (typeof window !== "undefined" ? window.location.origin : "");
   const openAIBaseUrl = `${serviceBaseUrl}/v1`;
   const displayKey = authKey || "<当前密钥>";
@@ -253,6 +254,29 @@ export function ApiDocsCard() {
     void getStoredAuthSession().then((session) => {
       if (active) setAuthKey(session?.key || "");
     });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // 模型列表从 /v1/models 实时拉取，不在前端硬编码。
+  //
+  // 硬编码过两次都过时了：文本模型由上游决定（gpt-6 / gpt-5-6 系列），
+  // 图片模型随版本增加（2.5 系列）。写死列表的结果就是文档里写着
+  // 上游早已下线的模型名。
+  useEffect(() => {
+    let active = true;
+    void fetchModels()
+      .then((data) => {
+        if (!active) return;
+        const ids = data.data
+          .map((item) => String(item.id || "").trim())
+          .filter((id) => id !== "");
+        setModels(Array.from(new Set(ids)));
+      })
+      .catch(() => {
+        if (active) setModels([]);
+      });
     return () => {
       active = false;
     };
@@ -293,9 +317,13 @@ export function ApiDocsCard() {
         <div className="space-y-2">
           <div className="text-xs font-medium text-stone-600">常用模型，也可请求 /v1/models 获取</div>
           <div className="flex flex-wrap gap-2">
-            {usableModels.map((model) => (
-              <span key={model} className="rounded-md border border-stone-200 bg-white px-2 py-1 font-mono text-xs text-stone-700">{model}</span>
-            ))}
+            {models.length > 0 ? (
+              models.map((model) => (
+                <span key={model} className="rounded-md border border-stone-200 bg-white px-2 py-1 font-mono text-xs text-stone-700">{model}</span>
+              ))
+            ) : (
+              <span className="text-xs text-stone-400">暂未获取到模型列表，请检查账号是否可用。</span>
+            )}
           </div>
         </div>
 

@@ -1,0 +1,11 @@
+{
+  "name": "openai_405_method",
+  "method": "DELETE",
+  "path": "/v1/models",
+  "status": 405,
+  "content_type": "application/json",
+  "body": "{\"error\":{\"message\":\"Method Not Allowed\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"bad_request\"}}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}

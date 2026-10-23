@@ -1,0 +1,11 @@
+{
+  "name": "openai_404_unknown",
+  "method": "GET",
+  "path": "/v1/does-not-exist",
+  "status": 404,
+  "content_type": "application/json",
+  "body": "{\"error\":{\"message\":\"Not Found\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"bad_request\"}}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}

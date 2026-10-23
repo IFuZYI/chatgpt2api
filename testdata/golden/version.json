@@ -1,0 +1,11 @@
+{
+  "name": "version",
+  "method": "GET",
+  "path": "/version",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"version\":\"1.8.0\"}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}

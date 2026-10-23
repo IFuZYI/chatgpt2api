@@ -1,0 +1,13 @@
+{
+  "name": "admin_auth_users",
+  "method": "GET",
+  "path": "/api/auth/users",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"items\":[]}",
+  "request_headers": {
+    "Authorization": "Bearer chatgpt2api"
+  },
+  "request_body": "",
+  "compare": "json"
+}

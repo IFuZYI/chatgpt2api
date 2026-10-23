@@ -32,13 +32,78 @@
 | `sub2api` 导入 | ✅  | 已支持勾选 `sub2api` 中的 OpenAI OAuth 账号，批量拉取 `access_token` 导入本地号池，并展示导入进度。 |
 | Docker 自托管部署 | ✅  | 已支持 Docker Compose 部署，并提供多架构镜像。 |
 | 兼容接口中的多参考图能力 | ✅  | 已实现，支持在兼容接口中传入多参考图。 |
-| 更高级的 Token 调度策略 | ⚠️ | 当前已有基础轮询与限流刷新机制，更复杂的调度策略仍在完善中。 |
+| 更高级的 Token 调度策略 | ⚠️ | 当前已有轮询、限流刷新、槽位并发控制；更复杂的调度策略仍在完善中。 |
 | Render / Vercel 等部署表述 | ⚠️ | 当前主要以 Docker 部署为主，其他平台部署方式暂未重点说明。 |
-| `/v1/complete` 文本补全与流式输出 | ✅  | 已实现。 |
+| `/v1/complete` 文本补全 | ❌  | 该端点从未存在，文档早期误记。文本能力走 `/v1/chat/completions`。 |
 | 流式输出支持 | ✅  | 已实现。 |
 | 文本补全缓存与重复请求合并 | ✅  | `/v1/chat/completions` 文本链路默认启用 60 秒短缓存、流式结果回放、in-flight 请求合并和相邻重复消息清理；可通过 `chat_completion_cache` 配置关闭或调整。 |
 | 图片尺寸参数 | ❌  | 待实现。 |
 | 服务端图片 URL 缓存 | ✅  | 已实现。 |
-| `rt_token` 刷新 | ❌  | 待实现。 |
+| `rt_token` 刷新 | ✅  | 通过 `refresh_token` 刷新 access_token，含 keepalive 周期。 |
 | 代理配置功能 | ✅  | 已支持网页端配置全局 HTTP / HTTPS / SOCKS5 / SOCKS5H 代理，并应用到出站请求。 |
-| Anthropic 协议支持 | ❌  | 待实现。 |
+| Anthropic 协议支持 | ✅  | 已实现 `POST /v1/messages`，含 XML 工具调用适配。 |
+
+## 2.0 新增说明
+
+后端已从 Python/FastAPI 全量重写为 Go/Gin（见 `docs/adr/`）。上表功能在 Go 版中的实现状态：
+
+| 项 | 状态 | 说明 |
+|:--|:--|:--|
+| 全部 78 条 HTTP 路由 | ✅ | 与 Python 版逐条对齐，`TestRouteParity` 常驻回归。 |
+| 三套错误信封 | ✅ | 管理面 / OpenAI / Anthropic，28 个 golden 用例覆盖。 |
+| 上游 TLS 指纹 | ✅ | `tls-client` + header 顺序，真实上游 sentinel 握手验证通过。 |
+| 图片并行生成与槽位 | ✅ | goroutine + channel 信号量，槽位泄漏有测试。 |
+| 备份加密 | ✅ | 原生 AES + PBKDF2，与 `openssl enc` 双向兼容（有测试）。 |
+| 密码重新登录 | ⚠️ | 返回明确「未实现」，不假装成功。 |
+| 可编辑 PPT/PSD | ⚠️ | 返回 501。 |
+| 网页搜索 | ⚠️ | 返回 501。 |
+| Responses 图片工具 | ⚠️ | 返回 501（文本链路可用）。 |
+| 远程图片 URL 拉取 | ⚠️ | 返回 400（data URL 与 multipart 可用）。 |
+| 匿名对话链路 | ❌ | 上游限制，非实现问题（见 `docs/adr/0008`）。 |
+
+## 图片模型清单（2026-10 实测）
+
+上游 `/backend-api/models` **不返回**图片模型（该端点只暴露文本模型），
+所以图片模型无法自动发现，只能实测确认后写死在代码里
+（`internal/protocol/models.go` 的 `baseImageModels`）。
+
+| 模型 | 状态 | 备注 |
+|:--|:--|:--|
+| `gpt-image-2` | ✅ | 通用入口，上游模型由 `default_upstream_model_name` 决定（默认 `gpt-5-5`） |
+| `gpt-image-2.5` | ✅ | 模型名直接作为上游 slug 透传 |
+| `gpt-image-2.5-flare` | ✅ | 同上 |
+| `gpt-image-2.5-sunburst` | ✅ | 同上 |
+| `codex-gpt-image-2` | ✅ | Codex 链路专用，带套餐前缀别名 |
+
+2.5 系列三个变体在同 prompt 下产出字节数各不相同（839KB / 853KB / 943KB，
+均 1254×1254），确认是不同模型而非别名。
+
+**新增模型时必须实测出图再收录**：只把名字加进列表不会让它工作，
+还要确认 `_image_model_settings` 的映射分支是否覆盖（`gpt-image-2` 走配置，
+其余走透传）。
+
+## 模型目录的来源（重要）
+
+`/v1/models` 的模型来自**两条完全不同的路径**，改代码时必须分开看：
+
+| 类型 | 来源 | 能否自动发现 |
+|:--|:--|:--|
+| 文本模型 | 运行时拉上游 `/backend-api/models`（`ModelCatalog`，TTL 300s） | ✅ 能 |
+| 图片模型 | 写死在 `internal/protocol/models.go` 的 `baseImageModels` | ❌ 不能 |
+
+原因：上游 `/backend-api/models` **只返回文本模型**，图片模型（`gpt-image-2` 系列）
+完全不在该响应里，无法通过任何接口自动发现，只能实测出图确认后写死。
+
+### 2026-10 实测的上游文本模型（11 个）
+
+`auto` / `gpt-5-3-mini` / `gpt-5-6` / `gpt-5-6-mini` / `gpt-5-6-t-mini` /
+`gpt-5-6-t-mini-mini` / `gpt-6` / `gpt-6-mini` / `gpt-6-t-mini` /
+`gpt-6-t-mini-mini` / `research`
+
+这些是动态拉取的，不需要写代码。**新增文本模型无需改代码**。
+
+### 踩过的坑
+
+`NewModelCatalog(accounts, nil)` 的第二个参数是 fetcher。传 `nil` 不会报错，
+只会让目录永远为空 —— 表现为 `/v1/models` 只有图片模型，文本模型全部消失。
+`TestModelCatalogNilFetcherYieldsEmpty` 固定住这个行为，让漏注入在评审时可见。

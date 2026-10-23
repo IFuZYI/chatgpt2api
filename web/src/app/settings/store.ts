@@ -29,7 +29,6 @@ import {
   type ProxyRuntimeEgressMode,
   type ProxyRuntimeSettings,
   type SettingsConfig,
-  type ThirdPartyAppsSettings,
 } from "@/lib/api";
 
 export const PAGE_SIZE_OPTIONS = ["50", "100", "200"] as const;
@@ -56,13 +55,6 @@ const DEFAULT_PROXY_RUNTIME: ProxyRuntimeSettings = {
     warm_up_on_start: false,
     has_cf_cookies: false,
     has_cf_clearance: false,
-  },
-};
-
-const DEFAULT_THIRD_PARTY_APPS: ThirdPartyAppsSettings = {
-  infinite_canvas: {
-    enabled: false,
-    url: "https://canvas.best",
   },
 };
 
@@ -108,18 +100,6 @@ function normalizeProxyRuntime(value: unknown): ProxyRuntimeSettings {
   };
 }
 
-function normalizeThirdPartyApps(value: unknown): ThirdPartyAppsSettings {
-  const source = typeof value === "object" && value !== null ? value as Partial<ThirdPartyAppsSettings> : {};
-  const canvas: Partial<ThirdPartyAppsSettings["infinite_canvas"]> = typeof source.infinite_canvas === "object" && source.infinite_canvas
-    ? source.infinite_canvas
-    : {};
-  return {
-    infinite_canvas: {
-      enabled: Boolean(canvas.enabled),
-      url: String(canvas.url || DEFAULT_THIRD_PARTY_APPS.infinite_canvas.url),
-    },
-  };
-}
 
 function normalizeConfig(config: SettingsConfig): SettingsConfig {
   const defaultThinkingEffort = ["standard", "extended", "max"].includes(String(config.default_thinking_effort))
@@ -205,7 +185,6 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
       public_base_url: String(imageStorage.public_base_url || ""),
     },
     proxy_runtime: normalizeProxyRuntime(config.proxy_runtime),
-    third_party_apps: normalizeThirdPartyApps(config.third_party_apps),
     backup: {
       ...backup,
       enabled: Boolean(backup.enabled),
@@ -316,7 +295,6 @@ type SettingsStore = {
   setProxyRuntimeField: <K extends keyof ProxyRuntimeSettings>(key: K, value: ProxyRuntimeSettings[K]) => void;
   setProxyRuntimeClearanceField: <K extends keyof ProxyRuntimeSettings["clearance"]>(key: K, value: ProxyRuntimeSettings["clearance"][K]) => void;
   setProxyRuntimeStatusCodesText: (value: string) => void;
-  setInfiniteCanvasField: <K extends keyof ThirdPartyAppsSettings["infinite_canvas"]>(key: K, value: ThirdPartyAppsSettings["infinite_canvas"][K]) => void;
   testImageStorage: () => Promise<void>;
   syncImagesToWebDAV: () => Promise<void>;
   setBackupField: (key: keyof BackupSettings, value: string | boolean) => void;
@@ -476,12 +454,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
             refresh_interval: Math.max(60, Number(config.proxy_runtime?.clearance?.refresh_interval) || 3600),
           },
         },
-        third_party_apps: {
-          infinite_canvas: {
-            enabled: Boolean(config.third_party_apps?.infinite_canvas?.enabled),
-            url: String(config.third_party_apps?.infinite_canvas?.url || DEFAULT_THIRD_PARTY_APPS.infinite_canvas.url).trim(),
-          },
-        },
         backup: {
           ...(config.backup as BackupSettings),
           account_id: String(config.backup?.account_id || "").trim(),
@@ -497,7 +469,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set({
         config: normalizeConfig(data.config),
       });
-      window.dispatchEvent(new Event("third-party-apps-updated"));
       toast.success("配置已保存");
       return true;
     } catch (error) {
@@ -710,27 +681,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
             ...runtime,
             reset_session_status_codes: codes.length > 0 ? codes : [403],
           }),
-        },
-      };
-    });
-  },
-
-  setInfiniteCanvasField: (key, value) => {
-    set((state) => {
-      if (!state.config) {
-        return {};
-      }
-      const apps = normalizeThirdPartyApps(state.config.third_party_apps);
-      return {
-        config: {
-          ...state.config,
-          third_party_apps: {
-            ...apps,
-            infinite_canvas: {
-              ...apps.infinite_canvas,
-              [key]: value,
-            },
-          },
         },
       };
     });

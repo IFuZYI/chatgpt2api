@@ -1,0 +1,13 @@
+{
+  "name": "anthropic_401_messages",
+  "method": "POST",
+  "path": "/v1/messages",
+  "status": 401,
+  "content_type": "application/json",
+  "body": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"密钥无效或已失效，请重新登录\"}}",
+  "request_headers": {
+    "Content-Type": "application/json"
+  },
+  "request_body": "{}",
+  "compare": "json"
+}

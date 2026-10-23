@@ -7,8 +7,30 @@ __pycache__
 *.pyo
 *.pyd
 
+# Go 构建产物
+/chatgpt2api
+/goldenrecord
+*.test
+
+# 前端构建中间产物（web/out 由 web-build 阶段生成）
 web/.next
 web/node_modules
 
+# Python 后端（已被 Go 替代，保留源码仅作历史参考）
+api
+services
+utils
+main.py
+pyproject.toml
+uv.lock
+test
+scripts
+
+# 运行时数据与文档
+data
+config.json
+testdata
+docs
 assets
 README.md
+CHANGELOG.md

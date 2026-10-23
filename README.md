@@ -68,13 +68,15 @@ docker compose -f docker-compose.warp.yml up -d --build
 
 ### 本地开发
 
+2.0 起后端是 Go（单二进制），前端仍是 Next.js。
+
 启动后端：
 
 ```bash
 git clone git@github.com:basketikun/chatgpt2api.git
 cd chatgpt2api
-uv sync
-uv run main.py
+go build -o chatgpt2api ./cmd/server
+./chatgpt2api --addr :8000
 ```
 
 启动前端：
@@ -84,6 +86,15 @@ cd chatgpt2api/web
 bun install
 bun run dev
 ```
+
+跑测试：
+
+```bash
+go test ./...                                 # 单元 + golden + 路由对齐（170 个）
+go test -tags live ./internal/upstream/ -v    # 真实上游握手（需外网）
+```
+
+架构决策记录见 `docs/adr/`，术语表见 `GLOSSARY.md`。
 
 后续更新新版本：
 

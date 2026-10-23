@@ -1,0 +1,11 @@
+{
+  "name": "admin_401_settings",
+  "method": "GET",
+  "path": "/api/settings",
+  "status": 401,
+  "content_type": "application/json",
+  "body": "{\"detail\":{\"error\":\"密钥无效或已失效，请重新登录\"}}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}

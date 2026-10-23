@@ -1,0 +1,14 @@
+{
+  "name": "admin_400_accounts_empty",
+  "method": "POST",
+  "path": "/api/accounts",
+  "status": 400,
+  "content_type": "application/json",
+  "body": "{\"detail\":{\"error\":\"tokens is required\"}}",
+  "request_headers": {
+    "Authorization": "Bearer chatgpt2api",
+    "Content-Type": "application/json"
+  },
+  "request_body": "{}",
+  "compare": "json"
+}

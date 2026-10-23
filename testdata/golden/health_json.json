@@ -1,0 +1,11 @@
+{
+  "name": "health_json",
+  "method": "GET",
+  "path": "/health?format=json",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"degraded\",\"healthy\":false,\"version\":\"1.8.0\",\"storage\":{\"backend\":{\"type\":\"json\",\"description\":\"本地 JSON 文件存储\",\"file_path\":\"/home/chatgpt2api/data/accounts.json\",\"file_exists\":false,\"auth_keys_file_path\":\"/home/chatgpt2api/data/auth_keys.json\",\"auth_keys_file_exists\":false},\"health\":{\"status\":\"healthy\",\"backend\":\"json\",\"file_exists\":false,\"file_path\":\"/home/chatgpt2api/data/accounts.json\",\"auth_keys_file_exists\":false,\"auth_keys_file_path\":\"/home/chatgpt2api/data/auth_keys.json\"}},\"proxy_runtime\":{\"enabled\":false,\"egress_mode\":\"single_proxy\",\"proxy_source\":\"direct\",\"has_proxy\":false,\"clearance_enabled\":false,\"clearance_mode\":\"flaresolverr\",\"has_clearance_bundle\":false,\"cached_clearance_hosts\":[]},\"accounts\":{\"total\":0,\"cumulative_total\":0,\"active\":0,\"limited\":0,\"abnormal\":0,\"disabled\":0,\"total_quota\":0,\"total_success\":0,\"total_fail\":0,\"by_type\":{}}}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "shape"
+}

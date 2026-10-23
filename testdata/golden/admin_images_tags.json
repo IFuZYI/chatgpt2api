@@ -1,0 +1,13 @@
+{
+  "name": "admin_images_tags",
+  "method": "GET",
+  "path": "/api/images/tags",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"tags\":[]}",
+  "request_headers": {
+    "Authorization": "Bearer chatgpt2api"
+  },
+  "request_body": "",
+  "compare": "json"
+}

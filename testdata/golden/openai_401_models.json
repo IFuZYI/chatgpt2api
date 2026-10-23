@@ -1,0 +1,11 @@
+{
+  "name": "openai_401_models",
+  "method": "GET",
+  "path": "/v1/models",
+  "status": 401,
+  "content_type": "application/json",
+  "body": "{\"error\":{\"message\":\"密钥无效或已失效，请重新登录\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_api_key\"}}",
+  "request_headers": null,
+  "request_body": "",
+  "compare": "json"
+}
