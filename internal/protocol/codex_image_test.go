@@ -149,22 +149,24 @@ func TestGenerateCodexImageWithoutResultErrors(t *testing.T) {
 
 // data URL 前缀必须剥掉（Python: result.split(",", 1)[1]）。
 func TestCodexResponseImagesStripsDataURLPrefix(t *testing.T) {
-	event := map[string]any{
+	collector := newCodexImageCollector()
+	collector.collect(map[string]any{
 		"type": "response.output_item.done",
 		"item": map[string]any{
 			"type":   "image_generation_call",
 			"result": "data:image/png;base64," + tinyPNG,
 		},
-	}
-	images := codexResponseImages(event)
+	})
+	images := collector.results()
 	if len(images) != 1 || images[0] != tinyPNG {
 		t.Fatalf("images = %v, want stripped base64", images)
 	}
 }
 
-// 同一个 item 在 done 事件与 completed.response.output 里各出现一次时只保留一份。
-func TestCodexResponseImagesDeduplicates(t *testing.T) {
-	payload := map[string]any{
+// 同一个 item 在单个 payload 内出现两次时只保留一份。
+func TestCodexResponseImagesDeduplicatesWithinEvent(t *testing.T) {
+	collector := newCodexImageCollector()
+	collector.collect(map[string]any{
 		"type": "response.completed",
 		"response": map[string]any{
 			"output": []any{
@@ -172,9 +174,66 @@ func TestCodexResponseImagesDeduplicates(t *testing.T) {
 			},
 		},
 		"item": map[string]any{"type": "image_generation_call", "result": tinyPNG},
-	}
-	if images := codexResponseImages(payload); len(images) != 1 {
+	})
+	if images := collector.results(); len(images) != 1 {
 		t.Fatalf("images = %d, want 1 after dedupe", len(images))
+	}
+}
+
+// **跨事件**去重：done 事件与 completed 事件里各带一次同一张图，最终只能有 1 张。
+//
+// 回归点：collector 曾经是每个事件的局部变量，同一个 item 被收两次，
+// 用户拿到两张一模一样的图 —— 而注释与 ADR 声称已去重。
+func TestGenerateCodexImageDeduplicatesAcrossEvents(t *testing.T) {
+	upstream := &codexStreamFake{events: []string{
+		// 同一个 item 先作为 output_item.done 出现
+		`{"type":"response.output_item.done","item":{"type":"image_generation_call","result":"` + tinyPNG + `"}}`,
+		// 再作为 response.completed 的 output 出现（上游确实会这样重复）
+		`{"type":"response.completed","response":{"status":"completed","output":[{"type":"image_generation_call","result":"` + tinyPNG + `"}]}}`,
+	}}
+	generator := &ImageGenerator{Upstream: upstream, Config: fastGenConfig()}
+
+	outputs, err := generator.Generate(context.Background(), ImageRequest{
+		Prompt: "a cat", Model: "codex-gpt-image-2", N: 1, ResponseFormat: "b64_json",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	total := 0
+	for _, output := range outputs {
+		if output.Kind == ImageKindResult {
+			total += len(output.Data)
+		}
+	}
+	if total != 1 {
+		t.Fatalf("result images = %d, want 1 (same item must not be collected twice across events)", total)
+	}
+}
+
+// 两张**不同**的图不能被误合并（去重按内容，不是按事件）。
+func TestGenerateCodexImageKeepsDistinctImages(t *testing.T) {
+	other := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+	upstream := &codexStreamFake{events: []string{
+		codexEventWithImage(tinyPNG),
+		codexEventWithImage(other),
+	}}
+	generator := &ImageGenerator{Upstream: upstream, Config: fastGenConfig()}
+
+	outputs, err := generator.Generate(context.Background(), ImageRequest{
+		Prompt: "a cat", Model: "codex-gpt-image-2", N: 1, ResponseFormat: "b64_json",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	total := 0
+	for _, output := range outputs {
+		if output.Kind == ImageKindResult {
+			total += len(output.Data)
+		}
+	}
+	if total != 2 {
+		t.Fatalf("result images = %d, want 2 (distinct payloads must both survive)", total)
 	}
 }
 
@@ -204,7 +263,7 @@ func TestGenerateCodexImageAcceptsSingleJSONEvent(t *testing.T) {
 
 // 非 codex 模型不能被 codex 分支吞掉（web 链路行为不变）。
 func TestGenerateNonCodexImageUsesWebChain(t *testing.T) {
-	upstream := newImageFake()
+	upstream := &webChainRecorder{imageFake: newImageFake()}
 	upstream.sseLines = []string{
 		`{"conversation_id":"conv-1","type":"server_ste_metadata","metadata":{"turn_use_case":"image gen"}}`,
 		`[DONE]`,
@@ -212,13 +271,47 @@ func TestGenerateNonCodexImageUsesWebChain(t *testing.T) {
 	upstream.conversations = []map[string]any{conversationWithImage("img1")}
 
 	generator := &ImageGenerator{Upstream: upstream, Config: fastGenConfig()}
-	if _, err := generator.Generate(context.Background(), ImageRequest{
-		Prompt: "a cat", Model: "gpt-image-2", N: 1, ResponseFormat: "b64_json",
-	}); err != nil {
+	outputs, err := generator.Generate(context.Background(), ImageRequest{
+		Prompt: "a cat", Model: "gpt-image-2", N: 1,
+		Size: "2048x2048", Quality: "high", ResponseFormat: "b64_json",
+	})
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// web 链路会把尺寸/质量拼进提示词。
-	if !strings.Contains(upstream.sseLines[0], "server_ste_metadata") {
-		t.Fatal("fake wiring broken")
+
+	// web 链路把尺寸/质量拼进提示词（codex 链路则走 tools[0]，见上一个测试）。
+	if len(upstream.requests) != 1 {
+		t.Fatalf("stream requests = %d, want 1", len(upstream.requests))
 	}
+	prompt := upstream.requests[0].Prompt
+	if !strings.Contains(prompt, "a cat") {
+		t.Errorf("prompt = %q, want the user prompt", prompt)
+	}
+	if !strings.Contains(prompt, "输出图片尺寸为 2048x2048。") {
+		t.Errorf("prompt = %q, want the size hint web chain appends", prompt)
+	}
+	if !strings.Contains(prompt, "输出图片质量为 high。") {
+		t.Errorf("prompt = %q, want the quality hint web chain appends", prompt)
+	}
+	// 走的是 web 链路，所以拿到的是 conversation + file_id 那条路的结果。
+	gotResult := false
+	for _, output := range outputs {
+		if output.Kind == ImageKindResult {
+			gotResult = true
+		}
+	}
+	if !gotResult {
+		t.Fatalf("web chain produced no result: %v", outputs)
+	}
+}
+
+// webChainRecorder 在 imageFake 之上记录 StreamImage 的入参（imageFake 本身不记）。
+type webChainRecorder struct {
+	*imageFake
+	requests []ImageStreamRequest
+}
+
+func (w *webChainRecorder) StreamImage(ctx context.Context, request ImageStreamRequest) (<-chan string, <-chan error, error) {
+	w.requests = append(w.requests, request)
+	return w.imageFake.StreamImage(ctx, request)
 }

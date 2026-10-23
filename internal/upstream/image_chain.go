@@ -39,9 +39,10 @@ func (c *Client) imageModelSettings(model string, defaultUpstream string, defaul
 			defaultUpstream = "gpt-5-5"
 		}
 		upstreamModel = defaultUpstream
-	case protocol.CodexImageModel:
-		upstreamModel = baseModel
 	default:
+		// codex 系列不会走到这里（StreamImage 已在入口分流到 /codex/responses），
+		// 但 IsSupportedImageModel 兜住它，保证即使被误调用也透传模型名而不是 "auto"。
+		//
 		// 2.5 系列（gpt-image-2.5 / -flare / -sunburst）：模型名本身就是上游 slug，
 		// 直接透传。实测把这三个名字作为 upstream_model 传给 /f/conversation
 		// 能正常出图（三者字节数各异，确认是不同模型）。

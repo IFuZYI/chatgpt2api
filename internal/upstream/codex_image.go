@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	http "github.com/bogdanfinn/fhttp"
 
@@ -19,6 +20,13 @@ const CodexResponsesInstructions = "Use the image_generation tool to create exac
 // codexImageToolModel 是 tools[0].model。Python 在 :790 硬编码 "gpt-image-2"，
 // 不跟随请求里的模型名（模型名只决定链路，不决定画图模型）。
 const codexImageToolModel = "gpt-image-2"
+
+// codexResponsesTimeout 对齐 Python 的 urlopen(timeout=1200)
+// （openai_backend_api.py:850）。
+//
+// 必须有上限：codex 没有轮询阶段可以兜底超时，一旦上游挂着不回包，
+// 异步任务会永远停在 running，且没有任何机制能把它推到终态。
+const codexResponsesTimeout = 1200 * time.Second
 
 // codexResponsesPath 是 Codex 专用端点。
 //
@@ -112,8 +120,16 @@ func (c *Client) streamCodexImage(
 		return nil, nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, BaseURL+codexResponsesPath, newBytesReader(body))
+	// 整个请求（含读完流）都受这个 deadline 约束：fhttp 的请求 ctx 会一直
+	// 管到 body 读完，所以 readSSEPayloads 也被它罩住。
+	//
+	// cancel 不能 defer 在这个函数里 —— 函数返回时流还没读，defer 会当场
+	// 取消 ctx、把 body 掐断。交给读流的 goroutine 在结束时调用。
+	streamCtx, cancel := context.WithTimeout(ctx, codexResponsesTimeout)
+
+	req, err := http.NewRequestWithContext(streamCtx, http.MethodPost, BaseURL+codexResponsesPath, newBytesReader(body))
 	if err != nil {
+		cancel()
 		return nil, nil, err
 	}
 	// Python 只发 Authorization + Content-Type；这里复用 c.headers 让 TLS 指纹、
@@ -125,11 +141,13 @@ func (c *Client) streamCodexImage(
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		cancel()
 		return nil, nil, err
 	}
 	if resp.StatusCode >= 400 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
+		cancel()
 		return nil, nil, NewStatusError(resp.StatusCode, retryAfterFromBody(preview),
 			fmt.Sprintf("%s failed: status=%d body=%s", codexResponsesPath, resp.StatusCode, truncate(string(preview), 300)))
 	}
@@ -142,6 +160,7 @@ func (c *Client) streamCodexImage(
 	payloads := make(chan string, 64)
 	errs := make(chan error, 1)
 	go func() {
+		defer cancel()
 		defer close(payloads)
 		defer close(errs)
 		defer resp.Body.Close()

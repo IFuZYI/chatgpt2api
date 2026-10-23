@@ -217,8 +217,12 @@ func TestWebModelStillAcquiresWebAccount(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("stream requests = %d, want 1", len(requests))
 	}
-	// web 链路必须把尺寸/质量拼进提示词（codex 链路则不会）。
+	// web 链路必须把尺寸/质量拼进提示词（codex 链路则不会，它走 tools[0]）。
+	// 请求里没传 size/quality 时默认是空 size + "auto"，因此只能断言质量提示。
 	if !strings.Contains(requests[0].Prompt, "a cat") {
-		t.Errorf("prompt = %q", requests[0].Prompt)
+		t.Errorf("prompt = %q, want the user prompt", requests[0].Prompt)
+	}
+	if !strings.Contains(requests[0].Prompt, "输出图片质量为 auto。") {
+		t.Errorf("prompt = %q, want the quality hint web chain appends", requests[0].Prompt)
 	}
 }

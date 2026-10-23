@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
@@ -359,6 +360,35 @@ func equalJSON(left, right any) bool {
 	leftJSON, _ := json.Marshal(left)
 	rightJSON, _ := json.Marshal(right)
 	return string(leftJSON) == string(rightJSON)
+}
+
+// codex 流必须有超时上限：没有它，上游挂住时异步任务会永远停在 running
+// （codex 没有轮询阶段可以兜底超时）。对齐 Python 的 urlopen(timeout=1200)。
+func TestStreamCodexImageSetsRequestDeadline(t *testing.T) {
+	client, fake := newCaptureClient("codex-token")
+	fake.fallback = captureResponse{status: 200, contentType: "text/event-stream", body: ""}
+
+	payloads, errs, err := client.StreamImage(context.Background(), imageStreamRequestForTest("codex-gpt-image-2"))
+	if err != nil {
+		t.Fatalf("StreamImage: %v", err)
+	}
+	for range payloads {
+	}
+	for range errs {
+	}
+
+	if len(fake.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(fake.requests))
+	}
+	ctx := fake.requests[0].Context()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("codex request has no deadline — an upstream hang would pin the task in running forever")
+	}
+	remaining := time.Until(deadline)
+	if remaining > codexResponsesTimeout || remaining < codexResponsesTimeout-30*time.Second {
+		t.Errorf("deadline is %.0fs out, want ~%v", remaining.Seconds(), codexResponsesTimeout)
+	}
 }
 
 // 保证 fake 满足 tls_client.HttpClient（编译期检查）。

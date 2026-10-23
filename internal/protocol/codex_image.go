@@ -15,19 +15,32 @@ import (
 // 因此 codex 不走 consumeStream（那套状态机是 web 的对话补丁协议），
 // 而是走这里的独立解析。
 
-// codexResponseImages 复刻 Python 的 _codex_response_images：
-// 递归遍历事件里的任意结构，收集 type=="image_generation_call" 的 result。
+// codexImageCollector 跨事件累积 codex 图片结果，并按 base64 内容去重。
 //
-// 结果可能是裸 base64，也可能带 "data:image/...;base64," 前缀（Python 在
-// :1250 用 split(",", 1)[1] 剥掉前缀），两种都归一成裸 base64。
-//
-// 与 Python 的差异：这里对完全相同的 base64 去重。流式响应里同一个 item 可能
-// 同时出现在 response.output_item.done 与 response.completed 的 response.output
-// 里，Python 会把同一张图收两次并返回重复图片；去重后的行为才是用户期望的。
-func codexResponseImages(value any) []string {
-	out := make([]string, 0, 2)
-	seen := map[string]bool{}
+// 去重必须**跨事件**：流式响应里同一个 image_generation_call 会同时出现在
+// response.output_item.done 的 item 与 response.completed 的
+// response.response.output 里。若每个事件各自去重（局部 seen），同一张图会被
+// 收两次并返回两张一样的图 —— 早期实现就是这样，与注释声称的行为不符。
+// Python 版正是如此（_codex_response_images 每次调用都新建列表），这里刻意偏离。
+type codexImageCollector struct {
+	images []string
+	seen   map[string]bool
+}
 
+func newCodexImageCollector() *codexImageCollector {
+	return &codexImageCollector{
+		images: make([]string, 0, 2),
+		seen:   map[string]bool{},
+	}
+}
+
+// collect 递归遍历一个事件（或任意嵌套结构），收集 type=="image_generation_call"
+// 的 result，归一成裸 base64 后追加（重复内容丢弃）。
+//
+// 复刻 Python 的 _codex_response_images（conversation.py:1245-1260）：
+// result 可能是裸 base64，也可能带 "data:image/...;base64," 前缀
+// （Python 在 :1250 用 split(",", 1)[1] 剥掉），两种都归一。
+func (c *codexImageCollector) collect(value any) {
 	var walk func(node any)
 	walk = func(node any) {
 		switch typed := node.(type) {
@@ -35,16 +48,14 @@ func codexResponseImages(value any) []string {
 			if stringOf(typed["type"]) == "image_generation_call" {
 				if result, ok := typed["result"].(string); ok {
 					trimmed := strings.TrimSpace(result)
-					if trimmed != "" {
-						if strings.HasPrefix(trimmed, "data:image/") {
-							if _, payload, found := strings.Cut(trimmed, ","); found {
-								trimmed = payload
-							}
+					if strings.HasPrefix(trimmed, "data:image/") {
+						if _, payload, found := strings.Cut(trimmed, ","); found {
+							trimmed = strings.TrimSpace(payload)
 						}
-						if !seen[trimmed] {
-							seen[trimmed] = true
-							out = append(out, trimmed)
-						}
+					}
+					if trimmed != "" && !c.seen[trimmed] {
+						c.seen[trimmed] = true
+						c.images = append(c.images, trimmed)
 					}
 				}
 			}
@@ -58,8 +69,10 @@ func codexResponseImages(value any) []string {
 		}
 	}
 	walk(value)
-	return out
 }
+
+// results 返回去重后的图片（裸 base64）。
+func (c *codexImageCollector) results() []string { return c.images }
 
 // generateCodexImage 跑一次 codex 图片生成。
 //
@@ -88,7 +101,8 @@ func (g *ImageGenerator) generateCodexImage(ctx context.Context, request ImageRe
 		return outputs, wrapImageError(streamErr, request.Model, "")
 	}
 
-	images := make([]string, 0, 2)
+	// collector 存活于整个流，所以同一个 item 出现在多个事件里也只收一次。
+	collector := newCodexImageCollector()
 	for payload := range payloads {
 		if payload == "[DONE]" {
 			break
@@ -97,9 +111,7 @@ func (g *ImageGenerator) generateCodexImage(ctx context.Context, request ImageRe
 		if !decodeObject(payload, &event) {
 			continue
 		}
-		for _, image := range codexResponseImages(event) {
-			images = append(images, image)
-		}
+		collector.collect(event)
 	}
 	for streamErr := range errs {
 		if streamErr != nil {
@@ -107,6 +119,7 @@ func (g *ImageGenerator) generateCodexImage(ctx context.Context, request ImageRe
 		}
 	}
 
+	images := collector.results()
 	if len(images) == 0 {
 		// Python: raise ImageGenerationError("No image result found in response")
 		return outputs, &ImageGenerationError{

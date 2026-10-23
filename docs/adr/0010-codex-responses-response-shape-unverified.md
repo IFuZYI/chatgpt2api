@@ -68,6 +68,8 @@ Go 侧严格复刻这两点（`internal/protocol/codex_image.go:27 codexResponse
 2. **结果是否分片**。若上游发的是增量事件（如带 `partial_image_b64` 的
    `response.image_generation_call.partial_image`）而不是一次性 `result`，
    当前实现会报 `No image result found in response`。这是最可能的失效模式。
+   注意：去重按「完整 base64 内容相等」，分片场景下每个分片都不同，去重不会误伤，
+   但也救不了「只有分片、没有完整 result」的情况 —— 那种情况必须改解析逻辑。
 3. **`result` 是裸 base64 还是 data URL**。两种都已支持，风险低。
 4. **端点是否接受完整浏览器指纹头**。Python 的 `_codex_responses_headers`
    只发 `Authorization` + `Content-Type`；Go 侧用 `c.headers(...)` 带全套
@@ -76,10 +78,18 @@ Go 侧严格复刻这两点（`internal/protocol/codex_image.go:27 codexResponse
 
 ## 与 Python 的刻意差异
 
-**对重复 base64 去重**。同一个 `image_generation_call` 可能同时出现在
+**对重复 base64 去重（跨事件）**。同一个 `image_generation_call` 可能同时出现在
 `response.output_item.done` 的 `item` 与 `response.completed` 的
-`response.output` 里。Python 会把同一张图收两次并返回两张一样的图；
-Go 侧按内容去重，只返回一张。这是行为改进，不是兼容性破坏。
+`response.output` 里。Python 的 `_codex_response_images` 每次调用都新建列表，
+会把同一张图收两次并返回两张一样的图；Go 侧用 `codexImageCollector`
+（`internal/protocol/codex_image.go:22`）在**整个流**上按 base64 内容去重，
+只返回一张。这是行为改进，不是兼容性破坏。
+
+去重范围的实现要点：collector 必须存活于整个流（`generateCodexImage` 作用域），
+不能是「每解析一个事件就新建」的局部状态 —— 否则跨事件重复照样漏网。
+`TestGenerateCodexImageDeduplicatesAcrossEvents`（两个独立事件 → 1 张图）与
+`TestGenerateCodexImageKeepsDistinctImages`（两张不同的图 → 2 张）分别锁定了
+「不该重复」与「不该误合并」两侧。
 
 其余行为与 Python 一致，包括：
 

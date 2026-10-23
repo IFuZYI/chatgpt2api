@@ -135,8 +135,11 @@ environment:
 - 支持通过 `n` 返回多张生成结果
 - 支持生成可编辑 PPT 文件
 - 支持生成可编辑 PSD 文件
-- 支持 Codex 中的画图接口逆向，仅 `Plus` / `Team` / `Pro` 订阅可用，模型别名为 `codex-gpt-image-2`，如有需要可自行在其他场景映射回
-  `gpt-image-2`，用于和官网画图区分；也就意味着同一账号会同时有官网和 Codex 两份生图额度
+- 支持 Codex 中的画图接口逆向，仅 `Plus` / `Team` / `Pro` 且 `source_type=codex` 的账号可用，模型别名为 `codex-gpt-image-2`，
+  如有需要可自行在其他场景映射回 `gpt-image-2`，用于和官网画图区分；也就意味着同一账号会同时有官网和 Codex 两份生图额度。
+  注意：该链路走 `/backend-api/codex/responses`，**请求侧已对齐 Python，响应事件格式尚未经真实上游验证**；
+  若上游返回的图片事件形态与推断不符，会明确报 `No image result found in response`（不会静默返回空图）。
+  详见 `docs/adr/0010-codex-responses-response-shape-unverified.md`。
 
 ### 在线画图功能
 
