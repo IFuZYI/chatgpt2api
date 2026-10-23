@@ -23,6 +23,51 @@ const (
 
 const pngSignature = "\x89PNG\r\n\x1a\n"
 
+// maxImagePixels 是单张图片允许的最大像素数，对齐 Pillow 的
+// Image.MAX_IMAGE_PIXELS（默认 89_478_485）。
+//
+// 为什么必须有这个上限：Go 的 image.Decode 会按 IHDR 声明的尺寸**真实分配**
+// 像素缓冲。一个一百多字节的 PNG 只要把 IHDR 写成 40000x40000，解码就会尝试
+// 分配约 6.4GB 并触发 `fatal error: runtime: out of memory` —— 这是运行时
+// 致命错误，gin.Recovery() 抓不到，整个服务直接退出（实测去掉这条检查后
+// 测试进程即刻崩溃）。
+//
+// 基线代码从不对用户字节做完整解码（只用 DecodeConfig 读头），mask 合成是
+// 第一个完整解码用户图片的路径，所以这个上限必须加在这里。Python 侧安全是
+// 因为 Pillow 自带 DecompressionBombError（同一阈值）。
+const maxImagePixels = 89_478_485
+
+// maskScaler 是 alpha 缩放用的插值器。
+//
+// 抽成变量只为让测试能替换成计数器，验证「尺寸相同时不做缩放」。
+// 生产代码从不写它；测试串行执行（本包无 t.Parallel），不引入竞争。
+var maskScaler draw.Scaler = draw.CatmullRom
+
+// decodeImageWithLimit 在完整解码之前先用 DecodeConfig 挡住超大图。
+//
+// 顺序很重要：DecodeConfig 只读头部，不分配像素缓冲；image.Decode 才分配。
+// 先查尺寸再解码，才能在 OOM 发生之前返回 error。
+func decodeImageWithLimit(payload []byte, label string) (image.Image, error) {
+	config, _, err := image.DecodeConfig(bytesReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("cannot identify %s file: %w", label, err)
+	}
+	if config.Width <= 0 || config.Height <= 0 {
+		return nil, fmt.Errorf("cannot identify %s file: invalid dimensions %dx%d",
+			label, config.Width, config.Height)
+	}
+	// 用 int64 相乘：32 位平台上 int 会溢出，让超大图绕过检查。
+	if pixels := int64(config.Width) * int64(config.Height); pixels > maxImagePixels {
+		return nil, fmt.Errorf("%s dimensions %dx%d (%d pixels) exceed the %d pixel limit",
+			label, config.Width, config.Height, pixels, maxImagePixels)
+	}
+	decoded, _, err := image.Decode(bytesReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("cannot identify %s file: %w", label, err)
+	}
+	return decoded, nil
+}
+
 // CompositeMask 复刻 services/protocol/openai_v1_image_edit.py:20-49 的
 // _composite_mask：把 mask 的 alpha 通道合成到图片中，标识需要编辑的区域。
 //
@@ -65,9 +110,9 @@ func compositeOneMask(imageTuple, maskTuple [3]string) ([3]string, error) {
 	if err != nil {
 		return [3]string{}, fmt.Errorf("cannot identify image file: %w", err)
 	}
-	decoded, _, err := image.Decode(bytesReader(imagePayload))
+	decoded, err := decodeImageWithLimit(imagePayload, "image")
 	if err != nil {
-		return [3]string{}, fmt.Errorf("cannot identify image file: %w", err)
+		return [3]string{}, err
 	}
 
 	bounds := decoded.Bounds()
@@ -108,17 +153,24 @@ func maskAlphaChannel(encodedMask string, width, height int) (*image.Gray, error
 	if err != nil {
 		return nil, fmt.Errorf("cannot identify mask image file: %w", err)
 	}
-	mask, _, err := image.Decode(bytesReader(payload))
+	mask, err := decodeImageWithLimit(payload, "mask image")
 	if err != nil {
-		return nil, fmt.Errorf("cannot identify mask image file: %w", err)
+		return nil, err
 	}
 
 	source := maskAlphaSource(mask, maskMode(payload, mask))
 
 	// 关键：resize 到原图尺寸。Python 用 Image.LANCZOS，这里用 CatmullRom。
-	// 1:1 时 CatmullRom 是恒等映射（实测 0/255 边界值不漂移），与 PIL 一致。
+	//
+	// 尺寸已经相同就跳过缩放：CatmullRom 在 1:1 时是恒等映射（实测
+	// 0..1024 的随机灰度图 0 差异），但 2048x2048 仍要花约 43% 的总耗时。
+	// OpenAI 规范要求 mask 与原图同尺寸，所以绝大多数请求走这条捷径。
+	if source.Bounds().Dx() == width && source.Bounds().Dy() == height {
+		return source, nil
+	}
+
 	alpha := image.NewGray(image.Rect(0, 0, width, height))
-	draw.CatmullRom.Scale(alpha, alpha.Bounds(), source, source.Bounds(), draw.Src, nil)
+	maskScaler.Scale(alpha, alpha.Bounds(), source, source.Bounds(), draw.Src, nil)
 	return alpha, nil
 }
 

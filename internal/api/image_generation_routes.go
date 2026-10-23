@@ -85,7 +85,7 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 			ResponseFormat: orDefaultValue(stringValueOf(body["response_format"]), "b64_json"),
 			BaseURL:        resolveImageBaseURL(c, d),
 		}
-		d.serveImageRequest(c, request, truthyValue(body["stream"]))
+		d.serveImageRequest(c, request, truthyValue(body["stream"]), nil)
 	})
 
 	r.POST("/v1/images/edits", func(c *gin.Context) {
@@ -117,25 +117,43 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, "image file or image_url is required"))
 			return
 		}
-		// 局部重绘：把 mask 的 alpha 合成进图片再送上游。
-		//
-		// Python 在 handle() 里、构造 ConversationRequest 之前做这件事
-		// （openai_v1_image_edit.py:53），且 usage 也按合成后的图算。
-		// 早期 Go 版直接丢弃 mask，结果整张图被重画 —— 看起来对但语义错。
-		composited, maskErr := protocol.CompositeMask(request.Images, mask)
-		if maskErr != nil {
-			writeErr(c, mapImageError(maskErr))
-			return
-		}
-		request.Images = composited
-		d.serveImageRequest(c, request, truthyValue(payload["stream"]))
+		// 局部重绘：mask 的合成放进 serveImageRequest，这样 call 日志能覆盖
+		// 合成失败的路径（Python 用 LoggedCall 包住整个 handler）。
+		d.serveImageRequest(c, request, truthyValue(payload["stream"]), mask)
 	})
 }
 
 // serveImageRequest 是生成与编辑的共同出口。
-func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, stream bool) {
+//
+// masks 非空时先做局部重绘合成（Python openai_v1_image_edit.py:53 在构造
+// ConversationRequest 之前做同一件事），再送上游。
+func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, stream bool, masks [][3]string) {
 	call := d.beginCall("生图", c.FullPath(), request.Model, c.GetString("key_name"))
-	defer func() { call.finish(nil, "", nil) }()
+	// 失败路径自己调 call.finish(err, ...) 记失败，defer 只兜成功路径，
+	// 否则一次请求会写两条日志。
+	logged := false
+	defer func() {
+		if logged {
+			return
+		}
+		call.finish(nil, "", nil)
+	}()
+
+	// 局部重绘：把 mask 的 alpha 合成进图片再送上游。
+	//
+	// 必须在 beginCall 之后做：mask 解码失败也要进 call 日志（Python 的
+	// LoggedCall 包住整个 handler，_composite_mask 抛异常同样被记录）。
+	// usage 也按合成后的图算 —— Python 也是先合成再计数。
+	if len(masks) > 0 {
+		composited, maskErr := protocol.CompositeMask(request.Images, masks)
+		if maskErr != nil {
+			logged = true
+			call.finish(maskErr, "", nil)
+			writeErr(c, mapImageError(maskErr))
+			return
+		}
+		request.Images = composited
+	}
 
 	// 同步接口：上游拒图必须变成 4xx（Python openai_v1_image_generations.py:32
 	// 与 openai_v1_image_edit.py:75 都无条件传 message_as_error=True）。

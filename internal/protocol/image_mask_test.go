@@ -9,7 +9,10 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
+
+	"golang.org/x/image/draw"
 )
 
 // encodePNG 把任意 image.Image 编成 base64 PNG 三元组。
@@ -390,4 +393,145 @@ func zlibCompress(t *testing.T, payload []byte) []byte {
 		t.Fatalf("zlib close: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// buildOversizedPNG 造一个 IHDR 声明超大尺寸、IDAT 只有几十字节的 PNG。
+//
+// 用来验证「解码前先按尺寸拦截」：真去解码会尝试分配 width*height*4 字节
+// 并触发 `fatal error: runtime: out of memory`（运行时致命错误，
+// gin.Recovery() 抓不到，整个进程退出）。文件本身只有约 100 字节。
+func buildOversizedPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+
+	header := make([]byte, 13)
+	binary.BigEndian.PutUint32(header[0:], uint32(width))
+	binary.BigEndian.PutUint32(header[4:], uint32(height))
+	header[8] = 8 // bit depth
+	header[9] = 0 // color type 0 = grayscale（每像素 1 字节，解码缓冲最小）
+
+	var out bytes.Buffer
+	out.WriteString(pngSignature)
+	writePNGChunk(&out, "IHDR", header)
+	writePNGChunk(&out, "IDAT", zlibCompress(t, make([]byte, 32)))
+	writePNGChunk(&out, "IEND", nil)
+	return out.Bytes()
+}
+
+// 解压炸弹防护：IHDR 声明 40000x40000（16 亿像素）的 100 字节 PNG
+// 必须在解码前被拦下，返回 error 而不是让进程 OOM。
+//
+// 回归点：这是 mask 合成引入的新攻击面 —— 基线只做 DecodeConfig，
+// 从不对用户字节完整解码。
+func TestCompositeMaskRejectsDecompressionBombImage(t *testing.T) {
+	bomb := buildOversizedPNG(t, 40000, 40000)
+
+	// 先确认这个 fixture 确实是「头部声明超大」而不是解码失败。
+	config, _, err := image.DecodeConfig(bytes.NewReader(bomb))
+	if err != nil {
+		t.Fatalf("fixture should have a readable header: %v", err)
+	}
+	if config.Width != 40000 || config.Height != 40000 {
+		t.Fatalf("fixture header = %dx%d, want 40000x40000", config.Width, config.Height)
+	}
+
+	images := [][3]string{{base64.StdEncoding.EncodeToString(bomb), "bomb.png", "image/png"}}
+	masks := [][3]string{encodePNG(t, solidGray(1, 1, 0), "mask.png")}
+
+	_, err = CompositeMask(images, masks)
+	if err == nil {
+		t.Fatal("expected an error for an oversized image; decoding it would OOM the process")
+	}
+	if !strings.Contains(err.Error(), "exceed") {
+		t.Errorf("error should mention the pixel limit, got: %v", err)
+	}
+}
+
+// mask 侧同样要拦：超大的 mask 也是用户可控输入。
+func TestCompositeMaskRejectsDecompressionBombMask(t *testing.T) {
+	bomb := buildOversizedPNG(t, 40000, 40000)
+
+	images := [][3]string{encodePNG(t, solidImage(2, 2, color.NRGBA{A: 255}), "photo.png")}
+	masks := [][3]string{{base64.StdEncoding.EncodeToString(bomb), "bomb.png", "image/png"}}
+
+	_, err := CompositeMask(images, masks)
+	if err == nil {
+		t.Fatal("expected an error for an oversized mask; decoding it would OOM the process")
+	}
+	if !strings.Contains(err.Error(), "exceed") {
+		t.Errorf("error should mention the pixel limit, got: %v", err)
+	}
+}
+
+// 刚好在阈值内的图必须放行（上限不能定得过紧）。
+//
+// 89_478_485 像素上限下，9464x9464 = 89_567_296 超限，
+// 9459x9459 = 89_472_681 通过。用 1x1 验证「小图照常工作」即可，
+// 边界值本身由 maxImagePixels 常量表达。
+func TestCompositeMaskAcceptsSmallImages(t *testing.T) {
+	images := [][3]string{encodePNG(t, solidImage(1, 1, color.NRGBA{A: 255}), "photo.png")}
+	masks := [][3]string{encodePNG(t, solidGray(1, 1, 128), "mask.png")}
+
+	got, err := CompositeMask(images, masks)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if alpha := alphaAt(decodePNG(t, got[0]), 0, 0); alpha != 128 {
+		t.Errorf("alpha = %d, want 128", alpha)
+	}
+}
+
+// 记录缩放次数，用于断言「尺寸相同时不走 Scale」。
+type countingScaler struct {
+	inner draw.Scaler
+	calls int
+}
+
+func (c *countingScaler) Scale(dst draw.Image, dr image.Rectangle, src image.Image, sr image.Rectangle, op draw.Op, opts *draw.Options) {
+	c.calls++
+	c.inner.Scale(dst, dr, src, sr, op, opts)
+}
+
+// mask 与原图同尺寸时必须跳过缩放。
+//
+// 回归点：CatmullRom 在 1:1 时是恒等映射（0 差异），但 2048x2048 仍占
+// 约 43% 的合成耗时。OpenAI 规范要求 mask 与原图同尺寸，绝大多数请求
+// 都在做这个无用功。
+func TestCompositeMaskSkipsScalingWhenSizesMatch(t *testing.T) {
+	counter := &countingScaler{inner: draw.CatmullRom}
+	original := maskScaler
+	maskScaler = counter
+	defer func() { maskScaler = original }()
+
+	images := [][3]string{encodePNG(t, solidImage(8, 6, color.NRGBA{A: 255}), "photo.png")}
+	masks := [][3]string{encodePNG(t, solidGray(8, 6, 200), "mask.png")}
+
+	got, err := CompositeMask(images, masks)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if counter.calls != 0 {
+		t.Errorf("scaler called %d times for a same-size mask, want 0", counter.calls)
+	}
+	// 跳过缩放不能改变结果：alpha 仍然是 mask 的灰度值。
+	if alpha := alphaAt(decodePNG(t, got[0]), 0, 0); alpha != 200 {
+		t.Errorf("alpha = %d, want 200", alpha)
+	}
+}
+
+// 尺寸不同时必须真的走缩放（上面的捷径不能把这条路径吃掉）。
+func TestCompositeMaskScalesWhenSizesDiffer(t *testing.T) {
+	counter := &countingScaler{inner: draw.CatmullRom}
+	original := maskScaler
+	maskScaler = counter
+	defer func() { maskScaler = original }()
+
+	images := [][3]string{encodePNG(t, solidImage(8, 6, color.NRGBA{A: 255}), "photo.png")}
+	masks := [][3]string{encodePNG(t, solidGray(4, 3, 200), "mask.png")}
+
+	if _, err := CompositeMask(images, masks); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if counter.calls != 1 {
+		t.Errorf("scaler called %d times, want 1", counter.calls)
+	}
 }
