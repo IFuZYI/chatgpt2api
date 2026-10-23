@@ -303,7 +303,20 @@ func (d *Deps) RegisterImageRoutes(r *gin.Engine) {
 			"status": service.TaskStatusRunning,
 			"error":  "",
 		})
-		go d.runResumePoll(identity.ID, c.Param("task_id"), stringValueOf(task["conversation_id"]), extraTimeout)
+		// resume-poll 也会写 image_tasks.json，必须纳入关闭等待：
+		// 否则进程退出时它可能正写到一半（服务关闭语义见 ImageTaskService.Close）。
+		//
+		// 参数必须在起 goroutine 之前取出来：gin.Context 在 handler 返回后会被
+		// 复用，goroutine 里再读 c.Param 是数据竞争。
+		ownerID := identity.ID
+		taskID := c.Param("task_id")
+		conversationID := stringValueOf(task["conversation_id"])
+		if release, ok := d.Tasks.TrackBackground(); ok {
+			go func() {
+				defer release()
+				d.runResumePoll(ownerID, taskID, conversationID, extraTimeout)
+			}()
+		}
 		c.JSON(http.StatusOK, updated)
 	})
 }

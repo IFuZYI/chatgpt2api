@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,7 +52,42 @@ func newTestDeps(t *testing.T) *api.Deps {
 	}
 	deps.Models = service.NewModelCatalog(deps.Accts, nil)
 	deps.ChatCache = protocol.NewChatCompletionCache(deps.ChatCacheSettings)
+
+	// 任务 goroutine 会在测试结束后继续写 data/image_tasks.json，
+	// 而 t.TempDir() 的清理此时会撞上「directory not empty」。
+	// 关闭语义是产品代码的一部分（见 ImageTaskService.Close），这里必须用上。
+	registerTaskClose(t, deps)
 	return deps
+}
+
+// registerTaskClose 在测试清理时关闭任务服务，确保没有 goroutine 还在写 data/。
+func registerTaskClose(t *testing.T, deps *api.Deps) {
+	t.Helper()
+	closeTaskService(t, deps.Tasks)
+}
+
+// closeTaskService 注册 t.Cleanup 关闭任务服务。
+//
+// 任务 goroutine 会在测试结束后继续写 data/image_tasks.json，而 t.TempDir()
+// 的清理此时会撞上 "directory not empty"。关闭语义是产品代码的一部分
+// （见 service.ImageTaskService.Close），测试必须真的用它。
+func closeTaskService(t *testing.T, tasks *service.ImageTaskService) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := tasks.Close(ctx); err != nil {
+			t.Errorf("close image tasks: %v", err)
+		}
+	})
+}
+
+// newTaskTestService 建一个带关闭清理的任务服务（测试自建服务的统一入口）。
+func newTaskTestService(t *testing.T) *service.ImageTaskService {
+	t.Helper()
+	svc := service.NewImageTaskService(newTaskTestConfig(t))
+	closeTaskService(t, svc)
+	return svc
 }
 
 // newTaskTestConfig 给 service 层测试用的最小配置。

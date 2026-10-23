@@ -52,6 +52,7 @@ func TestRouteParity(t *testing.T) {
 		Images:  service.NewImageService(cfg),
 		Tasks:   service.NewImageTaskService(cfg),
 	}
+	registerTaskClose(t, deps)
 	engine := api.NewRouter(deps)
 
 	registered := map[string]bool{}

@@ -68,7 +68,7 @@ func TestImageTaskWithoutRunnerFailsFast(t *testing.T) {
 // runner 拿到的是完整 TaskContext（prompt/model/size/quality/base_url）。
 func TestTaskContextFieldsReachRunner(t *testing.T) {
 	captured := make(chan service.TaskContext, 1)
-	svc := service.NewImageTaskService(newTaskTestConfig(t))
+	svc := newTaskTestService(t)
 	svc.SetRunners(func(ctx service.TaskContext) (service.TaskResult, error) {
 		captured <- ctx
 		return service.TaskResult{Data: []map[string]any{{"b64_json": "AAA"}}}, nil

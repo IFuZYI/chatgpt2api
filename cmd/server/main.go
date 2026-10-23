@@ -169,6 +169,20 @@ func main() {
 	watcher.Stop()
 	cleanupScheduler.Stop()
 
+	// 最后等在途的图片任务写完 image_tasks.json。
+	//
+	// 顺序是刻意的：HTTP 已经停止接新请求（server.Shutdown），后台调度器也已停，
+	// 此时唯一还在写 data/ 的就是任务 goroutine 与 resume-poll。
+	// 放在最前面会让「关闭期间新提交的任务」在 Shutdown 之前插进来；
+	// 放在 watcher 之前则会在等待任务时让 watcher 继续改账号文件。
+	//
+	// 超时不强杀任务（生图打一半被砍会在上游留下孤儿对话），只记录日志。
+	taskCtx, taskCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer taskCancel()
+	if err := deps.Tasks.Close(taskCtx); err != nil {
+		log.Printf("[server] image tasks: %v", err)
+	}
+
 	fmt.Println("[server] stopped")
 }
 

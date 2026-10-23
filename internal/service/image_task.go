@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -9,6 +11,12 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrImageTaskClosed 表示服务已进入关闭流程，不再接受新任务。
+//
+// 关闭中继续接受任务会让新 goroutine 在「已经等过一轮」的 WaitGroup 上 Add，
+// 于是任务既不被等待、也不会被日志统计到 —— 正是 image_tasks.json 被写坏的路径。
+var ErrImageTaskClosed = errors.New("image task service is shutting down")
 
 // 图片任务状态机。这四个字面量是 data/image_tasks.json 与前端契约。
 const (
@@ -51,6 +59,11 @@ type TaskResult struct {
 //
 // 每个任务一个 goroutine（对应 Python 的 threading.Thread），
 // 状态落 data/image_tasks.json，字段集与 _load_locked/_save_locked 一致。
+//
+// 生命周期：Submit 起来的 goroutine 全部登记在 inFlight 里，Close 等它们退出。
+// Python 版靠进程退出时 OS 收走线程；Go 版必须显式等待，否则进程退出时
+// image_tasks.json 可能写到一半（临时文件已 rename、内容还没落盘），
+// 表现为重启后任务文件损坏或整份任务丢失。
 type ImageTaskService struct {
 	cfg interface {
 		DataDir() string
@@ -62,6 +75,21 @@ type ImageTaskService struct {
 
 	mu    sync.RWMutex
 	tasks map[string]map[string]any
+
+	// inFlight 登记在跑的任务 goroutine（含 resume-poll 之类的外部任务）。
+	inFlight sync.WaitGroup
+	// lifecycleMu 让「检查 closing + WaitGroup.Add」成为原子动作。
+	//
+	// 少了这把锁会有这个窗口：Submit 通过 closing 检查 → Close 置位并 Wait
+	// （计数器为 0，立即返回）→ Submit 才 Add 并起 goroutine。于是任务既不被
+	// 等待也不被日志统计，正是本方法要消除的那类漏网。
+	lifecycleMu sync.Mutex
+	closing     bool
+	// closeDone 在首次 Close 时由后台 goroutine 关闭，之后所有 Close 调用
+	// 都等同一个 channel —— 这样重复调用不会各自 Wait 一份（第二次 Wait
+	// 永远等不到已经过去的 Add）。
+	closeDone chan struct{}
+	closeOnce sync.Once
 }
 
 // NewImageTaskService 构造。runner 为 nil 时任务只会停在 queued（M4 前）。
@@ -71,9 +99,10 @@ func NewImageTaskService(cfg interface {
 }) *ImageTaskService {
 	path := cfg.DataDir() + "/image_tasks.json"
 	s := &ImageTaskService{
-		cfg:   cfg,
-		path:  path,
-		tasks: map[string]map[string]any{},
+		cfg:       cfg,
+		path:      path,
+		tasks:     map[string]map[string]any{},
+		closeDone: make(chan struct{}),
 	}
 	s.mu.Lock()
 	s.tasks = s.loadLocked()
@@ -82,6 +111,73 @@ func NewImageTaskService(cfg interface {
 	}
 	s.mu.Unlock()
 	return s
+}
+
+// Close 停止接受新任务，并等待所有在途任务 goroutine 退出。
+//
+// 语义与 http.Server.Shutdown 对齐：ctx 到期即返回 ctx.Err()，但不强杀任务
+// （生图请求打到一半被砍，上游那边会留下孤儿对话，反而更难清理）。
+// 超时后仍在跑的任务会被记录日志，不会静默吞掉。
+//
+// 幂等：重复调用只有第一次真正等待，后续调用立即返回 nil。
+func (s *ImageTaskService) Close(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	s.closing = true
+	s.lifecycleMu.Unlock()
+
+	// 只起一个等待者；后续 Close 调用等同一个 channel。
+	s.closeOnce.Do(func() {
+		go func() {
+			s.inFlight.Wait()
+			close(s.closeDone)
+		}()
+	})
+
+	select {
+	case <-s.closeDone:
+		s.mu.Lock()
+		s.saveLocked()
+		s.mu.Unlock()
+		return nil
+	case <-ctx.Done():
+		pending := s.pendingCount()
+		fmt.Printf("[image-task] close timed out with %d task(s) still running; "+
+			"their results may be lost (image_tasks.json will be re-checked on next start)\n", pending)
+		return ctx.Err()
+	}
+}
+
+// pendingCount 统计仍处于 queued/running 的任务数（仅用于超时日志）。
+func (s *ImageTaskService) pendingCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, task := range s.tasks {
+		if taskUnfinished[stringValue(task["status"])] {
+			count++
+		}
+	}
+	return count
+}
+
+// track 登记一个后台任务；服务已关闭时返回 false。
+//
+// Add 必须发生在起 goroutine 之前，且与 Close 的置位在同一把锁下，
+// 否则会出现「Wait 已返回、Add 才到」的漏网窗口。
+func (s *ImageTaskService) track() (release func(), ok bool) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closing {
+		return nil, false
+	}
+	s.inFlight.Add(1)
+	return s.inFlight.Done, true
+}
+
+// TrackBackground 供 api 层登记自己起的后台 goroutine（如 resume-poll），
+// 让它们也纳入关闭等待。服务已关闭时返回 false，调用方应放弃执行。
+func (s *ImageTaskService) TrackBackground() (release func(), ok bool) {
+	return s.track()
 }
 
 // SetRunners 注入生成/编辑执行体。
@@ -337,6 +433,12 @@ func (s *ImageTaskService) Submit(
 	if taskID == "" {
 		return nil, fmt.Errorf("client_task_id is required")
 	}
+	// 先登记再建任务：关闭中的服务连 queued 状态都不该落盘，
+	// 否则重启时 recoverUnfinishedLocked 会把它标成「服务已重启」错误。
+	release, ok := s.track()
+	if !ok {
+		return nil, ErrImageTaskClosed
+	}
 	owner := orDefault(ownerID, "anonymous")
 	key := taskKey(owner, taskID)
 	now := nowLocal()
@@ -348,6 +450,7 @@ func (s *ImageTaskService) Submit(
 			s.saveLocked()
 		}
 		s.mu.Unlock()
+		release()
 		return publicTask(existing), nil
 	}
 	task := map[string]any{
@@ -377,11 +480,14 @@ func (s *ImageTaskService) Submit(
 		BaseURL: baseURL,
 		Images:  images,
 		Masks:   masks,
-	})
+	}, release)
 	return snapshot, nil
 }
 
-func (s *ImageTaskService) runTask(key string, taskCtx TaskContext) {
+// runTask 是任务 goroutine 的主体。release 由 Submit 的 track() 提供，
+// 必须 defer 调用，否则 Close 永远等不到它。
+func (s *ImageTaskService) runTask(key string, taskCtx TaskContext, release func()) {
+	defer release()
 	startedAt := time.Now()
 
 	s.mu.Lock()

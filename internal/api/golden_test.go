@@ -101,6 +101,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	}
 	deps.Models = service.NewModelCatalog(deps.Accts, nil)
 	deps.ChatCache = protocol.NewChatCompletionCache(deps.ChatCacheSettings)
+	registerTaskClose(t, deps)
 	// 图片与文本上游在 golden 里不需要真实实现：所有用例都在鉴权/参数校验阶段返回。
 	deps.TextUpstream = func(ctx context.Context, accessToken string) (protocol.Upstream, func(), error) {
 		return nil, nil, fmt.Errorf("upstream not configured in golden test")
