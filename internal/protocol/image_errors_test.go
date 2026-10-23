@@ -139,7 +139,10 @@ func TestFormatImageResultB64JSON(t *testing.T) {
 		return baseURL + "/images/x.png", nil
 	}
 	items := []map[string]any{{"b64_json": "aGVsbG8="}}
-	result := FormatImageResult(items, "prompt", "b64_json", save, "http://h", 123, "")
+	result, err := FormatImageResult(items, "prompt", "b64_json", save, "http://h", 123, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	data, _ := result["data"].([]any)
 	if len(data) != 1 {
@@ -165,8 +168,11 @@ func TestFormatImageResultURLOnly(t *testing.T) {
 	save := func(payload []byte, baseURL string) (string, error) {
 		return baseURL + "/images/x.png", nil
 	}
-	result := FormatImageResult(
+	result, err := FormatImageResult(
 		[]map[string]any{{"b64_json": "aGVsbG8="}}, "p", "url", save, "http://h", 1, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	data, _ := result["data"].([]any)
 	entry, _ := data[0].(map[string]any)
@@ -178,9 +184,29 @@ func TestFormatImageResultURLOnly(t *testing.T) {
 	}
 }
 
+// 落盘失败必须冒泡：否则调用方会拿到「成功但 url 为空」的结果，
+// webdav 模式的用户会以为图已经存到远端。
+func TestFormatImageResultPropagatesSaveError(t *testing.T) {
+	saveErr := errors.New("WebDAV PUT failed: HTTP 500")
+	save := func(payload []byte, baseURL string) (string, error) {
+		return "", saveErr
+	}
+	result, err := FormatImageResult(
+		[]map[string]any{{"b64_json": "aGVsbG8="}}, "p", "b64_json", save, "http://h", 1, "")
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("err = %v, want the save error", err)
+	}
+	if result != nil {
+		t.Errorf("result should be nil on save failure, got %v", result)
+	}
+}
+
 // 没有图片但有 message 时，message 要出现在结果里。
 func TestFormatImageResultMessageFallback(t *testing.T) {
-	result := FormatImageResult(nil, "p", "b64_json", nil, "", 1, "upstream said no")
+	result, err := FormatImageResult(nil, "p", "b64_json", nil, "", 1, "upstream said no")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result["message"] != "upstream said no" {
 		t.Errorf("message fallback missing: %v", result)
 	}

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -57,6 +58,15 @@ func (c *WebDAVClient) remoteURL(rel string) string {
 }
 
 func (c *WebDAVClient) do(ctx context.Context, method, target string, body io.Reader) (*http.Response, error) {
+	req, err := c.newRequest(ctx, method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// newRequest 构造带 Basic Auth 的请求（需要额外改 header 的调用方用它）。
+func (c *WebDAVClient) newRequest(ctx context.Context, method, target string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, err
@@ -64,7 +74,7 @@ func (c *WebDAVClient) do(ctx context.Context, method, target string, body io.Re
 	if c.Username != "" || c.Password != "" {
 		req.SetBasicAuth(c.Username, c.Password)
 	}
-	return c.Client.Do(req)
+	return req, nil
 }
 
 // ensureDirs 逐级 MKCOL（已存在会返回 405，视为成功）。
@@ -109,12 +119,21 @@ func escapeSegments(segments []string) []string {
 }
 
 // Put 上传一张图，返回公开 URL。
+//
+// 带 Content-Type：图片只以 .png 落盘（save 的命名规则），与 Python
+// `put(..., content_type="image/png")` 一致。部分 WebDAV 服务端（Nextcloud
+// 的某些版本、S3 网关）对无 Content-Type 的 PUT 会存成 application/octet-stream。
 func (c *WebDAVClient) Put(ctx context.Context, rel string, payload []byte, publicBase string) (string, error) {
 	if err := c.ensureDirs(ctx, rel); err != nil {
 		return "", err
 	}
 	target := c.remoteURL(rel)
-	resp, err := c.do(ctx, http.MethodPut, target, strings.NewReader(string(payload)))
+	req, err := c.newRequest(ctx, http.MethodPut, target, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "image/png")
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return "", err
 	}

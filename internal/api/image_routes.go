@@ -400,11 +400,20 @@ func (d *Deps) runResumePoll(ownerID, taskID, conversationID string, extraTimeou
 		})
 	}
 
-	formatted := protocol.FormatImageResult(items, "", "b64_json",
+	formatted, saveErr := protocol.FormatImageResult(items, "", "b64_json",
 		func(payload []byte, baseURL string) (string, error) {
 			_, publicURL, saveErr := d.Images.SaveImageBytes(payload, baseURL)
 			return publicURL, saveErr
 		}, "", time.Now().Unix(), "")
+	if saveErr != nil {
+		// 落盘失败（WebDAV 5xx / 磁盘满）要让任务失败，不能报 success 却给空 url。
+		d.Tasks.UpdateTask(ownerID, taskID, map[string]any{
+			"status": service.TaskStatusError,
+			"error":  saveErr.Error(),
+			"data":   []any{},
+		})
+		return
+	}
 	data, _ := formatted["data"].([]any)
 
 	d.Tasks.UpdateTask(ownerID, taskID, map[string]any{

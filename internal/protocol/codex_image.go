@@ -138,8 +138,12 @@ func (g *ImageGenerator) generateCodexImage(ctx context.Context, request ImageRe
 		})
 	}
 
-	result := FormatImageResult(items, request.Prompt, request.ResponseFormat,
+	result, saveErr := FormatImageResult(items, request.Prompt, request.ResponseFormat,
 		g.SaveImage, request.BaseURL, time.Now().Unix(), "")
+	if saveErr != nil {
+		// 落盘失败要冒泡成生成失败（与 web 链路一致）。
+		return outputs, wrapImageError(saveErr, request.Model, "")
+	}
 	data, _ := result["data"].([]any)
 	if len(data) == 0 {
 		return outputs, &ImageGenerationError{

@@ -139,12 +139,9 @@ func (s *ImageService) DeleteToTarget(targetFreeMB int, dryRun bool) map[string]
 // 本地文件优先，缺失时回退 WebDAV 读取，重名追加 _2 后缀。
 //
 // Python 版里这个函数被定义了两次，生效的那份没有 WebDAV 回退分支，
-// 导致 WebDAV 模式下 zip 下载实际不可用。这里按「修复后」语义实现。
+// 导致 WebDAV 模式下 zip 下载实际不可用。这里按「修复后」语义实现 ——
+// 回退规则与 get_bytes 共用 ReadImage（索引 webdav:true 才回远端）。
 func (s *ImageService) DownloadZip(paths []string) ([]byte, error) {
-	root, err := filepath.Abs(s.cfg.ImagesDir())
-	if err != nil {
-		return nil, err
-	}
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	added := 0
@@ -155,19 +152,9 @@ func (s *ImageService) DownloadZip(paths []string) ([]byte, error) {
 		if err != nil {
 			continue
 		}
-		full := filepath.Join(root, filepath.FromSlash(safe))
-		abs, err := filepath.Abs(full)
-		if err != nil || !strings.HasPrefix(abs, root+string(os.PathSeparator)) {
-			continue
-		}
-		payload, readErr := os.ReadFile(abs)
+		payload, _, readErr := s.ReadImage(safe)
 		if readErr != nil {
-			// WebDAV 回退：本地没有就去远端取（M6 接 image storage 后生效）。
-			if remote, ok := s.readRemoteImage(safe); ok {
-				payload = remote
-			} else {
-				continue
-			}
+			continue
 		}
 
 		name := filepath.Base(safe)
@@ -199,16 +186,4 @@ func (s *ImageService) DownloadZip(paths []string) ([]byte, error) {
 		return nil, errImageNotFound
 	}
 	return buffer.Bytes(), nil
-}
-
-// readRemoteImage 是 WebDAV 回退的挂载点；M6 之前恒为 false。
-func (s *ImageService) readRemoteImage(rel string) ([]byte, bool) {
-	if s.remoteReader == nil {
-		return nil, false
-	}
-	payload, err := s.remoteReader(rel)
-	if err != nil {
-		return nil, false
-	}
-	return payload, true
 }

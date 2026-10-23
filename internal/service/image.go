@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -31,25 +32,29 @@ var imageExtensions = map[string]bool{
 // path / url / thumbnail_url / tags / date / created_at 渲染。
 type ImageItem map[string]any
 
-// ImageService 复刻 services/image_service.py + image_storage_service.py 的
-// 本地部分。WebDAV 分支在 M6 补齐；当前只处理本地文件与索引。
+// ImageService 复刻 services/image_service.py + image_storage_service.py。
+//
+// 存储分流由 image_storage.mode 决定（local / webdav / both），
+// 见 SaveImageBytes；读取时本地优先、索引标记 webdav 才回退远端，见 ReadImage。
 type ImageService struct {
 	cfg *config.Store
 
 	indexMu sync.Mutex
-
-	// remoteReader 是 WebDAV 回退的注入点（M6 接入），
-	// 对应 Python 里 download_images_zip 的 image_storage_service.get_bytes 分支。
-	remoteReader func(rel string) ([]byte, error)
 }
 
 func NewImageService(cfg *config.Store) *ImageService {
 	return &ImageService{cfg: cfg}
 }
 
-// SetRemoteReader 注入 WebDAV 读取器。
-func (s *ImageService) SetRemoteReader(reader func(rel string) ([]byte, error)) {
-	s.remoteReader = reader
+// imageStorageMode 复刻 Python 的 mode() + save() 里的白名单校验：
+// 非法值（含空、大小写不符、未知模式）一律按 local 处理。
+func imageStorageMode(settings map[string]any) string {
+	switch mode := strings.TrimSpace(stringValue(settings["mode"])); mode {
+	case "local", "webdav", "both":
+		return mode
+	default:
+		return "local"
+	}
 }
 
 func (s *ImageService) indexPath() string {
@@ -358,6 +363,10 @@ func (s *ImageService) ThumbnailPath(rel string) (string, error) {
 }
 
 // EnsureThumbnail 生成 320x320 缩略图（LANCZOS）。已存在则直接返回。
+//
+// 源图本地没有时按 get_bytes 的规则回退远端（Python 的
+// `io.BytesIO(image_storage_service.get_bytes(...))` 分支）——
+// 否则 webdav 模式下每张图的缩略图都 404，管理页只剩文字。
 func (s *ImageService) EnsureThumbnail(rel string) (string, error) {
 	target, err := s.ThumbnailPath(rel)
 	if err != nil {
@@ -370,13 +379,24 @@ func (s *ImageService) EnsureThumbnail(rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !fileExists(source) {
+	if fileExists(source) {
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return "", err
+		}
+		if err := writeThumbnail(source, target, 320, 320); err != nil {
+			return "", err
+		}
+		return target, nil
+	}
+
+	payload, _, readErr := s.ReadImage(rel)
+	if readErr != nil {
 		return "", errImageNotFound
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", err
 	}
-	if err := writeThumbnail(source, target, 320, 320); err != nil {
+	if err := writeThumbnailFromBytes(payload, target, 320, 320); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -408,19 +428,74 @@ func (s *ImageService) CleanupThumbnails() int {
 }
 
 // ReadImage 返回图片字节与 MIME，用于 /images/{path}。
+//
+// 复刻 Python get_bytes：本地文件优先；本地缺失时，只有索引标记了
+// webdav:true 才回退远端读取（否则 404，不能把「没存过」当「远端有」）。
 func (s *ImageService) ReadImage(rel string) ([]byte, string, error) {
 	full, err := s.localImagePath(rel)
 	if err != nil {
 		return nil, "", err
 	}
-	payload, err := os.ReadFile(full)
+	if payload, readErr := os.ReadFile(full); readErr == nil {
+		return payload, mimeForPath(full), nil
+	}
+
+	safe, err := safeRelativePath(rel)
 	if err != nil {
+		return nil, "", err
+	}
+	if !isImageRel(safe) || !s.indexedOnWebDAV(safe) {
 		return nil, "", errImageNotFound
+	}
+	payload, remoteErr := s.fetchRemoteImage(safe)
+	if remoteErr != nil {
+		return nil, "", remoteErr
 	}
 	return payload, mimeForPath(full), nil
 }
 
+// indexedOnWebDAV 报告索引里该条目是否标记为已存远端。
+func (s *ImageService) indexedOnWebDAV(rel string) bool {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	item, exists := s.loadIndexLocked()[rel]
+	return exists && truthy(item["webdav"])
+}
+
+// fetchRemoteImage 从 WebDAV 取一张图。
+//
+// 没有请求 ctx：调用方（HTTP 路由 / zip 下载）都没把 ctx 传进来，
+// 与 Python 一样只靠客户端超时兜底。
+func (s *ImageService) fetchRemoteImage(rel string) ([]byte, error) {
+	client := NewWebDAVClient(s.cfg.ImageStorageSettings())
+	if client.BaseURL == "" {
+		return nil, fmt.Errorf("WebDAV URL 不能为空")
+	}
+	return client.Get(context.Background(), rel)
+}
+
+// deleteRemoteImage 删除远端副本（索引未标 webdav 时直接跳过）。
+//
+// 返回 true 表示远端确实删掉了。远端失败不阻断本地删除与索引清理：
+// 与 Python 一致 —— 本地已经删了，再因为远端 500 把索引留着，
+// 列表里就会出现一条打不开的僵尸条目。
+func (s *ImageService) deleteRemoteImage(rel string) bool {
+	safe, err := safeRelativePath(rel)
+	if err != nil || !isImageRel(safe) || !s.indexedOnWebDAV(safe) {
+		return false
+	}
+	client := NewWebDAVClient(s.cfg.ImageStorageSettings())
+	if client.BaseURL == "" {
+		return false
+	}
+	removed, err := client.Delete(context.Background(), safe)
+	return err == nil && removed
+}
+
 // DeleteImages 复刻 delete_images：支持按路径或按日期范围全删。
+//
+// 索引标记 webdav:true 的条目还要删远端 —— 只删本地会让 webdav 模式的
+// 用户在远端永久留一份「删不掉的图」（本地已无文件，列表也查不到）。
 func (s *ImageService) DeleteImages(paths []string, startDate, endDate string, allMatching bool) map[string]any {
 	targets := paths
 	if allMatching {
@@ -436,10 +511,17 @@ func (s *ImageService) DeleteImages(paths []string, startDate, endDate string, a
 		if err != nil {
 			continue
 		}
+		deleted := false
 		if fileExists(full) {
 			if os.Remove(full) == nil {
-				removed++
+				deleted = true
 			}
+		}
+		if s.deleteRemoteImage(rel) {
+			deleted = true
+		}
+		if deleted {
+			removed++
 		}
 		if thumb, err := s.ThumbnailPath(rel); err == nil && fileExists(thumb) {
 			_ = os.Remove(thumb)
@@ -579,23 +661,60 @@ func tagsOrDefault(all map[string][]string, rel string) []string {
 	return []string{}
 }
 
-// SaveImageBytes 落盘一张图并登记索引，返回相对路径。
+// SaveImageBytes 保存一张图并登记索引，返回相对路径与公开 URL。
+//
 // 文件名格式与 Python 一致：<unix秒>_<md5>.png，目录 YYYY/MM/DD。
+// 存哪儿由 image_storage.mode 决定：local 只写本地，webdav 只传远端，
+// both 两边都写。WebDAV 失败必须让整次保存失败 —— 静默退回本地会让
+// webdav 模式的用户以为图已存到远端（本地磁盘照样涨满，重启换机就丢图）。
 func (s *ImageService) SaveImageBytes(payload []byte, baseURL string) (rel string, url string, err error) {
 	sum := md5.Sum(payload)
 	now := time.Now()
 	rel = fmt.Sprintf("%04d/%02d/%02d/%d_%s.png",
 		now.Year(), int(now.Month()), now.Day(), now.Unix(), hex.EncodeToString(sum[:]))
 
-	full, err := s.localImagePath(rel)
-	if err != nil {
-		return "", "", err
+	settings := s.cfg.ImageStorageSettings()
+	mode := imageStorageMode(settings)
+
+	storedLocal := false
+	storedWebdav := false
+	remoteURL := ""
+
+	if mode == "local" || mode == "both" {
+		full, pathErr := s.localImagePath(rel)
+		if pathErr != nil {
+			return "", "", pathErr
+		}
+		if mkErr := os.MkdirAll(filepath.Dir(full), 0o755); mkErr != nil {
+			return "", "", mkErr
+		}
+		if writeErr := os.WriteFile(full, payload, 0o644); writeErr != nil {
+			return "", "", writeErr
+		}
+		storedLocal = true
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return "", "", err
+
+	if mode == "webdav" || mode == "both" {
+		client := NewWebDAVClient(settings)
+		if client.BaseURL == "" {
+			return "", "", fmt.Errorf("WebDAV URL 不能为空")
+		}
+		// publicBase 传空：索引里的 remote_url 与 Python 一致，记 WebDAV 上的真实地址，
+		// 而不是对外域名（对外 URL 由 publicImageURL 现算）。
+		putURL, putErr := client.Put(context.Background(), rel, payload, "")
+		if putErr != nil {
+			return "", "", putErr
+		}
+		remoteURL = putURL
+		storedWebdav = true
 	}
-	if err := os.WriteFile(full, payload, 0o644); err != nil {
-		return "", "", err
+
+	storage := "local"
+	switch {
+	case storedLocal && storedWebdav:
+		storage = "both"
+	case storedWebdav:
+		storage = "webdav"
 	}
 
 	item := map[string]any{
@@ -605,11 +724,13 @@ func (s *ImageService) SaveImageBytes(payload []byte, baseURL string) (rel strin
 		"date":       dateFromRel(rel, now),
 		"size":       len(payload),
 		"created_at": now.Format("2006-01-02 15:04:05"),
-		"storage":    "local",
-		"local":      true,
-		"webdav":     false,
+		"storage":    storage,
+		"local":      storedLocal,
+		"webdav":     storedWebdav,
+		"remote_url": remoteURL,
 	}
-	if width, height, ok := imageDimensions(full); ok {
+	// 宽高必须从 payload 解：webdav 模式下本地没有文件可读。
+	if width, height, ok := imageDimensionsFromBytes(payload); ok {
 		item["width"], item["height"] = width, height
 	}
 

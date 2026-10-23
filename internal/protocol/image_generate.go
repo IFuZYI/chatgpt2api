@@ -160,9 +160,18 @@ func (g *ImageGenerator) Generate(ctx context.Context, request ImageRequest) ([]
 
 	// 拿到 id → 下载 → 落盘 → result。
 	if len(fileIDs) > 0 || len(sedimentIDs) > 0 {
-		if outputs, ok := g.emitResult(ctx, request, outputs, index, total, conversationID, fileIDs, sedimentIDs); ok {
-			return outputs, nil
+		emitted, ok, emitErr := g.emitResult(ctx, request, outputs, index, total, conversationID, fileIDs, sedimentIDs)
+		if emitErr != nil {
+			// 落盘失败（WebDAV 5xx、本地 ENOSPC）不能降级成 message 或空 url：
+			// 那样调用方会拿到「成功但没有可访问 URL」的结果。
+			// 对话照样要清理（Python 的 finally 按 success=False 处理）。
+			g.cleanupConversation(conversationID, false)
+			return emitted, wrapImageError(emitErr, request.Model, conversationID)
 		}
+		if ok {
+			return emitted, nil
+		}
+		outputs = emitted
 	}
 
 	if message != "" {
@@ -279,7 +288,8 @@ func (g *ImageGenerator) consumeStream(
 		state.FileIDs, state.SedimentIDs, state.Blocked, turnUseCase, nil
 }
 
-// emitResult 下载图片并产出 result。返回 (outputs, true) 表示成功。
+// emitResult 下载图片并产出 result。返回 (outputs, true, nil) 表示成功。
+// 第三个返回值非 nil 表示落盘失败 —— 调用方必须把它当生成失败处理。
 func (g *ImageGenerator) emitResult(
 	ctx context.Context,
 	request ImageRequest,
@@ -287,12 +297,12 @@ func (g *ImageGenerator) emitResult(
 	index, total int,
 	conversationID string,
 	fileIDs, sedimentIDs []string,
-) ([]ImageOutput, bool) {
+) ([]ImageOutput, bool, error) {
 	urls, err := g.Upstream.ResolveImageURLs(ctx, conversationID, fileIDs, sedimentIDs)
 	if err != nil || len(urls) == 0 {
 		debugf("[image] resolve urls failed: err=%v urls=%d conv=%q files=%v sediment=%v",
 			err, len(urls), conversationID, fileIDs, sedimentIDs)
-		return outputs, false
+		return outputs, false, nil
 	}
 	debugf("[image] resolved %d urls", len(urls))
 	if g.OnProgress != nil {
@@ -311,15 +321,19 @@ func (g *ImageGenerator) emitResult(
 	}
 	if len(items) == 0 {
 		debugf("[image] download produced 0 items from %d urls", len(urls))
-		return outputs, false
+		return outputs, false, nil
 	}
 
-	result := FormatImageResult(items, request.Prompt, request.ResponseFormat,
+	result, saveErr := FormatImageResult(items, request.Prompt, request.ResponseFormat,
 		g.SaveImage, request.BaseURL, time.Now().Unix(), "")
+	if saveErr != nil {
+		debugf("[image] save failed: %v", saveErr)
+		return outputs, false, saveErr
+	}
 	data, _ := result["data"].([]any)
 	if len(data) == 0 {
 		debugf("[image] format produced 0 data entries (items=%d fmt=%q)", len(items), request.ResponseFormat)
-		return outputs, false
+		return outputs, false, nil
 	}
 
 	converted := make([]map[string]any, 0, len(data))
@@ -336,7 +350,7 @@ func (g *ImageGenerator) emitResult(
 		g.OnResult()
 	}
 	g.cleanupConversation(conversationID, true)
-	return outputs, true
+	return outputs, true, nil
 }
 
 // detailedTaskError 查 tasks 拿结构化错误文案。

@@ -236,6 +236,45 @@ func TestGenerateHandlesDownloadFailure(t *testing.T) {
 	}
 }
 
+// 落盘失败（WebDAV 5xx / 磁盘满）必须让生成失败，不能降级成 message。
+//
+// 回归点：SaveImage 的错误曾被 FormatImageResult 丢弃，于是 webdav 模式的
+// 用户拿到 200 + 空 url，以为图存好了，实际远端与本地都没有。
+func TestGenerateFailsWhenSaveImageFails(t *testing.T) {
+	upstream := newImageFake()
+	upstream.sseLines = []string{
+		`{"conversation_id":"conv-s","type":"server_ste_metadata","metadata":{"turn_use_case":"image gen"}}`,
+		`[DONE]`,
+	}
+	upstream.conversations = []map[string]any{conversationWithImage("img1")}
+
+	generator := &ImageGenerator{
+		Upstream: upstream,
+		Config:   fastGenConfig(),
+		SaveImage: func(payload []byte, baseURL string) (string, error) {
+			return "", errors.New("WebDAV PUT failed: HTTP 500")
+		},
+	}
+	outputs, err := generator.Generate(context.Background(), ImageRequest{
+		Prompt: "a cat", Model: "gpt-image-2", N: 1, ResponseFormat: "b64_json", BaseURL: "http://h",
+	})
+	if err == nil {
+		t.Fatalf("save failure must fail the generation, got outputs=%v", outputs)
+	}
+	for _, output := range outputs {
+		if output.Kind == ImageKindResult {
+			t.Fatalf("save failure must not produce a result output: %v", output)
+		}
+	}
+	var generationErr *ImageGenerationError
+	if !errors.As(err, &generationErr) {
+		t.Fatalf("error type = %T, want *ImageGenerationError", err)
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("error should keep the WebDAV status: %v", err)
+	}
+}
+
 // 尺寸/质量提示要拼进提示词（上游按提示词理解尺寸）。
 func TestPromptWithImageHints(t *testing.T) {
 	got := promptWithImageHints("a cat", "1024x1024", "high")

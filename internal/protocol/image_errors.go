@@ -242,6 +242,10 @@ func (o ImageOutput) ToChunk() map[string]any {
 //
 // 注意 response_format=b64_json 时**同时**给 b64_json 与 url（图片会落盘）。
 // 这是既有行为：客户端两种都能拿到。
+//
+// saveImage 的错误必须冒泡（Python 里 save_image_bytes 抛异常同样冒泡）：
+// WebDAV 存储失败时整次生成要失败，而不是返回一个 url 为空的「成功」结果 ——
+// 那会让 webdav 模式的用户以为图存好了。
 func FormatImageResult(
 	items []map[string]any,
 	prompt, responseFormat string,
@@ -249,7 +253,7 @@ func FormatImageResult(
 	baseURL string,
 	created int64,
 	message string,
-) map[string]any {
+) (map[string]any, error) {
 	data := make([]any, 0, len(items))
 	for _, item := range items {
 		encoded := strings.TrimSpace(stringOf(item["b64_json"]))
@@ -269,7 +273,11 @@ func FormatImageResult(
 		}
 		url := ""
 		if saveImage != nil {
-			url, _ = saveImage(payload, baseURL)
+			savedURL, saveErr := saveImage(payload, baseURL)
+			if saveErr != nil {
+				return nil, saveErr
+			}
+			url = savedURL
 		}
 		if responseFormat == "b64_json" {
 			data = append(data, map[string]any{
@@ -289,7 +297,7 @@ func FormatImageResult(
 	if message != "" && len(data) == 0 {
 		result["message"] = message
 	}
-	return result
+	return result, nil
 }
 
 // ImageRequest 是一次图片生成的输入（对应 ConversationRequest 的图片相关字段）。

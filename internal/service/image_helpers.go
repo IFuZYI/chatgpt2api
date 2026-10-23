@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -25,6 +26,16 @@ func imageDimensions(path string) (int, int, bool) {
 	return config.Width, config.Height, true
 }
 
+// imageDimensionsFromBytes 等价于 Python 的 `_image_dimensions(payload)`：
+// 直接从字节解宽高。webdav 模式下本地没有文件，只能走这条路。
+func imageDimensionsFromBytes(payload []byte) (int, int, bool) {
+	config, _, err := image.DecodeConfig(bytes.NewReader(payload))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		return 0, 0, false
+	}
+	return config.Width, config.Height, true
+}
+
 // writeThumbnail 生成等比缩略图并写成 PNG（与 Python 的
 // `image.thumbnail((320,320), LANCZOS)` + `save(format="PNG", optimize=True)` 等价）。
 func writeThumbnail(source, target string, maxWidth, maxHeight int) error {
@@ -38,6 +49,22 @@ func writeThumbnail(source, target string, maxWidth, maxHeight int) error {
 	if err != nil {
 		return err
 	}
+	return writeThumbnailImage(decoded, target, maxWidth, maxHeight)
+}
+
+// writeThumbnailFromBytes 从字节生成缩略图。
+//
+// webdav 模式下源图只在远端，EnsureThumbnail 拿不到本地文件，
+// 必须能直接吃内存里的字节（对应 Python 的 `io.BytesIO(get_bytes(...))`）。
+func writeThumbnailFromBytes(payload []byte, target string, maxWidth, maxHeight int) error {
+	decoded, _, err := image.Decode(bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	return writeThumbnailImage(decoded, target, maxWidth, maxHeight)
+}
+
+func writeThumbnailImage(decoded image.Image, target string, maxWidth, maxHeight int) error {
 	width, height := decoded.Bounds().Dx(), decoded.Bounds().Dy()
 	if width <= 0 || height <= 0 {
 		return errImageNotFound
