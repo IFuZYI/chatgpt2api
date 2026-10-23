@@ -27,8 +27,8 @@ type ModelCatalog struct {
 	ttl   time.Duration
 	clock func() time.Time
 
-	mu            sync.RWMutex
-	expiresAt     time.Time
+	mu        sync.RWMutex
+	expiresAt time.Time
 	// cachedVersion 是上次刷新时号池的版本号（来自 VersionedLister）。
 	// 有它就不必每次请求都遍历账号算签名。
 	cachedVersion uint64
