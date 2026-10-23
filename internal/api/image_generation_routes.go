@@ -109,7 +109,6 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 			BaseURL:        resolveImageBaseURL(c, d),
 			Images:         images,
 		}
-		_ = mask
 		if request.Prompt == "" {
 			writeErr(c, Errorf(http.StatusBadRequest, "prompt is required"))
 			return
@@ -118,6 +117,17 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, "image file or image_url is required"))
 			return
 		}
+		// 局部重绘：把 mask 的 alpha 合成进图片再送上游。
+		//
+		// Python 在 handle() 里、构造 ConversationRequest 之前做这件事
+		// （openai_v1_image_edit.py:53），且 usage 也按合成后的图算。
+		// 早期 Go 版直接丢弃 mask，结果整张图被重画 —— 看起来对但语义错。
+		composited, maskErr := protocol.CompositeMask(request.Images, mask)
+		if maskErr != nil {
+			writeErr(c, mapImageError(maskErr))
+			return
+		}
+		request.Images = composited
 		d.serveImageRequest(c, request, truthyValue(payload["stream"]))
 	})
 }

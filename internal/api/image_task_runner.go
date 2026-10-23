@@ -66,7 +66,19 @@ func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.T
 		DefaultThinkingEffort: d.Config.DefaultThinkingEffort(),
 	}
 	if isEdit {
-		request.Images = taskCtx.Images
+		// 局部重绘：异步任务同样要把 mask 合成进图片。
+		//
+		// Python 的 submit_edit 把 mask 塞进 payload，_run_task 再走
+		// openai_v1_image_edit.handle → _composite_mask。Go 侧早期
+		// taskCtx.Masks 从未被读取，异步链路里 mask 一样被静默丢弃。
+		images, maskErr := protocol.CompositeMask(taskCtx.Images, taskCtx.Masks)
+		if maskErr != nil {
+			// 合成失败按任务失败处理（Python 里异常同样落到 _run_task 的
+			// except Exception → status=error，error 文本进任务详情）。
+			call.finish(maskErr, "", nil)
+			return service.TaskResult{Error: maskErr.Error()}, nil
+		}
+		request.Images = images
 	}
 
 	pool := &protocol.ImagePool{
