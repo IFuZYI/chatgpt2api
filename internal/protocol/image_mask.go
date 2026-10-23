@@ -11,14 +11,14 @@ import (
 	"golang.org/x/image/draw"
 )
 
-// mask 的三种「取通道」模式，对齐 PIL 的 Image.mode 语义。
+// mask 的两种「取通道」模式，对齐 PIL 的 Image.mode 语义。
 //
-// Python 的 _composite_mask 只对 RGBA 与 L 走特殊分支，其余模式一律
-// convert("L")，所以这里只需要三态，不需要完整的 PIL 模式集合。
+// Python 的 _composite_mask 是三路分支（RGBA / L / 其他），但 L 那一支
+// 是恒等操作（mask_img 本身就是 L，`alpha = mask_img` 等价于
+// `mask_img.convert("L")`），所以合并成两态：取 alpha，或取灰度。
 const (
-	maskModeRGBA  = "RGBA"
-	maskModeL     = "L"
-	maskModeOther = "other"
+	maskModeRGBA = "RGBA"
+	maskModeGray = "gray"
 )
 
 const pngSignature = "\x89PNG\r\n\x1a\n"
@@ -125,8 +125,10 @@ func maskAlphaChannel(encodedMask string, width, height int) (*image.Gray, error
 // maskAlphaSource 复刻 Python 的取通道分支：
 //
 //	if mask_img.mode == "RGBA": alpha = mask_img.split()[3]
-//	elif mask_img.mode == "L":  alpha = mask_img
 //	else:                       alpha = mask_img.convert("L")
+//
+// （Python 的 `elif mode == "L": alpha = mask_img` 与 else 分支等价：
+// 对 L 图调 convert("L") 是恒等操作。）
 func maskAlphaSource(mask image.Image, mode string) *image.Gray {
 	bounds := mask.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
@@ -135,7 +137,11 @@ func maskAlphaSource(mask image.Image, mode string) *image.Gray {
 	// 16 位灰度（PIL 模式 I;16）→ convert("L") 是把 >255 的值截到 255：
 	// 实测 0x1234 / 0x0100 / 0x00FF 全部得到 255。Go 的 GrayModel 会按
 	// 16→8 位缩放（0x1234 → 18），语义相反（0=编辑，255=保留），所以单独对齐。
-	if typed, ok := mask.(*image.Gray16); ok && mode != maskModeRGBA {
+	//
+	// 不需要判断 mode：16 位灰度 PNG（color type 0）恒为 maskModeGray，
+	// 而 16 位灰度+alpha（color type 4）会被 pngMaskMode 判成 RGBA、
+	// 由 Go 解成 NRGBA64，走不到这里。
+	if typed, ok := mask.(*image.Gray16); ok {
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
 				value := typed.Gray16At(bounds.Min.X+x, bounds.Min.Y+y).Y
@@ -157,8 +163,6 @@ func maskAlphaSource(mask image.Image, mode string) *image.Gray {
 				gray.Pix[y*gray.Stride+x] = uint8(alpha >> 8)
 				continue
 			}
-			// convert("L")：PIL 与 Go 都用 ITU-R 601-2 亮度系数
-			// (0.299, 0.587, 0.114)，调色板图也一样（红 76 / 蓝 29）。
 			gray.Pix[y*gray.Stride+x] = luminanceOf(value)
 		}
 	}
@@ -179,7 +183,7 @@ func luminanceOf(value color.Color) uint8 {
 	return uint8(luminance)
 }
 
-// maskMode 复刻 PIL 打开图片后的 Image.mode，只保留影响取通道的三类。
+// maskMode 复刻 PIL 打开图片后的 Image.mode，只保留影响取通道的两类。
 func maskMode(payload []byte, decoded image.Image) string {
 	if mode, ok := pngMaskMode(payload); ok {
 		return mode
@@ -191,7 +195,7 @@ func maskMode(payload []byte, decoded image.Image) string {
 	case *image.NRGBA, *image.NRGBA64:
 		return maskModeRGBA
 	default:
-		return maskModeOther
+		return maskModeGray
 	}
 }
 
@@ -214,13 +218,8 @@ func pngMaskMode(payload []byte) (string, bool) {
 		if depth == 16 {
 			return maskModeRGBA, true
 		}
-		return maskModeOther, true
-	case 0: // 灰度：1/2/4/8 位在 PIL 里值域都是 0..255（L 直接用），16 位是 I;16
-		if depth == 16 {
-			return maskModeOther, true
-		}
-		return maskModeL, true
-	default: // 2 = 真彩、3 = 调色板 → convert("L")
-		return maskModeOther, true
+		return maskModeGray, true
+	default: // 0 = 灰度（含 16 位 I;16）、2 = 真彩、3 = 调色板 → convert("L")
+		return maskModeGray, true
 	}
 }
