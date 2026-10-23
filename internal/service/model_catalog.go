@@ -29,6 +29,9 @@ type ModelCatalog struct {
 
 	mu            sync.RWMutex
 	expiresAt     time.Time
+	// cachedVersion 是上次刷新时号池的版本号（来自 VersionedLister）。
+	// 有它就不必每次请求都遍历账号算签名。
+	cachedVersion uint64
 	signature     string
 	anonymous     map[string]map[string]any
 	byAccountType map[string]map[string]map[string]any
@@ -37,6 +40,14 @@ type ModelCatalog struct {
 // AccountLister 是 ModelCatalog 对号池的最小依赖。
 type AccountLister interface {
 	ListAccounts() []Account
+}
+
+// VersionedLister 是可选能力：号池能给出一个 O(1) 可读的内容版本号。
+//
+// 有版本号时，缓存命中判断是一次原子读；没有时退回「遍历账号算签名」
+// （正确但慢，269 账号约 101μs）。生产用 AccountService 实现了它。
+type VersionedLister interface {
+	Version() uint64
 }
 
 // NewModelCatalog 构造。fetch 为 nil 时只返回空目录（测试用）。
@@ -100,7 +111,7 @@ func modelMap(models []map[string]any) map[string]map[string]any {
 }
 
 // refresh 重新拉取上游目录。任何一路失败都保留旧值（与 Python 一致）。
-func (c *ModelCatalog) refresh(ctx context.Context, groups map[string][]string, signature string) {
+func (c *ModelCatalog) refresh(ctx context.Context, groups map[string][]string, signature string, version uint64) {
 	anonymous := c.anonymous
 	if c.fetch != nil {
 		if models, err := c.fetch(ctx, ""); err == nil {
@@ -125,6 +136,7 @@ func (c *ModelCatalog) refresh(ctx context.Context, groups map[string][]string, 
 	c.anonymous = anonymous
 	c.byAccountType = byAccountType
 	c.signature = signature
+	c.cachedVersion = version
 	c.expiresAt = c.clock().Add(c.ttl)
 	c.mu.Unlock()
 }
@@ -147,18 +159,39 @@ func (c *ModelCatalog) fetchAccountType(ctx context.Context, tokens []string) ma
 	return nil
 }
 
-// ensure 在缓存过期或签名变化时刷新。
+// ensure 在缓存过期或号池变化时刷新。
+//
+// 快速路径：TTL 未过期且号池版本号未变 → 直接返回，不碰账号列表。
+// 慢速路径（无版本号能力时）：遍历账号算签名。
 func (c *ModelCatalog) ensure(ctx context.Context) {
+	versioned, hasVersion := c.accounts.(VersionedLister)
+
+	c.mu.RLock()
+	fresh := c.clock().Before(c.expiresAt)
+	cachedVersion := c.cachedVersion
+	c.mu.RUnlock()
+
+	if fresh && hasVersion && versioned.Version() == cachedVersion {
+		return
+	}
+
 	groups := c.activeGroups()
 	signature := signatureOf(groups)
 
-	c.mu.RLock()
-	fresh := signature == c.signature && c.clock().Before(c.expiresAt)
-	c.mu.RUnlock()
-	if fresh {
-		return
+	if fresh && !hasVersion {
+		c.mu.RLock()
+		sameSignature := signature == c.signature
+		c.mu.RUnlock()
+		if sameSignature {
+			return
+		}
 	}
-	c.refresh(ctx, groups, signature)
+
+	var version uint64
+	if hasVersion {
+		version = versioned.Version()
+	}
+	c.refresh(ctx, groups, signature, version)
 }
 
 // ListModels 返回聚合后的模型列表（去重、按 id 排序）。

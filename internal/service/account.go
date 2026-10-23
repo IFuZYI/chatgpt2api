@@ -52,6 +52,16 @@ type AccountService struct {
 	accounts map[string]Account
 	aliases  map[string]string
 	cursor   atomic.Uint64
+	// version 在号池内容变化时自增。
+	//
+	// 存在的理由：ModelCatalog 需要判断「号池是否变了」来决定缓存是否失效。
+	// 原来的做法是每次请求都遍历全部账号构造签名 —— 269 个账号时占
+	// /v1/models 总耗时的 64%（实测 101μs / 159μs）。有了版本号，
+	// 这个判断变成一次原子读。
+	version atomic.Uint64
+	// structuralSig 是上次 bumpVersionLocked 时的结构性签名。
+	// 只有它变化才自增 version（使用统计变化不算）。
+	structuralSig string
 
 	// slots 每账号一个信号量；惰性创建，删除账号时清理。
 	slotsMu sync.Mutex
@@ -176,6 +186,9 @@ func NewAccountService(backend storage.Backend, cfg *config.Store, logs *LogServ
 	s.slotCond = sync.NewCond(&s.mu)
 	s.accounts = s.loadAccounts()
 	s.cumulativeTotal = s.loadCumulativeTotal()
+	// 建立结构性签名基线：否则首次 saveAccountsLocked 会把「空串 → 真实签名」
+	// 当成一次结构性变化，白白自增一次版本号。
+	s.structuralSig = s.structuralSignatureLocked()
 	return s
 }
 
@@ -208,6 +221,11 @@ func (s *AccountService) saveAccountsLocked() {
 	for _, account := range s.accounts {
 		items = append(items, account)
 	}
+	// 先自增再落盘：即使落盘失败，内存里的号池也变了，
+	// 缓存必须失效（否则会返回基于旧号池的模型列表）。
+	//
+	// 注意：这里用 bumpVersion 而不是无条件自增 —— 见它的注释。
+	s.bumpVersionLocked()
 	if err := s.storage.SaveAccounts(items); err != nil {
 		s.logSaveError("accounts", err)
 	}
@@ -726,3 +744,63 @@ const (
 	oauthClientIDConst  = oauthClientID
 	oauthUserAgentConst = oauthUserAgent
 )
+
+// Version 返回号池内容版本号，每次账号增删改都会自增。
+//
+// 供 ModelCatalog 做 O(1) 的缓存失效判断，避免每次请求遍历全部账号。
+func (s *AccountService) Version() uint64 {
+	return s.version.Load()
+}
+
+// structuralSignature 只取「影响模型目录」的字段：账号集合 + 类型 + 状态。
+//
+// 为什么需要它：saveAccountsLocked 在每个请求都会跑（MarkTextUsed 更新
+// last_used_at、MarkImageResult 更新 quota/success/fail）。如果每次落盘都
+// 自增版本号，模型缓存就永远失效，/v1/models 每次都要重新拉上游
+// （实测 63ms → 1348ms 的退化）。
+//
+// 模型目录只关心「有哪些类型/来源的账号、是否可用」，不关心使用计数。
+func (s *AccountService) structuralSignatureLocked() string {
+	type entry struct {
+		token      string
+		typ        string
+		sourceType string
+		status     string
+	}
+	entries := make([]entry, 0, len(s.accounts))
+	for token, account := range s.accounts {
+		entries = append(entries, entry{
+			token:      token,
+			typ:        stringValue(account["type"]),
+			sourceType: stringValue(account["source_type"]),
+			status:     stringValue(account["status"]),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].token < entries[j].token })
+
+	var builder strings.Builder
+	for _, item := range entries {
+		builder.WriteString(item.token)
+		builder.WriteByte('\x00')
+		builder.WriteString(item.typ)
+		builder.WriteByte('\x00')
+		builder.WriteString(item.sourceType)
+		builder.WriteByte('\x00')
+		builder.WriteString(item.status)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
+
+// bumpVersionLocked 只在「结构性内容」变化时自增版本号。
+//
+// 纯使用统计（last_used_at / success / fail / quota）不触发自增 ——
+// 它们不影响模型目录，让它们触发只会白白打掉缓存。
+func (s *AccountService) bumpVersionLocked() {
+	signature := s.structuralSignatureLocked()
+	if signature == s.structuralSig {
+		return
+	}
+	s.structuralSig = signature
+	s.version.Add(1)
+}
