@@ -535,3 +535,73 @@ func TestCompositeMaskScalesWhenSizesDiffer(t *testing.T) {
 		t.Errorf("scaler called %d times, want 1", counter.calls)
 	}
 }
+
+// 阈值必须钉在 Pillow 的硬错误边界（2 × MAX_IMAGE_PIXELS = 178_956_970），
+// 既不能过紧（误伤合法大图）也不能过松（放过炸弹）。
+//
+// 复审实测过：把 maxImagePixels 改成 1_000，全套测试仍绿 —— 说明没有测试
+// 锁住「合法大图不被误伤」。这里用 IHDR 声明尺寸来锁边界：fixture 只有
+// 一百多字节，DecodeConfig 读到假尺寸，尺寸检查先返回，不会真的解码。
+func TestCompositeMaskPixelLimitBoundary(t *testing.T) {
+	cases := []struct {
+		name         string
+		width        int
+		height       int
+		wantRejected bool
+		reason       string
+	}{
+		{
+			name: "4096x4096", width: 4096, height: 4096,
+			wantRejected: false,
+			reason:       "16.7M 像素，常见上限，必须放行",
+		},
+		{
+			name: "12000x12000", width: 12000, height: 12000,
+			wantRejected: false,
+			reason:       "144M 像素，介于 Pillow 的 warning 与 error 阈值之间；Python 只警告不拒绝，Go 也必须放行",
+		},
+		{
+			name: "14000x14000", width: 14000, height: 14000,
+			wantRejected: true,
+			reason:       "196M 像素，超过 178_956_970，与 Pillow 的 DecompressionBombError 一致",
+		},
+	}
+
+	// 先确认边界值本身没被写错。
+	if maxImagePixels != 178_956_970 {
+		t.Fatalf("maxImagePixels = %d, want 178_956_970 (2 * Pillow MAX_IMAGE_PIXELS)", maxImagePixels)
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// fixture 只声明尺寸，IDAT 只有 32 字节。
+			oversized := buildOversizedPNG(t, tc.width, tc.height)
+
+			// 直接测尺寸检查：不经过解码，所以不会分配 tc.width*tc.height 的内存。
+			err := checkImageDimensions(oversized, "image")
+			rejected := err != nil && strings.Contains(err.Error(), "exceed")
+
+			if rejected != tc.wantRejected {
+				t.Fatalf("%dx%d (%d px): rejected = %v, want %v — %s",
+					tc.width, tc.height, tc.width*tc.height, rejected, tc.wantRejected, tc.reason)
+			}
+			if err != nil && !rejected {
+				t.Fatalf("%dx%d: unexpected non-size error: %v", tc.width, tc.height, err)
+			}
+		})
+	}
+}
+
+// mask 侧与图片侧共用同一个上限，这里确认走 mask 标签时也按同一阈值判定。
+func TestCompositeMaskPixelLimitAppliesToMask(t *testing.T) {
+	atLimit := buildOversizedPNG(t, 12000, 12000)
+	if err := checkImageDimensions(atLimit, "mask image"); err != nil {
+		t.Errorf("12000x12000 mask should pass the size check, got: %v", err)
+	}
+
+	overLimit := buildOversizedPNG(t, 14000, 14000)
+	if err := checkImageDimensions(overLimit, "mask image"); err == nil {
+		t.Error("14000x14000 mask should be rejected by the size check")
+	}
+}

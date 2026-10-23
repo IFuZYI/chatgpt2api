@@ -381,6 +381,11 @@ func TestImageEditMaskFailureIsLogged(t *testing.T) {
 	if len(logs) == 0 {
 		t.Fatal("mask failure produced no call log entry; the request is invisible in the log page")
 	}
+	// 必须恰好一条：失败分支自己 finish 之后，defer 不能再补一条。
+	// 没有 logged 标志时，这里会看到 2 条（failed + success）且 logs[0] 是 success。
+	if len(logs) != 1 {
+		t.Fatalf("call log entries = %d, want exactly 1 (mask failure must not be double-logged)", len(logs))
+	}
 	entry := logs[0]
 	detail, ok := entry["detail"].(map[string]any)
 	if !ok {
@@ -397,7 +402,12 @@ func TestImageEditMaskFailureIsLogged(t *testing.T) {
 	}
 }
 
-// 成功路径只写一条日志：失败路径自己 finish 之后，defer 不能重复写。
+// 成功路径只写一条日志。
+//
+// 注意归因：这条测试守的是「成功路径的 defer 只写一次」，**不**守 logged
+// 标志 —— 成功路径上 logged 始终是 false，删掉标志它照样绿（实测）。
+// 守 logged 标志的是 TestImageEditMaskFailureIsLogged：没有标志时 defer
+// 会在失败分支之后补写一条 success，把唯一那条 failed 挤出 logs[0]。
 func TestImageEditSuccessLogsExactlyOnce(t *testing.T) {
 	server, _, deps := newMaskTestServer(t)
 

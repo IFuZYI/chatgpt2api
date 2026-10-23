@@ -23,8 +23,15 @@ const (
 
 const pngSignature = "\x89PNG\r\n\x1a\n"
 
-// maxImagePixels 是单张图片允许的最大像素数，对齐 Pillow 的
-// Image.MAX_IMAGE_PIXELS（默认 89_478_485）。
+// maxImagePixels 是单张图片允许的最大像素数，对齐 Pillow 的**硬错误**阈值。
+//
+// 数值来源（Pillow 13.0.0 的 Image._decompression_bomb_check）：
+//   - MAX_IMAGE_PIXELS = 89_478_485，超过只发 DecompressionBombWarning（放行）
+//   - pixels > 2 * MAX_IMAGE_PIXELS 才抛 DecompressionBombError（拒绝）
+//
+// 所以真正「Python 会拒」的边界是 2 × 89_478_485 = 178_956_970。
+// 这里必须用硬错误阈值而不是 warning 阈值：用 warning 阈值会让 89M~179M
+// 区间的图在 Go 侧被 502，而 Python 正常放行 —— 偏离权威实现。
 //
 // 为什么必须有这个上限：Go 的 image.Decode 会按 IHDR 声明的尺寸**真实分配**
 // 像素缓冲。一个一百多字节的 PNG 只要把 IHDR 写成 40000x40000，解码就会尝试
@@ -33,9 +40,8 @@ const pngSignature = "\x89PNG\r\n\x1a\n"
 // 测试进程即刻崩溃）。
 //
 // 基线代码从不对用户字节做完整解码（只用 DecodeConfig 读头），mask 合成是
-// 第一个完整解码用户图片的路径，所以这个上限必须加在这里。Python 侧安全是
-// 因为 Pillow 自带 DecompressionBombError（同一阈值）。
-const maxImagePixels = 89_478_485
+// 第一个完整解码用户图片的路径，所以这个上限必须加在这里。
+const maxImagePixels = 178_956_970
 
 // maskScaler 是 alpha 缩放用的插值器。
 //
@@ -43,23 +49,34 @@ const maxImagePixels = 89_478_485
 // 生产代码从不写它；测试串行执行（本包无 t.Parallel），不引入竞争。
 var maskScaler draw.Scaler = draw.CatmullRom
 
+// checkImageDimensions 只读头部判定尺寸是否可接受，不解码像素。
+//
+// 单独抽出来是为了让「阈值边界」能被直接测到：边界测试只需要构造一个声明
+// 大尺寸的头部，不必真的分配 width*height 的内存（14000x14000 是 784MB）。
+func checkImageDimensions(payload []byte, label string) error {
+	config, _, err := image.DecodeConfig(bytesReader(payload))
+	if err != nil {
+		return fmt.Errorf("cannot identify %s file: %w", label, err)
+	}
+	if config.Width <= 0 || config.Height <= 0 {
+		return fmt.Errorf("cannot identify %s file: invalid dimensions %dx%d",
+			label, config.Width, config.Height)
+	}
+	// 用 int64 相乘：32 位平台上 int 会溢出，让超大图绕过检查。
+	if pixels := int64(config.Width) * int64(config.Height); pixels > maxImagePixels {
+		return fmt.Errorf("%s dimensions %dx%d (%d pixels) exceed the %d pixel limit",
+			label, config.Width, config.Height, pixels, maxImagePixels)
+	}
+	return nil
+}
+
 // decodeImageWithLimit 在完整解码之前先用 DecodeConfig 挡住超大图。
 //
 // 顺序很重要：DecodeConfig 只读头部，不分配像素缓冲；image.Decode 才分配。
 // 先查尺寸再解码，才能在 OOM 发生之前返回 error。
 func decodeImageWithLimit(payload []byte, label string) (image.Image, error) {
-	config, _, err := image.DecodeConfig(bytesReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("cannot identify %s file: %w", label, err)
-	}
-	if config.Width <= 0 || config.Height <= 0 {
-		return nil, fmt.Errorf("cannot identify %s file: invalid dimensions %dx%d",
-			label, config.Width, config.Height)
-	}
-	// 用 int64 相乘：32 位平台上 int 会溢出，让超大图绕过检查。
-	if pixels := int64(config.Width) * int64(config.Height); pixels > maxImagePixels {
-		return nil, fmt.Errorf("%s dimensions %dx%d (%d pixels) exceed the %d pixel limit",
-			label, config.Width, config.Height, pixels, maxImagePixels)
+	if err := checkImageDimensions(payload, label); err != nil {
+		return nil, err
 	}
 	decoded, _, err := image.Decode(bytesReader(payload))
 	if err != nil {
