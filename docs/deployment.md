@@ -22,7 +22,7 @@ git --version
 
 | 路径 | 作用 |
 | --- | --- |
-| `config.json` | 主配置、后台密钥、代理、图片、备份等配置 |
+| `config.json` | 主配置、后台密钥、代理、图片、备份等配置。**不入 git**，从 `config.example.json` 复制 |
 | `.env` | Docker compose 环境变量 |
 | `data/` | 账号、日志、图片、任务记录等运行数据 |
 
@@ -35,7 +35,12 @@ git --version
 ```bash
 git clone git@github.com:basketikun/chatgpt2api.git
 cd chatgpt2api
+cp config.example.json config.json
 ```
+
+**必须先复制配置文件**：`config.json` 不在仓库里（避免把 webdav 密码、
+R2 密钥等凭据提交上去）。compose 的文件挂载用
+`create_host_path: false`，文件不存在时会直接报错而不是悄悄建一个目录。
 
 设置 `config.json` 中的 `auth-key`，或在 `docker-compose.yml` 中配置：
 

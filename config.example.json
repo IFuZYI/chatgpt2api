@@ -1,0 +1,109 @@
+{
+  "ai_review": {
+    "api_key": "",
+    "base_url": "",
+    "enabled": false,
+    "model": "",
+    "prompt": ""
+  },
+  "auth-key": "",
+  "auto_relogin_after_refresh": false,
+  "auto_remove_invalid_accounts": true,
+  "auto_remove_rate_limited_accounts": false,
+  "backup": {
+    "access_key_id": "",
+    "account_id": "admin",
+    "bucket": "",
+    "enabled": false,
+    "encrypt": false,
+    "include": {
+      "accounts_snapshot": true,
+      "auth_keys_snapshot": true,
+      "config": true,
+      "cpa": true,
+      "image_tasks": true,
+      "images": false,
+      "logs": true,
+      "sub2api": true
+    },
+    "interval_minutes": 1440,
+    "passphrase": "",
+    "prefix": "backups",
+    "provider": "cloudflare_r2",
+    "rotation_keep": 10,
+    "secret_access_key": ""
+  },
+  "base_url": "",
+  "chat_completion_cache": {
+    "dedupe_inflight": true,
+    "drop_adjacent_duplicates": true,
+    "drop_assistant_history": false,
+    "enabled": true,
+    "max_entries": 256,
+    "normalize_messages": true,
+    "stream_cache": true,
+    "ttl_seconds": 60
+  },
+  "default_thinking_effort": "auto",
+  "default_upstream_model_name": "gpt-5-5",
+  "global_system_prompt": "",
+  "image_account_concurrency": 3,
+  "image_check_before_hit_enabled": true,
+  "image_min_free_mb": 500,
+  "image_parallel_generation": true,
+  "image_poll_initial_wait_secs": 10,
+  "image_poll_interval_secs": 10,
+  "image_poll_timeout_secs": 120,
+  "image_remove_conversation_after_result": true,
+  "image_remove_conversation_always": true,
+  "image_retention_days": 15,
+  "image_settle_enabled": true,
+  "image_settle_secs": 2,
+  "image_storage": {
+    "enabled": true,
+    "mode": "webdav",
+    "public_base_url": "",
+    "webdav_password": "",
+    "webdav_root_path": "chatgpt2api/images",
+    "webdav_url": "https://webdav.fuzy.site/dav",
+    "webdav_username": "chatgpt2api"
+  },
+  "image_timeout_retry_secs": 30,
+  "log_levels": [
+    "debug",
+    "error",
+    "info",
+    "warning"
+  ],
+  "proxy": "socks5h://gobngawr:06pk6as8qlwu@9.142.194.72:6740",
+  "proxy_runtime": {
+    "clearance": {
+      "browser": "chrome",
+      "cf_clearance": "",
+      "cf_cookies": "",
+      "enabled": true,
+      "flaresolverr_url": "http://flaresolverr:8191",
+      "mode": "flaresolverr",
+      "refresh_interval": 3600,
+      "timeout_sec": 60,
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+      "warm_up_on_start": true
+    },
+    "egress_mode": "single_proxy",
+    "enabled": false,
+    "proxy_url": "http://privoxy:8118",
+    "reset_session_status_codes": [
+      403
+    ],
+    "resource_proxy_url": "",
+    "skip_ssl_verify": true
+  },
+  "refresh_account_interval_minute": 5,
+  "sensitive_words": [],
+  "third_party_apps": {
+    "infinite_canvas": {
+      "enabled": true,
+      "url": "https://canvas.best"
+    }
+  }
+}

@@ -4,10 +4,14 @@ services:
     container_name: chatgpt2api-warp-init
     working_dir: /app
     volumes:
-      - ./config.json:/app/config.json
+      # init-config 负责**创建/合并** config.json（脚本会 write_text），
+      # 所以不能要求文件已存在。挂载项目根目录，但脚本只碰 config.json。
+      # 注意：app 服务那条用长语法 + create_host_path:false，要求文件存在 ——
+      # 顺序由 depends_on(service_completed_successfully) 保证。
+      - ./:/app/host
       - ./scripts:/app/scripts:ro
     environment:
-      CHATGPT2API_CONFIG_FILE: /app/config.json
+      CHATGPT2API_CONFIG_FILE: /app/host/config.json
       CHATGPT2API_PROXY_RUNTIME_ENABLED: ${CHATGPT2API_PROXY_RUNTIME_ENABLED:-true}
       CHATGPT2API_PROXY_RUNTIME_EGRESS_MODE: ${CHATGPT2API_PROXY_RUNTIME_EGRESS_MODE:-single_proxy}
       CHATGPT2API_PROXY_RUNTIME_PROXY_URL: ${CHATGPT2API_PROXY_RUNTIME_PROXY_URL:-http://privoxy:8118}
@@ -104,7 +108,13 @@ services:
       - "${CHATGPT2API_PORT:-3000}:8080"
     volumes:
       - ./data:/app/data
-      - ./config.json:/app/config.json
+      # 长语法 + create_host_path: false：源文件不存在时直接报错，
+      # 而不是悄悄创建一个同名目录（服务会读不到配置且提示难懂）。
+      - type: bind
+        source: ./config.json
+        target: /app/config.json
+        bind:
+          create_host_path: false
     environment:
       STORAGE_BACKEND: ${STORAGE_BACKEND:-json}
       DATABASE_URL: ${DATABASE_URL:-}

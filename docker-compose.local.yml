@@ -17,7 +17,15 @@ services:
 
     volumes:
       - ./data:/app/data
-      - ./config.json:/app/config.json
+      # 用长语法 + create_host_path: false：
+      # 短语法在源文件不存在时会**创建一个同名目录**，服务于是读不到配置、
+      # 且错误信息是「config 是目录」（config.go 只警告不中断），很难排查。
+      # 长语法会直接报错，让人立刻知道要 cp config.example.json config.json。
+      - type: bind
+        source: ./config.json
+        target: /app/config.json
+        bind:
+          create_host_path: false
 
     environment:
       # 本地默认用 sqlite（json 后端在账号多时每次全量读写，慢）。
