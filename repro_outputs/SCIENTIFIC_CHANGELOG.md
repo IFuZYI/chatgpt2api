@@ -49,6 +49,18 @@
 - **影响**：某账号慢/限流不再必然导致整张图失败
 - **证据状态**：已验证（三个测试 + 尝试次数逐一核对）
 
+### 6.5 周期性备份调度器（commit ba52a2b）
+- **改动**：新增 `service.BackupScheduler`，每 30 秒检查 `backup.enabled` / `interval_minutes`
+- **依据**：`services/backup_service.py:326-351` `_run()` + `run_scheduled_backup_if_needed`
+- **影响**：自动备份真的会发生（此前配置只保存不执行）
+- **证据状态**：已验证（5 个单元测试 + 真实服务实测：配 `enabled=true, interval=1` 后 8 秒内日志出现备份尝试）
+
+### 6.6 敏感词与 AI 审核（commit 5935c63）
+- **改动**：新增 `service.ContentFilter`，接入 5 个请求入口
+- **依据**：`services/content_filter.py:150-264`
+- **影响**：管理员配的敏感词真的会拦截
+- **证据状态**：已验证（7 个单元测试 + 3 个端到端测试 + 实测：配 `sensitive_words` 后含该词的请求返回 400 且错误体与 Python 逐字一致）
+
 ---
 
 ## 二、缺陷修复（Go 侧独立 bug）
@@ -105,7 +117,7 @@
 |:--|:--|:--|:--|
 | resume-poll 无 token | 缺口 | 「继续等待」必 401 | 任务记录不存 `access_token`，补需改 `data/image_tasks.json` 字段集，属独立决策 |
 | codex 响应格式 | 未验证 | 若上游用分片事件会报错 | 需真实 codex 账号抓包，当前号池全是 free web 号 |
-| 周期性备份调度器 | 缺失 | `backup.interval_minutes` 保存但不执行 | 需新增后台调度器，属独立功能 |
-| 敏感词 / AI 审核 | 缺失 | 配置了不生效 | `check_request` 整条链路未移植，属独立功能 |
+| ~~周期性备份调度器~~ | ✅ 已修（ba52a2b） | — | — |
+| ~~敏感词 / AI 审核~~ | ✅ 已修（5935c63） | — | — |
 | 流式真增量 | 未实现 | 长请求期间客户端收不到字节 | 需重构 SSE 写出路径，属独立任务 |
 | storage 包覆盖率 4.9% | 低 | 四个后端几乎无测试 | 需补大量测试，属独立任务 |

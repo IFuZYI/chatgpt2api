@@ -36,6 +36,7 @@
 | Render / Vercel 等部署表述 | ⚠️ | 当前主要以 Docker 部署为主，其他平台部署方式暂未重点说明。 |
 | `/v1/complete` 文本补全 | ❌  | 该端点从未存在，文档早期误记。文本能力走 `/v1/chat/completions`。 |
 | 流式输出支持 | ⚠️  | 协议层已实现（SSE 分块、`data: [DONE]` 结尾、chunk 形状与 Python 一致），但**生成期间不产生增量**：图片与文本都是先跑完再一次性写出所有 chunk。长请求期间客户端收不到字节，nginx/Cloudflare 的 60s 空闲会切断连接。 |
+| 内容过滤（敏感词 + AI 审核） | ✅  | `sensitive_words` 命中直接 400；`ai_review.enabled` 时调 OpenAI 兼容审核服务，按 `fail_open`（默认 true）决定故障时放行还是 503。接入 5 个入口：`/v1/images/generations`、`/v1/images/edits`、两个任务接口、文本对话。检查在取号/入队之前，不消耗额度。 |
 | 文本补全缓存与重复请求合并 | ✅  | `/v1/chat/completions` 文本链路默认启用 60 秒短缓存、流式结果回放、in-flight 请求合并和相邻重复消息清理；可通过 `chat_completion_cache` 配置关闭或调整。 |
 | 图片尺寸参数 | ✅  | `size` 与 `quality` 在 `/v1/images/generations`、`/v1/images/edits` 与任务接口均透传给上游。 |
 | 服务端图片 URL 缓存 | ✅  | 已实现。 |
