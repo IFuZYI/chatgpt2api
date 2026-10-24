@@ -144,6 +144,9 @@ func main() {
 	//   - 限流账号在 restore_at 到期后永远不会自动恢复
 	//   - 磁盘写满后所有生图静默失败（ENOSPC），且无自动清理
 	watcher := service.NewAccountWatcher(accounts, cfg)
+	// 开了但不会生效的配置要在启动时明说，不能静默。
+	deps.Accts.WarnUnsupportedAutoRelogin()
+
 	watcher.Start(
 		func(ctx context.Context, token, event string) (service.Account, error) {
 			if deps.AccountInfoFetcher == nil {

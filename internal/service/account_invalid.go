@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"github.com/basketikun/chatgpt2api/internal/upstream"
 	"time"
 )
@@ -115,3 +116,17 @@ func isTokenInvalidFailure(err error) bool {
 
 // upstreamStatusCodeOf 取上游错误的状态码（薄包装，便于测试替换）。
 func upstreamStatusCodeOf(err error) int { return upstream.StatusCodeOf(err) }
+
+// WarnUnsupportedAutoRelogin 在启动时提示 auto_relogin_after_refresh 不生效。
+//
+// 该配置依赖密码重新登录链路，而该链路未实现（ADR-0009:21，re-login 明确
+// 返回「未实现」）。不提示的话用户会以为开了就会自动恢复异常账号 ——
+// 静默不生效比明确报错更糟。
+func (s *AccountService) WarnUnsupportedAutoRelogin() {
+	if s.cfg == nil || !s.cfg.AutoReloginAfterRefresh() {
+		return
+	}
+	fmt.Println("[account] auto_relogin_after_refresh is enabled but password " +
+		"re-login is not implemented (see ADR-0009); abnormal accounts will not " +
+		"be recovered automatically")
+}

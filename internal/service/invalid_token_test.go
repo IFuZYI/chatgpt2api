@@ -98,3 +98,13 @@ func TestIsTokenInvalidFailureOnlyFor401And403(t *testing.T) {
 		t.Error("nil error should not be treated as token invalid")
 	}
 }
+
+// 开启 auto_relogin_after_refresh 时必须提示不生效（不能静默）。
+func TestWarnUnsupportedAutoReloginDoesNotPanic(t *testing.T) {
+	svc, cfg := newTestAccountService(t, nil)
+	if _, err := cfg.Update(map[string]any{"auto_relogin_after_refresh": true}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	// 只验证不 panic 且能读配置（输出走 stdout，不在这里断言）
+	svc.WarnUnsupportedAutoRelogin()
+}
