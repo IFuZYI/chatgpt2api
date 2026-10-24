@@ -225,3 +225,65 @@ func mapChatImageArgsError(err error) *HTTPError {
 	}
 	return Errorf(http.StatusBadRequest, err.Error())
 }
+
+// handleWebSearchChat 处理 /v1/chat/completions 的网页搜索形态。
+//
+// 复刻 Python 的 web_search_chat_response / stream_web_search_chat_completion
+// （services/protocol/openai_v1_chat_complete.py:201-222）：把最后一条 user
+// 消息当搜索词，跑一次搜索，把 answer + sources 转成 chat completion。
+func (d *Deps) handleWebSearchChat(c *gin.Context, body map[string]any, outcome *chatCallOutcome) {
+	settings := d.chatCacheSettings()
+	model, messages, err := protocol.TextChatParts(body, settings)
+	if err != nil {
+		writeErr(c, Errorf(http.StatusBadRequest, err.Error()))
+		return
+	}
+
+	query := protocol.SearchQueryFromMessages(messages)
+	if strings.TrimSpace(query) == "" {
+		writeErr(c, Errorf(http.StatusBadRequest, "messages or prompt is required for web search"))
+		return
+	}
+
+	// 内容过滤：搜索词同样要过敏感词检查。
+	if filterErr := d.checkContent(c.Request.Context(), query); filterErr != nil {
+		writeErr(c, contentFilterError(filterErr))
+		return
+	}
+
+	result, accountEmail, searchErr := d.runSearch(c.Request.Context(), query)
+	if searchErr != nil {
+		if outcome != nil {
+			outcome.accountEmail = accountEmail
+		}
+		writeErr(c, mapProtocolError(searchErr))
+		return
+	}
+	if outcome != nil {
+		outcome.accountEmail = accountEmail
+	}
+
+	text, annotations := protocol.TextWithURLCitations(result)
+	chatAnnotations := protocol.ChatCompletionAnnotations(annotations)
+
+	if truthyValue(body["stream"]) {
+		// 流式：一次性给完整正文 + 结尾（与 Python 一致 —— 搜索本身没有
+		// 增量，Python 也是先跑完再吐两条）。
+		completionID := "chatcmpl-" + protocol.CompletionID()
+		created := protocol.NowUnix()
+		chunks := []map[string]any{
+			protocol.ChatCompletionChunk(model, map[string]any{"role": "assistant", "content": text}, nil, completionID, created),
+			protocol.ChatCompletionChunk(model, map[string]any{}, "stop", completionID, created),
+		}
+		writeSSEChunks(c, chunks)
+		return
+	}
+
+	c.JSON(http.StatusOK, protocol.ChatCompletionResponse(
+		model, text, protocol.NowUnix(),
+		protocol.CountMessageTextTokens(messages, model),
+		0,
+		protocol.CountTextTokens(text, model),
+		chatAnnotations,
+	))
+}

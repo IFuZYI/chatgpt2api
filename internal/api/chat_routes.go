@@ -78,8 +78,11 @@ func (d *Deps) registerChatCompletions(r *gin.Engine) {
 			return
 		}
 
-		if protocol.IsWebSearchChatRequest(body) {
-			writeErr(c, Errorf(http.StatusNotImplemented, "web search is not implemented yet"))
+		// 网页搜索：只有「支持的工具类型」才走搜索链路；
+		// 含不支持的工具时落到文本链路（那里会注入 TOOL_UNAVAILABLE 提示），
+		// 与 Python 的 `and not has_unsupported_tools(...)` 一致。
+		if protocol.IsWebSearchChatRequest(body) && !protocol.HasUnsupportedTools(body, protocol.WebSearchToolTypes) {
+			d.handleWebSearchChat(c, body, outcome)
 			return
 		}
 
