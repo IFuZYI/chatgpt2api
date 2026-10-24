@@ -91,11 +91,11 @@ Python 用三套信封（ADR-0005）：
 
 | 项 | 值 |
 |:--|:--|
-| 测试总数 | 321 |
+| 测试总数 | 344 |
 | `go test ./...` | 全绿 |
 | `go test -race ./...`（全 8 包） | 全绿 |
 | `go vet` / `gofmt` | 干净 |
-| 覆盖率（加权） | 约 43% |
+| 覆盖率（加权） | 约 45% |
 
 **覆盖率分布**（这是主要短板）：
 
@@ -105,9 +105,9 @@ Python 用三套信封（ADR-0005）：
 | internal/health | 88.5% |
 | internal/protocol | 72.8% |
 | internal/config | 64.9% |
-| internal/service | 41.3% |
+| internal/service | 44.1% |
 | internal/upstream | 36.6% |
-| internal/api | 28.4% |
+| internal/api | 30.8% |
 | **internal/storage** | **4.9%** |
 
 **结论**：核心协议层覆盖充分（72.8%），但 `storage` 与 `api` 偏低。四个存储后端几乎无测试，是最大风险面。
@@ -122,6 +122,8 @@ Python 用三套信封（ADR-0005）：
 | codex 响应格式 | 未验证 | 若上游用分片事件会明确报错（不静默返回空图） |
 | ~~周期性备份调度器~~ | ✅ 已修 | 每 30 秒检查，到期触发 |
 | ~~敏感词 / AI 审核~~ | ✅ 已修 | 5 个入口接入，取号前检查 |
+| ~~token 失效处理~~ | ✅ 已修 | invalid_count + 异常标记 + 按配置删号 |
+| auto_relogin_after_refresh | 已声明缺口 | 依赖未实现的密码重登（ADR-0009），启动时明确提示 |
 | 流式真增量 | 未实现 | 长请求期间客户端收不到字节，60s 空闲可能被切断 |
 | `/v1/ppt|psd/generations` | 501 | 可编辑 PPT/PSD 未实现（ADR-0009） |
 | `/v1/search` | 501 | 未实现（ADR-0009） |
