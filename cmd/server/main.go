@@ -156,6 +156,11 @@ func main() {
 	}, cfg)
 	cleanupScheduler.Start()
 
+	// 按 backup.interval_minutes 周期备份。没有它，设置页里开了「自动备份」
+	// 也永远不会备份（配置只被保存，无人执行）。
+	backupScheduler := deps.NewBackupScheduler()
+	backupScheduler.Start()
+
 	handler := api.NewRouter(deps)
 	server := &http.Server{
 		Addr:              *addr,
@@ -187,6 +192,7 @@ func main() {
 	// 先停调度器再退出，避免关闭过程中还在写 data/。
 	watcher.Stop()
 	cleanupScheduler.Stop()
+	backupScheduler.Stop()
 
 	// 最后等在途的图片任务写完 image_tasks.json。
 	//

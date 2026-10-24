@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -326,4 +327,36 @@ func (d *Deps) backupState() map[string]any {
 
 func encodeURIPath(value string) string {
 	return urlQueryEscape(value)
+}
+
+// NewBackupScheduler 构造按 backup.interval_minutes 触发的调度器。
+//
+// 在 main 里 Start()，关闭时 Stop()。存在理由见 service.BackupScheduler
+// 的注释：这两个配置项之前保存后无人读取，自动备份实际不生效。
+func (d *Deps) NewBackupScheduler() *service.BackupScheduler {
+	return service.NewBackupScheduler(service.BackupSchedulerOptions{
+		Interval: 30 * time.Second,
+		Enabled: func() bool {
+			return d.backupSettings().Enabled
+		},
+		IntervalMin: func() int {
+			return d.backupSettings().IntervalMin
+		},
+		LastFinishedAt: func() string {
+			state := d.backupState()
+			value, _ := state["last_finished_at"].(string)
+			return value
+		},
+		Running: func() bool {
+			state := d.backupState()
+			running, _ := state["running"].(bool)
+			return running
+		},
+		Run: func(trigger string) {
+			// 后台跑，不阻塞调度循环。
+			if _, err := d.runBackup(context.Background()); err != nil {
+				fmt.Printf("[backup-scheduler] scheduled backup failed: %v\n", err)
+			}
+		},
+	})
 }
