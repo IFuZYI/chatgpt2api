@@ -484,12 +484,18 @@ func (s *ImageTaskService) Submit(
 	s.mu.Lock()
 	cleaned := s.cleanupLocked()
 	if existing := s.tasks[key]; existing != nil {
+		// 必须在锁内构造快照：publicTask 会读 map 的多个字段，
+		// 而 finishTask / UpdateTask 在同一把锁下改写它。
+		// 放到 Unlock 之后读就是数据竞争（-race 可复现）。
+		//
+		// 注：editable_file_task.go 有同型代码，那边已先修（同一个 bug）。
+		snapshot := publicTask(existing)
 		if cleaned {
 			s.saveLocked()
 		}
 		s.mu.Unlock()
 		release()
-		return publicTask(existing), nil
+		return snapshot, nil
 	}
 	task := map[string]any{
 		"id":         taskID,
