@@ -586,3 +586,11 @@ func (c *Client) ListModels(ctx context.Context) ([]map[string]any, error) {
 	})
 	return data, nil
 }
+
+// StatusCodeOf 取出错误里的上游 HTTP 状态码（没有则 0）。
+//
+// 导出给 service 层用：刷新链路需要判断 401/403 是「token 失效」
+// 还是「限流/网络抖动」，后者不该触发删号。
+func StatusCodeOf(err error) int {
+	return protocol.StatusCodeOf(err)
+}

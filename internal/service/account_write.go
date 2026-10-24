@@ -522,6 +522,14 @@ func (s *AccountService) RefreshAccounts(
 			})
 			// 记录失败原因，便于前端展示与排查（Python 版也会写 last_refresh_error）。
 			s.recordRefreshError(item.token, item.err.Error())
+			// token 真的失效（401/403）时走完整失效流程：invalid_count +1，
+			// 再按 auto_remove_invalid_accounts 决定删号还是标记异常。
+			// 限流（429）与网络错误不算失效 —— 否则一次上游抖动会删光号池。
+			if isTokenInvalidFailure(item.err) {
+				if s.RecordInvalidTokenSeen(item.token, "refresh", item.err.Error(), true) {
+					s.RemoveInvalidToken(item.token, "refresh", false)
+				}
+			}
 		} else if item.account != nil {
 			// 关键：必须把拿到的账号信息写回号池。
 			// 只计数不回写会让刷新「成功」但 email/quota 永远是空（实测踩到）。

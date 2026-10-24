@@ -313,3 +313,6 @@ func isNetworkError(err error) bool {
 
 // NowFunc 便于测试替换时间源。
 var NowFunc = time.Now
+
+// StatusCodeOf 导出 httpStatusOf，供其他包判断上游错误类型。
+func StatusCodeOf(err error) int { return httpStatusOf(err) }
