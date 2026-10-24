@@ -44,7 +44,7 @@ func intOf(value any) int {
 // registerChatCompletions 挂载 /v1/chat/completions。
 //
 // 支持三种走向（与 Python 一致）：
-//   - 图片请求 → 走图片链路（M4 接入；当前返回明确的未实现错误）
+//   - 图片请求 → 走生图链路并把结果转成 chat completion
 //   - 网页搜索请求 → 走搜索链路
 //   - 其余 → 文本对话
 func (d *Deps) registerChatCompletions(r *gin.Engine) {
@@ -59,18 +59,22 @@ func (d *Deps) registerChatCompletions(r *gin.Engine) {
 			writeErr(c, bodyErr)
 			return
 		}
-		_ = identity
 
 		// 每次 /v1 调用都记一条 call 日志：日志页默认按 type=call 过滤，
 		// 不写的话首屏恒为空。
+		//
+		// 图片形态与非图片形态共用同一个摘要：Python 的 LoggedCall 对
+		// /v1/chat/completions 也只有一个 summary（api/ai.py:127-134），
+		// 具体走向靠 detail.endpoint + urls 区分。
 		call := d.beginCall("文本对话", c.FullPath(),
 			strings.TrimSpace(stringValueOf(body["model"])), identity.Name)
-		defer func() { call.finish(nil, "", nil) }()
+		outcome := &chatCallOutcome{}
+		defer func() { call.finish(outcome.err, outcome.accountEmail, outcome.urls) }()
 
-		// 图片请求：M4 接入。当前明确报未实现，不静默走文本链路
-		// （否则用户会拿到一段文本而非图片，更难排查）。
+		// 图片请求走生图链路并把结果转成 chat completion（Python
+		// openai_v1_chat_complete.handle 的图片分支）。
 		if isImageChatRequest(body) {
-			writeErr(c, Errorf(http.StatusNotImplemented, "image chat requests are not implemented yet"))
+			d.handleImageChat(c, body, outcome)
 			return
 		}
 
