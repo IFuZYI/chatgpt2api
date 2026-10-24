@@ -36,7 +36,9 @@ type Deps struct {
 	// TextUpstream 为文本请求构造上游客户端；ChatCache 是短 TTL 缓存。
 	TextUpstream  TextUpstreamFactory
 	ImageUpstream ImageUpstreamFactory
-	ChatCache     *protocol.ChatCompletionCache
+	// SearchUpstream 为 /v1/search 构造上游客户端。
+	SearchUpstream SearchUpstreamFactory
+	ChatCache      *protocol.ChatCompletionCache
 
 	// ContentFilter 在请求进上游之前做敏感词与 AI 审核。
 	// 为 nil 时跳过检查（测试与未接线场景）；生产在 NewDeps 里注入。

@@ -33,28 +33,7 @@ func (d *Deps) registerRemainingRoutes(r *gin.Engine) {
 	})
 
 	// ---- /v1/search ----
-	r.POST("/v1/search", func(c *gin.Context) {
-		identity, err := d.RequireIdentityCtx(c)
-		if err != nil {
-			writeErr(c, err)
-			return
-		}
-		body, bodyErr := decodeJSONBody(c)
-		if bodyErr != nil {
-			writeErr(c, bodyErr)
-			return
-		}
-		call := d.beginCall("网页搜索", c.FullPath(),
-			strings.TrimSpace(stringValueOf(body["model"])), identity.Name)
-		defer func() {
-			call.finish(errors.New("web search is not implemented yet"), "", nil)
-		}()
-		if strings.TrimSpace(stringValueOf(body["prompt"])) == "" {
-			writeErr(c, validationError("prompt", "Field required", nil))
-			return
-		}
-		writeErr(c, Errorf(http.StatusNotImplemented, "web search is not implemented yet"))
-	})
+	d.registerSearchRoute(r)
 
 	// ---- 可编辑文件任务 ----
 	r.GET("/v1/editable-file-tasks", func(c *gin.Context) {

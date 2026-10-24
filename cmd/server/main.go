@@ -127,6 +127,13 @@ func main() {
 		}
 		return client, client.Close, nil
 	}
+	deps.SearchUpstream = func(ctx context.Context, accessToken string) (protocol.SearchUpstream, func(), error) {
+		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
+		if err != nil {
+			return nil, nil, err
+		}
+		return client, client.Close, nil
+	}
 
 	// 注入异步图片任务的执行体。
 	// 漏掉这一步会让 /api/image-tasks/* 全部失败（runner 恒为 nil），
