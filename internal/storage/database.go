@@ -75,6 +75,13 @@ func (b *DBBackend) migrate() error {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				key_id VARCHAR(255) NOT NULL UNIQUE,
 				data TEXT NOT NULL)`,
+			// 显式命名索引，与 SQLAlchemy 的 index=True 保持一致。
+			//
+			// UNIQUE 约束会自带 sqlite_autoindex_*，但名字是内部生成的：
+			// 从 Python 迁移过来的库里已有 ix_* 两个索引，不补的话
+			// 迁移后同一列会有两套名字不同的索引，排查时极易混淆。
+			`CREATE INDEX IF NOT EXISTS ix_accounts_access_token ON accounts (access_token)`,
+			`CREATE INDEX IF NOT EXISTS ix_auth_keys_key_id ON auth_keys (key_id)`,
 		}
 	} else {
 		statements = []string{
