@@ -697,16 +697,34 @@ func (s *ImageService) SaveImageBytes(payload []byte, baseURL string) (rel strin
 	if mode == "webdav" || mode == "both" {
 		client := NewWebDAVClient(settings)
 		if client.BaseURL == "" {
-			return "", "", fmt.Errorf("WebDAV URL 不能为空")
+			if mode == "both" {
+				// both 模式本地已有副本：远端没配好不该让请求失败。
+				fmt.Fprintf(os.Stderr, "[image] webdav not configured, keeping local copy only: %s\n", rel)
+			} else {
+				return "", "", fmt.Errorf("WebDAV URL 不能为空")
+			}
+		} else {
+			// publicBase 传空：索引里的 remote_url 与 Python 一致，记 WebDAV 上的真实地址，
+			// 而不是对外域名（对外 URL 由 publicImageURL 现算）。
+			putURL, putErr := client.Put(context.Background(), rel, payload, "")
+			if putErr != nil {
+				// both 模式下远端失败**不**让整个请求失败：本地副本已经写好了，
+				// 因为远端抖动让用户拿不到图是不合理的。
+				//
+				// 但也绝不假装成功：索引如实标 storage=local / webdav=false，
+				// 调用方看得出这张图没上远端，SyncToWebDAV 可事后补传。
+				//
+				// webdav 模式没有本地副本，失败必须报错 —— 那正是「静默降级」
+				// 那个 bug 的反面（TestWebDAVOnlyModeStillFailsOnRemoteError 锁定）。
+				if mode != "both" {
+					return "", "", putErr
+				}
+				fmt.Fprintf(os.Stderr, "[image] webdav put failed, kept local copy only: %s: %v\n", rel, putErr)
+			} else {
+				remoteURL = putURL
+				storedWebdav = true
+			}
 		}
-		// publicBase 传空：索引里的 remote_url 与 Python 一致，记 WebDAV 上的真实地址，
-		// 而不是对外域名（对外 URL 由 publicImageURL 现算）。
-		putURL, putErr := client.Put(context.Background(), rel, payload, "")
-		if putErr != nil {
-			return "", "", putErr
-		}
-		remoteURL = putURL
-		storedWebdav = true
 	}
 
 	storage := "local"

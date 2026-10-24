@@ -431,8 +431,12 @@ func TestReadImageMissingWithoutWebDAVFlag(t *testing.T) {
 }
 
 // WebDAV 失败必须让 save 失败（不能静默只存本地），错误里带 HTTP 状态。
+// webdav 模式（本地无副本）远端失败必须报错。
+//
+// 注意：both 模式**不**在此列 —— 它有本地副本，远端失败应降级而不是报错，
+// 见 TestSaveImageBytesBothModeDegradesWhenWebDAVFails。
 func TestSaveImageBytesWebDAVFailureFailsSave(t *testing.T) {
-	for _, mode := range []string{"webdav", "both"} {
+	for _, mode := range []string{"webdav"} {
 		t.Run(mode, func(t *testing.T) {
 			recorder := newWebDAVRecorder()
 			recorder.putStatus = http.StatusInternalServerError
