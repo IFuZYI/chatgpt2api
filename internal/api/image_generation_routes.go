@@ -79,6 +79,10 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, "prompt is required"))
 			return
 		}
+		// 内容检查必须在取号之前：命中敏感词不该消耗任何账号额度。
+		if d.guardPrompt(c, prompt) {
+			return
+		}
 		// n 越界必须报错，不能静默夹取（Python 是 pydantic ge=1/le=4 → 422）。
 		// 夹取会让用户以为 n=5 生效了，实际只出 4 张。
 		n, nErr := requireImageCount(body["n"], true)
@@ -107,6 +111,9 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 		payload, images, mask, parseErr := parseImageEditRequest(c)
 		if parseErr != nil {
 			writeErr(c, parseErr)
+			return
+		}
+		if d.guardPrompt(c, strings.TrimSpace(stringValueOf(payload["prompt"]))) {
 			return
 		}
 		request := protocol.ImageRequest{

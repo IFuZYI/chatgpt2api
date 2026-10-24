@@ -285,6 +285,11 @@ func (d *Deps) runTextConversation(
 		return fmt.Errorf("text upstream factory is not configured")
 	}
 
+	// 内容检查：敏感词 + AI 审核。不检查等于设置页里的配置形同虚设。
+	if filterErr := d.checkContentMessages(ctx, messages); filterErr != nil {
+		return filterErr
+	}
+
 	accountTypes, allowAnonymous := d.Models.RouteForModel(ctx, model)
 	var route map[string]bool
 	if len(accountTypes) > 0 {

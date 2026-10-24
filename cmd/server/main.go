@@ -76,11 +76,16 @@ func main() {
 		Storage: backend,
 		Logs:    logs,
 		Auth:    auth,
-		Accts:   accounts,
-		Proxy:   service.NewProxySettings(cfg),
-		Images:  service.NewImageService(cfg),
-		Tasks:   service.NewImageTaskService(cfg),
-		Dist:    web.NewDist(),
+		// 敏感词与 AI 审核：不注入时设置页里配了也不生效。
+		ContentFilter: service.NewContentFilter(service.ContentFilterOptions{
+			SensitiveWords: cfg.SensitiveWords,
+			AIReview:       cfg.AIReview,
+		}),
+		Accts:  accounts,
+		Proxy:  service.NewProxySettings(cfg),
+		Images: service.NewImageService(cfg),
+		Tasks:  service.NewImageTaskService(cfg),
+		Dist:   web.NewDist(),
 	}
 	// ModelFetcher：按账号类型聚合上游模型目录。
 	// 传 nil 会让 /v1/models 永远只有图片模型（实测踩到），

@@ -215,6 +215,10 @@ func (d *Deps) RegisterImageRoutes(r *gin.Engine) {
 			writeErr(c, validationError("prompt", "Field required", nil))
 			return
 		}
+		// 内容检查在入队之前：不该让被拒的请求占用队列位。
+		if d.guardPrompt(c, prompt) {
+			return
+		}
 		task, submitErr := d.Tasks.Submit(
 			identity.ID, clientTaskID, "generate", prompt,
 			orDefaultValue(stringValueOf(body["model"]), "gpt-image-2"),
@@ -244,6 +248,9 @@ func (d *Deps) RegisterImageRoutes(r *gin.Engine) {
 		clientTaskID := strings.TrimSpace(stringValueOf(payload["client_task_id"]))
 		if clientTaskID == "" {
 			writeErr(c, Errorf(http.StatusBadRequest, "client_task_id is required"))
+			return
+		}
+		if d.guardPrompt(c, strings.TrimSpace(stringValueOf(payload["prompt"]))) {
 			return
 		}
 		task, submitErr := d.Tasks.Submit(

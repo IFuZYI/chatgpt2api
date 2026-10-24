@@ -38,6 +38,10 @@ type Deps struct {
 	ImageUpstream ImageUpstreamFactory
 	ChatCache     *protocol.ChatCompletionCache
 
+	// ContentFilter 在请求进上游之前做敏感词与 AI 审核。
+	// 为 nil 时跳过检查（测试与未接线场景）；生产在 NewDeps 里注入。
+	ContentFilter *service.ContentFilter
+
 	// AccountInfoFetcher 拉取账号信息（刷新链路用）。未注入时刷新会报错。
 	AccountInfoFetcher func(ctx context.Context, accessToken string) (service.Account, error)
 }
