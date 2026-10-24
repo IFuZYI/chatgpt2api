@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/basketikun/chatgpt2api/internal/config"
 )
@@ -30,8 +31,9 @@ type webdavRecorder struct {
 	mu          sync.Mutex
 	puts        int
 	gets        int
-	putStatus   int    // 非 0 时 PUT 直接返回该状态码（模拟远端 5xx）
-	contentType string // 最后一次 PUT 的 Content-Type
+	putStatus   int           // 非 0 时 PUT 直接返回该状态码（模拟远端 5xx）
+	putDelay    time.Duration // 非 0 时 PUT 先 sleep（模拟远端慢）
+	contentType string        // 最后一次 PUT 的 Content-Type
 }
 
 func newWebDAVRecorder() *webdavRecorder {
@@ -46,6 +48,12 @@ func (r *webdavRecorder) handler() http.Handler {
 		case http.MethodPut:
 			r.puts++
 			r.contentType = req.Header.Get("Content-Type")
+			if r.putDelay > 0 {
+				delay := r.putDelay
+				r.mu.Unlock()
+				time.Sleep(delay)
+				r.mu.Lock()
+			}
 			if r.putStatus != 0 {
 				status := r.putStatus
 				r.mu.Unlock()
@@ -327,16 +335,26 @@ func TestSaveImageBytesBothMode(t *testing.T) {
 	if !localImageExists(t, svc, rel) {
 		t.Error("both mode must write local file")
 	}
-	if remote, ok := recorder.remoteFile(rel); !ok || !bytes.Equal(remote, payload) {
-		t.Errorf("both mode must upload payload, got ok=%v", ok)
+
+	// both 模式的远端上传是异步的：等它完成再断言。
+	// 同步等会让生图被 WebDAV 延迟拖慢（实测 PROPFIND 要 11-20 秒），
+	// 见 TestBothModeUploadsAsynchronously。
+	deadline := time.Now().Add(3 * time.Second)
+	var item map[string]any
+	for time.Now().Before(deadline) {
+		if current, exists := indexItem(t, cfg, rel); exists && current["storage"] == "both" {
+			item = current
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if item == nil {
+		current, _ := indexItem(t, cfg, rel)
+		t.Fatalf("index never reached storage=both; got %v", current)
 	}
 
-	item, ok := indexItem(t, cfg, rel)
-	if !ok {
-		t.Fatalf("index entry missing for %q", rel)
-	}
-	if item["storage"] != "both" {
-		t.Errorf("storage = %v, want both", item["storage"])
+	if remote, ok := recorder.remoteFile(rel); !ok || !bytes.Equal(remote, payload) {
+		t.Errorf("both mode must upload payload, got ok=%v", ok)
 	}
 	if item["local"] != true || item["webdav"] != true {
 		t.Errorf("local/webdav = %v/%v, want true/true", item["local"], item["webdav"])

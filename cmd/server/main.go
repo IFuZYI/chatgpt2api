@@ -240,6 +240,10 @@ func main() {
 			log.Printf("[server] editable file tasks: %v", err)
 		}
 	}
+	// both 模式的 WebDAV 上传是异步的：不等待会让最后几张图只传了一半。
+	if err := deps.Images.Close(taskCtx); err != nil {
+		log.Printf("[server] pending image uploads: %v", err)
+	}
 
 	fmt.Println("[server] stopped")
 }

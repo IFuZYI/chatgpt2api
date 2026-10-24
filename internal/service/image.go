@@ -40,6 +40,34 @@ type ImageService struct {
 	cfg *config.Store
 
 	indexMu sync.Mutex
+
+	// uploadWG 跟踪 both 模式的异步远端上传，供关闭时等待。
+	uploadWG sync.WaitGroup
+	// uploadClosed 置位后不再接受新的后台上传。
+	uploadMu     sync.Mutex
+	uploadClosed bool
+}
+
+// Close 等待在途的异步上传完成（进程退出前调用，避免半截上传）。
+//
+// 超时由调用方的 ctx 决定；这里只等 WaitGroup。
+func (s *ImageService) Close(ctx context.Context) error {
+	s.uploadMu.Lock()
+	s.uploadClosed = true
+	s.uploadMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		s.uploadWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func NewImageService(cfg *config.Store) *ImageService {
@@ -694,37 +722,18 @@ func (s *ImageService) SaveImageBytes(payload []byte, baseURL string) (rel strin
 		storedLocal = true
 	}
 
-	if mode == "webdav" || mode == "both" {
+	// webdav 模式：同步上传（本地没有副本，必须知道远端成不成）。
+	if mode == "webdav" {
 		client := NewWebDAVClient(settings)
 		if client.BaseURL == "" {
-			if mode == "both" {
-				// both 模式本地已有副本：远端没配好不该让请求失败。
-				fmt.Fprintf(os.Stderr, "[image] webdav not configured, keeping local copy only: %s\n", rel)
-			} else {
-				return "", "", fmt.Errorf("WebDAV URL 不能为空")
-			}
-		} else {
-			// publicBase 传空：索引里的 remote_url 与 Python 一致，记 WebDAV 上的真实地址，
-			// 而不是对外域名（对外 URL 由 publicImageURL 现算）。
-			putURL, putErr := client.Put(context.Background(), rel, payload, "")
-			if putErr != nil {
-				// both 模式下远端失败**不**让整个请求失败：本地副本已经写好了，
-				// 因为远端抖动让用户拿不到图是不合理的。
-				//
-				// 但也绝不假装成功：索引如实标 storage=local / webdav=false，
-				// 调用方看得出这张图没上远端，SyncToWebDAV 可事后补传。
-				//
-				// webdav 模式没有本地副本，失败必须报错 —— 那正是「静默降级」
-				// 那个 bug 的反面（TestWebDAVOnlyModeStillFailsOnRemoteError 锁定）。
-				if mode != "both" {
-					return "", "", putErr
-				}
-				fmt.Fprintf(os.Stderr, "[image] webdav put failed, kept local copy only: %s: %v\n", rel, putErr)
-			} else {
-				remoteURL = putURL
-				storedWebdav = true
-			}
+			return "", "", fmt.Errorf("WebDAV URL 不能为空")
 		}
+		putURL, putErr := client.Put(context.Background(), rel, payload, "")
+		if putErr != nil {
+			return "", "", putErr
+		}
+		remoteURL = putURL
+		storedWebdav = true
 	}
 
 	storage := "local"
@@ -758,7 +767,58 @@ func (s *ImageService) SaveImageBytes(payload []byte, baseURL string) (rel strin
 	s.saveIndexLocked(indexed)
 	s.indexMu.Unlock()
 
+	// both 模式：远端上传异步进行，生图不等它。
+	//
+	// 理由：WebDAV 的 PROPFIND/PUT 实测要 11-20 秒。同步等会把生图
+	// 从「上游耗时」拖成「上游 + 远端」，而远端慢不该影响用户拿图。
+	//
+	// 索引先标 storage=local（如实），上传成功后改 both/webdav=true。
+	// 读取路径本来就是本地优先（ReadImage 先读本地文件），所以这个
+	// 中间态对用户无感；远端失败时索引保持 local，可事后 SyncToWebDAV 补传。
+	if mode == "both" {
+		s.startBackgroundUpload(rel, payload, settings)
+	}
+
 	return rel, s.publicImageURL(rel, baseURL), nil
+}
+
+// startBackgroundUpload 在后台把一张图传到 WebDAV，成功后更新索引。
+func (s *ImageService) startBackgroundUpload(rel string, payload []byte, settings map[string]any) {
+	s.uploadMu.Lock()
+	if s.uploadClosed {
+		s.uploadMu.Unlock()
+		return
+	}
+	s.uploadWG.Add(1)
+	s.uploadMu.Unlock()
+
+	go func() {
+		defer s.uploadWG.Done()
+
+		client := NewWebDAVClient(settings)
+		if client.BaseURL == "" {
+			fmt.Fprintf(os.Stderr, "[image] webdav not configured, keeping local copy only: %s\n", rel)
+			return
+		}
+
+		putURL, putErr := client.Put(context.Background(), rel, payload, "")
+		if putErr != nil {
+			fmt.Fprintf(os.Stderr, "[image] webdav put failed, kept local copy only: %s: %v\n", rel, putErr)
+			return
+		}
+
+		s.indexMu.Lock()
+		indexed := s.loadIndexLocked()
+		item, exists := indexed[rel]
+		if exists {
+			item["storage"] = "both"
+			item["webdav"] = true
+			item["remote_url"] = putURL
+			indexed[rel] = item
+			s.saveIndexLocked(indexed)
+		}
+		s.indexMu.Unlock()
+	}()
 }
 
 func mimeForPath(path string) string {
