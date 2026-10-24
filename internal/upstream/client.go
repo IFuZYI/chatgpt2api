@@ -21,7 +21,6 @@ const (
 	DefaultClientVersion  = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
 	DefaultClientBuild    = "6708908"
 	DefaultPowScript      = "https://chatgpt.com/backend-api/sentinel/sdk.js"
-	SearchModel           = "gpt-5-5"
 	CodexResponsesModel   = "gpt-5.5"
 	EditableFileModel     = "gpt-5-5-thinking"
 	EditableClientVersion = "prod-bede35f9dcd856d080e012478f0c1031faa2588e"
