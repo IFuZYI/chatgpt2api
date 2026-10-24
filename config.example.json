@@ -65,8 +65,8 @@
     "public_base_url": "",
     "webdav_password": "",
     "webdav_root_path": "chatgpt2api/images",
-    "webdav_url": "https://webdav.fuzy.site/dav",
-    "webdav_username": "chatgpt2api"
+    "webdav_url": "https://webdav.example.com/dav",
+    "webdav_username": ""
   },
   "image_timeout_retry_secs": 30,
   "log_levels": [
@@ -75,7 +75,7 @@
     "info",
     "warning"
   ],
-  "proxy": "socks5h://gobngawr:06pk6as8qlwu@9.142.194.72:6740",
+  "proxy": "",
   "proxy_runtime": {
     "clearance": {
       "browser": "chrome",
@@ -102,8 +102,8 @@
   "sensitive_words": [],
   "third_party_apps": {
     "infinite_canvas": {
-      "enabled": true,
-      "url": "https://canvas.best"
+      "enabled": false,
+      "url": ""
     }
   }
 }
