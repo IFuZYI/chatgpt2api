@@ -57,7 +57,7 @@ func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.T
 		N:              1, // 每个 task 固定一张，多图由前端拆多个 task
 		Size:           taskCtx.Size,
 		Quality:        taskCtx.Quality,
-		ResponseFormat: "b64_json",
+		ResponseFormat: imageTaskResponseFormat(),
 		BaseURL:        taskCtx.BaseURL,
 		// 异步任务不把 message 升级为错误：失败原因要落进任务状态供前端展示。
 		MessageAsError:        false,
@@ -141,4 +141,13 @@ func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.T
 		Usage:          usage,
 		ConversationID: conversationID,
 	}, nil
+}
+
+// imageTaskResponseFormat 是异步任务的 response_format。
+//
+// 用 "url" 而不是 "b64_json"：base64 每张 1.2-1.6MB，而任务状态每次进度
+// 回调都整文件重写 data/image_tasks.json —— 实测 9 个任务涨到 31MB，
+// 内存里也是同样量级。Python 同样用 "url"（image_task_service.py:139,165）。
+func imageTaskResponseFormat() string {
+	return "url"
 }
