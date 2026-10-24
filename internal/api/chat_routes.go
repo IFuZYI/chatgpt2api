@@ -384,3 +384,36 @@ func writeSSEChunks(c *gin.Context, chunks []map[string]any) {
 
 // service 包的引用保持（GetTextAccessToken 的参数类型来自 service）。
 var _ = service.RoleUser
+
+// writeSSEFromChannel 边从 channel 读 chunk 边写 SSE，读到关闭为止。
+//
+// 与 writeSSEChunks 的区别：后者接收切片，意味着所有 chunk 必须先全部
+// 生成完才能开始写。长请求（生图几十秒、文本长回答）期间客户端收不到
+// 任何字节，nginx / Cloudflare 的 60s 空闲超时会直接切断连接 ——
+// 用户看到的是「卡住然后失败」。
+//
+// channel 版在上游产生第一个 chunk 时就 flush 出去，连接全程有数据流动。
+// 每写一条都 Flush：gin 默认缓冲，不 flush 等于还是批量写。
+func writeSSEFromChannel(c *gin.Context, chunks <-chan map[string]any) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	writer := c.Writer
+	_, _ = writer.WriteString(": stream-open\n\n")
+	writer.Flush()
+
+	for chunk := range chunks {
+		payload, err := marshalJSON(chunk)
+		if err != nil {
+			continue
+		}
+		_, _ = writer.WriteString("data: " + payload + "\n\n")
+		writer.Flush()
+	}
+
+	_, _ = writer.WriteString("data: [DONE]\n\n")
+	writer.Flush()
+}

@@ -180,6 +180,18 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 	request.DefaultUpstreamModel = d.Config.DefaultUpstreamModelName()
 	request.DefaultThinkingEffort = d.Config.DefaultThinkingEffort()
 
+	// 流式：边生成边把进度 chunk 推给客户端。
+	//
+	// 之前是 pool.Run 跑完再一次性写：生图要几十秒，期间客户端收不到
+	// 任何字节，nginx/Cloudflare 的 60s 空闲超时会切断连接。
+	//
+	// 用 buffered channel 而不是无缓冲：生成 goroutine 不能被慢客户端
+	// 阻塞（否则会拖慢整个号池的槽位周转）。容量按进度事件量级给 64。
+	var progressChunks chan map[string]any
+	if stream {
+		progressChunks = make(chan map[string]any, 64)
+	}
+
 	pool := &protocol.ImagePool{
 		Parallel: d.Config.ImageParallelGeneration(),
 		Acquire: func(ctx context.Context, index int) (*protocol.ImageGenerator, func(), error) {
@@ -187,6 +199,60 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 			generator, release, _, err := d.acquireImageGenerator(ctx, request.Model, index)
 			return generator, release, err
 		},
+	}
+	if stream {
+		acquire := pool.Acquire
+		pool.Acquire = func(ctx context.Context, index int) (*protocol.ImageGenerator, func(), error) {
+			generator, release, err := acquire(ctx, index)
+			if err != nil {
+				return generator, release, err
+			}
+			// 把上游进度事件转成 chunk 推进 channel。非阻塞发送：
+			// 客户端读得慢时丢弃进度而不是卡住生成。
+			generator.OnProgress = func(step string) {
+				select {
+				case progressChunks <- protocol.ImageOutput{
+					Kind:  protocol.ImageKindProgress,
+					Model: request.Model,
+					Index: index,
+					Total: request.N,
+					Text:  step,
+				}.ToChunk():
+				default:
+				}
+			}
+			return generator, release, err
+		}
+	}
+
+	// 流式时生成在后台跑，主协程边读 channel 边写；非流式仍然阻塞等待。
+	if stream {
+		var result protocol.PoolResult
+		var runErr error
+		done := make(chan struct{})
+
+		// 生成结束后把「结果 chunk」也灌进同一条 channel，再关闭。
+		// 顺序必须是：进度 → 结果 → [DONE]。先关 channel 再补写结果
+		// 会把 [DONE] 夹在中间，客户端解析到 [DONE] 就停了。
+		go func() {
+			defer close(done)
+			result, runErr = pool.Run(c.Request.Context(), request)
+			for _, output := range result.Outputs {
+				progressChunks <- output.ToChunk()
+			}
+			close(progressChunks)
+		}()
+
+		writeSSEFromChannel(c, progressChunks)
+		<-done
+
+		if runErr != nil {
+			// 头已经发出去了，只能在流里报错（不能再 writeErr 改状态码）。
+			call.finish(runErr, "", nil)
+			logged = true
+			return
+		}
+		return
 	}
 
 	result, err := pool.Run(c.Request.Context(), request)
@@ -196,15 +262,6 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 	}
 
 	collected := protocol.CollectImageOutputs(result.Outputs)
-
-	if stream {
-		chunks := make([]map[string]any, 0, len(result.Outputs))
-		for _, output := range result.Outputs {
-			chunks = append(chunks, output.ToChunk())
-		}
-		writeSSEChunks(c, chunks)
-		return
-	}
 
 	// 非流式：附加 usage，并剔除内部字段。
 	collected["usage"] = imageUsageFor(request, collected)
