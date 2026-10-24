@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 
@@ -10,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// registerRemainingRoutes 挂载剩余端点：/v1/responses、/v1/search、
-// /v1/editable-file-tasks、/files/*、/v1/ppt|psd/generations。
+// registerRemainingRoutes 挂载剩余端点：/v1/responses、/v1/search，
+// 以及可编辑文件链路（见 registerEditableFileRoutes）。
 func (d *Deps) registerRemainingRoutes(r *gin.Engine) {
 	// ---- /v1/responses ----
 	r.POST("/v1/responses", func(c *gin.Context) {
@@ -35,49 +34,8 @@ func (d *Deps) registerRemainingRoutes(r *gin.Engine) {
 	// ---- /v1/search ----
 	d.registerSearchRoute(r)
 
-	// ---- 可编辑文件任务 ----
-	r.GET("/v1/editable-file-tasks", func(c *gin.Context) {
-		if _, err := d.RequireIdentity(c.GetHeader("Authorization")); err != nil {
-			writeErr(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"items": []any{}, "missing_ids": parseTaskIDs(c.Query("ids"))})
-	})
-
-	r.POST("/v1/ppt/generations", func(c *gin.Context) {
-		if _, err := d.RequireIdentityCtx(c); err != nil {
-			writeErr(c, err)
-			return
-		}
-		call := d.beginCall("PPT 生成", c.FullPath(), "", c.GetString("key_name"))
-		defer func() {
-			call.finish(errors.New("editable PPT generation is not implemented yet"), "", nil)
-		}()
-		writeErr(c, Errorf(http.StatusNotImplemented, "editable PPT generation is not implemented yet"))
-	})
-
-	r.POST("/v1/psd/generations", func(c *gin.Context) {
-		if _, err := d.RequireIdentityCtx(c); err != nil {
-			writeErr(c, err)
-			return
-		}
-		call := d.beginCall("PSD 生成", c.FullPath(), "", c.GetString("key_name"))
-		defer func() {
-			call.finish(errors.New("editable PSD generation is not implemented yet"), "", nil)
-		}()
-		writeErr(c, Errorf(http.StatusNotImplemented, "editable PSD generation is not implemented yet"))
-	})
-
-	// ---- 文件下载 ----
-	r.GET("/files/*file_path", func(c *gin.Context) {
-		rel := strings.TrimPrefix(c.Param("file_path"), "/")
-		path, pathErr := d.resolveEditableFile(rel)
-		if pathErr != nil {
-			writeErr(c, StatusError(http.StatusNotFound, "file not found"))
-			return
-		}
-		c.File(path)
-	})
+	// ---- 可编辑文件（PPT/PSD）任务与产物下载 ----
+	d.registerEditableFileRoutes(r)
 }
 
 // hasImageGenerationTool 检查 tools 里是否有 image_generation。

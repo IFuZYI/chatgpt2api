@@ -85,7 +85,9 @@ func main() {
 		Proxy:  service.NewProxySettings(cfg),
 		Images: service.NewImageService(cfg),
 		Tasks:  service.NewImageTaskService(cfg),
-		Dist:   web.NewDist(),
+		// 可编辑文件（PPT/PSD）任务队列：产物落 data/files/{kind}/{task_id}/。
+		EditableTasks: service.NewEditableFileTaskService(cfg.DataDir()),
+		Dist:          web.NewDist(),
 	}
 	// ModelFetcher：按账号类型聚合上游模型目录。
 	// 传 nil 会让 /v1/models 永远只有图片模型（实测踩到），
@@ -134,11 +136,20 @@ func main() {
 		}
 		return client, client.Close, nil
 	}
+	deps.EditableUpstream = func(ctx context.Context, accessToken string) (protocol.EditableFileUpstream, func(), error) {
+		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
+		if err != nil {
+			return nil, nil, err
+		}
+		return client, client.Close, nil
+	}
 
 	// 注入异步图片任务的执行体。
 	// 漏掉这一步会让 /api/image-tasks/* 全部失败（runner 恒为 nil），
 	// 而生图页面默认走异步任务接口 —— 表现为「生图界面异常」。
 	deps.RegisterImageTaskRunners()
+	// 同理：可编辑文件任务在后台 goroutine 里跑，执行体必须显式注入。
+	deps.RegisterEditableFileTaskRunner()
 
 	// 启动时清一次过期图片（Python 在 lifespan 里做）。
 	if removed := cfg.CleanupOldImages(); removed > 0 {
@@ -221,6 +232,13 @@ func main() {
 	defer taskCancel()
 	if err := deps.Tasks.Close(taskCtx); err != nil {
 		log.Printf("[server] image tasks: %v", err)
+	}
+	// 可编辑文件任务同样会写 data/（editable_file_tasks.json 与产物文件），
+	// 必须在退出前等它们收尾，否则任务文件可能只写了一半。
+	if deps.EditableTasks != nil {
+		if err := deps.EditableTasks.Close(taskCtx); err != nil {
+			log.Printf("[server] editable file tasks: %v", err)
+		}
 	}
 
 	fmt.Println("[server] stopped")

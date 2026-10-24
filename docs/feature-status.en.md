@@ -56,8 +56,8 @@
 | 图片并行生成与槽位 | ✅ | goroutine + channel 信号量，槽位泄漏有测试。 |
 | 备份加密 | ✅ | 原生 AES + PBKDF2，与 `openssl enc` 双向兼容（有测试）。 |
 | 密码重新登录 | ⚠️ | 返回明确「未实现」，不假装成功。 |
-| 可编辑 PPT/PSD | ⚠️ | 返回 501。 |
-| 网页搜索 | ⚠️ | 返回 501。 |
+| 可编辑 PPT/PSD | ✅ | `POST /v1/ppt|psd/generations` 走上传参考图 → `prepare`（`gpt-5-5-thinking`/`extended`）→ `/f/conversation` → 轮询 `/backend-api/conversation/{id}` 拿 pptx/psd + zip → 落 `data/files/{kind}/{task_id}/`，`GET /files/*` 提供下载（防目录穿越）。任务队列与图片链路同构（queued/running/success/error、`Close()` 等在途、重启恢复）。 |
+| 网页搜索 | ✅ | `POST /v1/search` 走 `prepare`（`system_hints:["search"]`）→ `/f/conversation` → 轮询 `/backend-api/conversation/{id}`，返回 answer + sources。超时 300s、间隔 3s、answer 连续 3 次一致即返回。 |
 | Responses 图片工具 | ⚠️ | 返回 501（文本链路可用）。 |
 | 远程图片 URL 拉取 | ⚠️ | 返回 400（data URL 与 multipart 可用）。 |
 | 匿名对话链路 | ❌ | 上游限制，非实现问题（见 `docs/adr/0008`）。 |

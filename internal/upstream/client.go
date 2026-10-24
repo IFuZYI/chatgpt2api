@@ -17,12 +17,14 @@ import (
 
 // 上游默认常量，逐字取自 services/openai_backend_api.py。
 const (
-	BaseURL               = "https://chatgpt.com"
-	DefaultClientVersion  = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
-	DefaultClientBuild    = "6708908"
-	DefaultPowScript      = "https://chatgpt.com/backend-api/sentinel/sdk.js"
-	CodexResponsesModel   = "gpt-5.5"
-	EditableFileModel     = "gpt-5-5-thinking"
+	BaseURL              = "https://chatgpt.com"
+	DefaultClientVersion = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
+	DefaultClientBuild   = "6708908"
+	DefaultPowScript     = "https://chatgpt.com/backend-api/sentinel/sdk.js"
+	CodexResponsesModel  = "gpt-5.5"
+	// 可编辑文件链路专用的 client version/build：上游按这个版本号处理
+	// 沙箱产物与 interpreter 下载端点。模型名本身在 protocol.EditableFileModel
+	// （service 层也要用它，所以放在更低的 protocol 包里）。
 	EditableClientVersion = "prod-bede35f9dcd856d080e012478f0c1031faa2588e"
 	EditableClientBuild   = "6631702"
 )

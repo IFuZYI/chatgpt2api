@@ -38,7 +38,11 @@ type Deps struct {
 	ImageUpstream ImageUpstreamFactory
 	// SearchUpstream 为 /v1/search 构造上游客户端。
 	SearchUpstream SearchUpstreamFactory
-	ChatCache      *protocol.ChatCompletionCache
+	// EditableUpstream 为 PPT/PSD 导出构造上游客户端。
+	EditableUpstream EditableUpstreamFactory
+	// EditableTasks 是可编辑文件任务队列（PPT/PSD 异步任务 + /files/* 产物）。
+	EditableTasks *service.EditableFileTaskService
+	ChatCache     *protocol.ChatCompletionCache
 
 	// ContentFilter 在请求进上游之前做敏感词与 AI 审核。
 	// 为 nil 时跳过检查（测试与未接线场景）；生产在 NewDeps 里注入。
