@@ -23,9 +23,10 @@ func (d *Deps) registerRemainingRoutes(r *gin.Engine) {
 			writeErr(c, bodyErr)
 			return
 		}
-		// Responses 的图片工具调用在 M4 之后接入；当前只支持纯文本。
-		if hasImageGenerationTool(body) {
-			writeErr(c, Errorf(http.StatusNotImplemented, "image generation tool is not implemented yet"))
+		// 分流复刻 is_text_response_request：带 image_generation 工具
+		// （tools 或 tool_choice）走图片链路，其余走文本链路。
+		if protocol.HasResponseImageGenerationTool(body) {
+			d.handleImageResponses(c, body)
 			return
 		}
 		d.handleTextResponses(c, body)
@@ -36,24 +37,6 @@ func (d *Deps) registerRemainingRoutes(r *gin.Engine) {
 
 	// ---- 可编辑文件（PPT/PSD）任务与产物下载 ----
 	d.registerEditableFileRoutes(r)
-}
-
-// hasImageGenerationTool 检查 tools 里是否有 image_generation。
-func hasImageGenerationTool(body map[string]any) bool {
-	tools, ok := body["tools"].([]any)
-	if !ok {
-		return false
-	}
-	for _, tool := range tools {
-		entry, ok := tool.(map[string]any)
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(stringValueOf(entry["type"])) == "image_generation" {
-			return true
-		}
-	}
-	return false
 }
 
 // handleTextResponses 走 Responses 协议的文本链路。
