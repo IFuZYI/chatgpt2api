@@ -6,8 +6,8 @@
 |:----------------------------------------|:--:|:--------------------------------------------------------------|
 | OpenAI 兼容 `POST /v1/images/generations` | ✅  | 已支持，用于图片生成，并可通过 `n` 返回多张图片。 |
 | OpenAI 兼容 `POST /v1/images/edits` | ✅  | 已支持，可上传图片进行编辑。 |
-| 面向图片工作流的 `POST /v1/chat/completions` | ✅  | 已支持图片相关请求。 |
-| 面向图片工作流的 `POST /v1/responses` | ✅  | 已支持图片生成工具调用。 |
+| 面向图片工作流的 `POST /v1/chat/completions` | ✅ | 图片请求（图片模型或 `modalities` 含 `image`）走生图链路，结果转成 markdown 图片 + annotations；网页搜索请求（`web_search_options` 或 search 模型前缀）走搜索链路并附 `url_citation`。 |
+| 面向图片工作流的 `POST /v1/responses` | ✅ | 请求含 `tools:[{"type":"image_generation"}]` 时走生图链路，输出 Responses 格式事件。 |
 | `GET /v1/models` 接口 | ✅  | 动态聚合：文本模型来自上游 `/backend-api/models`（当前为 `auto`、`gpt-5-6`、`gpt-5-6-mini`、`gpt-6`、`gpt-6-mini`、`research` 等），图片模型为内置表（`gpt-image-2`、`gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`）。具体列表随号池变化。 |
 | 同时生成多张图片 | ✅  | 已支持，后端与前端都可进行多图生成。 |
 | 图片并行生成 | ✅  | 多张图片使用独立线程和账号同时生成，可通过 `image_parallel_generation` 配置关闭。 |
