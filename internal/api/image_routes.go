@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -321,7 +322,7 @@ func (d *Deps) RegisterImageRoutes(r *gin.Engine) {
 	})
 }
 
-// validationError 构造 Pydantic 风格的 422 条目。
+// validationError 构造 Pydantic 风格的 422 条目（缺字段）。
 func validationError(field, message string, ctx map[string]any) *HTTPError {
 	entry := map[string]any{
 		"type":  "missing",
@@ -332,6 +333,31 @@ func validationError(field, message string, ctx map[string]any) *HTTPError {
 	if ctx != nil {
 		entry["type"] = "greater_than_equal"
 		entry["ctx"] = ctx
+	}
+	return ErrorDetail(http.StatusUnprocessableEntity, []any{entry})
+}
+
+// rangeValidationError 构造 Pydantic 的越界条目（ge/le）。
+//
+// Pydantic 对 `n: int = Field(ge=1, le=4)` 的越界报两种 type：
+//   - n < 1  → greater_than_equal，ctx {"ge": 1}
+//   - n > 4  → less_than_equal，ctx {"le": 4}
+//
+// input 要带上原值，客户端靠它定位是哪个参数越界。
+func rangeValidationError(field string, value int, lower, upper int) *HTTPError {
+	entry := map[string]any{
+		"loc":   []any{"body", field},
+		"input": value,
+	}
+	switch {
+	case value < lower:
+		entry["type"] = "greater_than_equal"
+		entry["msg"] = fmt.Sprintf("Input should be greater than or equal to %d", lower)
+		entry["ctx"] = map[string]any{"ge": lower}
+	default:
+		entry["type"] = "less_than_equal"
+		entry["msg"] = fmt.Sprintf("Input should be less than or equal to %d", upper)
+		entry["ctx"] = map[string]any{"le": upper}
 	}
 	return ErrorDetail(http.StatusUnprocessableEntity, []any{entry})
 }

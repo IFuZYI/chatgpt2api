@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,7 +79,13 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, "prompt is required"))
 			return
 		}
-		n := clampImageCount(intOf(body["n"]))
+		// n 越界必须报错，不能静默夹取（Python 是 pydantic ge=1/le=4 → 422）。
+		// 夹取会让用户以为 n=5 生效了，实际只出 4 张。
+		n, nErr := requireImageCount(body["n"], true)
+		if nErr != nil {
+			writeErr(c, nErr)
+			return
+		}
 		request := protocol.ImageRequest{
 			Prompt:         prompt,
 			Model:          orDefaultValue(stringValueOf(body["model"]), "gpt-image-2"),
@@ -479,4 +486,62 @@ func decodeImageString(value string) ([3]string, *HTTPError) {
 		return [3]string{}, Errorf(http.StatusBadRequest, "invalid base64 image")
 	}
 	return [3]string{base64.StdEncoding.EncodeToString(decoded), "image.png", "image/png"}, nil
+}
+
+// requireImageCount 解析并校验 n。
+//
+// strictPydantic=true 用于 /v1/images/generations：Python 的 pydantic 模型
+// `n: int = Field(default=1, ge=1, le=4)` 对越界返回 422 + Pydantic 条目。
+// strictPydantic=false 用于编辑链路：Python 的 _parse_count 用
+// HTTPException(400, {"error": "n must be between 1 and 4"})。
+func requireImageCount(raw any, strictPydantic bool) (int, *HTTPError) {
+	const lower, upper = 1, 4
+
+	if raw == nil {
+		return 1, nil
+	}
+	count, ok := parseIntValue(raw)
+	if !ok {
+		if strictPydantic {
+			return 0, ErrorDetail(http.StatusUnprocessableEntity, []any{map[string]any{
+				"type":  "int_parsing",
+				"loc":   []any{"body", "n"},
+				"msg":   "Input should be a valid integer, unable to parse string as an integer",
+				"input": raw,
+			}})
+		}
+		return 0, Errorf(http.StatusBadRequest, "n must be an integer")
+	}
+	if count < lower || count > upper {
+		if strictPydantic {
+			return 0, rangeValidationError("n", count, lower, upper)
+		}
+		return 0, Errorf(http.StatusBadRequest, "n must be between 1 and 4")
+	}
+	return count, nil
+}
+
+// parseIntValue 把 JSON 里的数值或数字字符串转成 int。
+func parseIntValue(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case float64:
+		if value != float64(int(value)) {
+			return 0, false
+		}
+		return int(value), true
+	case int:
+		return value, true
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return 0, false
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
 }
