@@ -195,9 +195,13 @@ func (s *EditableFileTaskService) Submit(
 
 	s.mu.Lock()
 	if existing := s.tasks[key]; existing != nil {
+		// 必须在锁内构造快照：publicEditableTask 会读 map 的多个字段，
+		// 而 finishTask 在同一把锁下改写它。放到 Unlock 之后读就是
+		// 数据竞争（-race 可复现）。
+		snapshot := publicEditableTask(existing)
 		s.mu.Unlock()
 		release()
-		return publicEditableTask(existing), nil
+		return snapshot, nil
 	}
 	now := nowLocal()
 	task := map[string]any{
