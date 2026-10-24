@@ -213,7 +213,8 @@ func NowUnix() int64 { return time.Now().Unix() }
 
 // joinHistoryText 把历史 assistant 文本拼成上游会重放的整段前缀。
 //
-// Python 用 "\n\n".join(history_messages)（conversation.py:664）。
+// Python 是 `"".join(...)`（conversation.py:210），**没有分隔符**。
+// conversation.py:664 是历史跳过逻辑，不是拼接处。
 func joinHistoryText(history []string) string {
 	if len(history) == 0 {
 		return ""

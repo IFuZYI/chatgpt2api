@@ -20,9 +20,19 @@ type ImageGenerationError struct {
 	Param          string
 	AccountEmail   string
 	ConversationID string
+	// Cause 是底层原始错误。
+	//
+	// 必须单独保存：wrapImageError 会把对外文案改写成固定句子
+	// （"upstream image connection failed, please retry later"），
+	// 改写后原文里的 "curl: (35)" 之类标记就没了，重试分类器认不出来。
+	// 对外文案保持脱敏，重试判定读 Cause。
+	Cause error
 }
 
 func (e *ImageGenerationError) Error() string { return e.Message }
+
+// Unwrap 让 errors.Is/As 能穿透到 Cause（重试分类器依赖这一点）。
+func (e *ImageGenerationError) Unwrap() error { return e.Cause }
 
 // ToOpenAIError 复刻 ImageGenerationError.to_openai_error。
 func (e *ImageGenerationError) ToOpenAIError() map[string]any {

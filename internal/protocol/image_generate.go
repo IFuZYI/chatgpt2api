@@ -395,6 +395,7 @@ func wrapImageError(err error, model, conversationID string) error {
 			ErrorType:      "server_error",
 			Code:           "content_policy",
 			ConversationID: conversationID,
+			Cause:          err,
 		}
 	}
 	var timeoutErr *ImagePollTimeoutError
@@ -405,6 +406,7 @@ func wrapImageError(err error, model, conversationID string) error {
 			ErrorType:      "server_error",
 			Code:           "image_poll_timeout",
 			ConversationID: conversationID,
+			Cause:          err,
 		}
 	}
 	return &ImageGenerationError{
@@ -413,6 +415,9 @@ func wrapImageError(err error, model, conversationID string) error {
 		ErrorType:      "server_error",
 		Code:           "upstream_error",
 		ConversationID: conversationID,
+		// 对外文案被改写（可能含内部信息），但重试分类必须看原文：
+		// TLS/连接超时的判定标记（curl: (35)/(28) 等）只存在于 Cause 里。
+		Cause: err,
 	}
 }
 

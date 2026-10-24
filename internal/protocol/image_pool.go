@@ -51,6 +51,10 @@ const (
 //
 // Python 用异常类型判断（ImagePollTimeoutError 等）；Go 只有错误码/文案，
 // 所以按 Code 优先、文案兜底。
+//
+// 文案兜底必须同时看「改写后的对外文案」和「Cause 里的原文」：
+// wrapImageError 会把 curl: (35)/(28) 这类标记替换成固定句子，
+// 只看 Message 会让 TLS/连接超时两个桶永远空转。
 func classifyRetry(err error) retryKind {
 	if err == nil {
 		return retryNone
@@ -66,14 +70,25 @@ func classifyRetry(err error) retryKind {
 		if genErr.StatusCode == 504 {
 			return retryPollTimeout
 		}
+		// Cause 优先：原文才带 curl/SSL 标记。
+		if genErr.Cause != nil {
+			if kind := classifyRetryText(genErr.Cause.Error()); kind != retryNone {
+				return kind
+			}
+		}
 	}
-	if IsModelTextReplyInsteadOfImage(err.Error()) {
+	return classifyRetryText(err.Error())
+}
+
+// classifyRetryText 按文案判定重试类别。
+func classifyRetryText(text string) retryKind {
+	if IsModelTextReplyInsteadOfImage(text) {
 		return retryTextReply
 	}
-	if IsTLSConnectionError(err.Error()) {
+	if IsTLSConnectionError(text) {
 		return retryTLS
 	}
-	if IsConnectionTimeoutError(err.Error()) {
+	if IsConnectionTimeoutError(text) {
 		return retryConnTimeout
 	}
 	return retryNone
@@ -85,6 +100,54 @@ func (p *ImagePool) generateOnce(ctx context.Context, generator *ImageGenerator,
 		return p.Generate(ctx, generator, request)
 	}
 	return generator.Generate(ctx, request)
+}
+
+// attemptOnce 执行一次「取号 → 生成 → 释放」。
+//
+// release 必须用 defer：generateOnce 里任何 panic 都不能把账号槽位永久留在
+// inflight 状态（旧 runSingle 就是这么做的，改成重试循环后一度丢了这个保证）。
+func (p *ImagePool) attemptOnce(ctx context.Context, request ImageRequest, index int) (outputs []ImageOutput, err error) {
+	generator, release, acquireErr := p.Acquire(ctx, index)
+	if acquireErr != nil {
+		return nil, acquireErr
+	}
+	defer release()
+	return p.generateOnce(ctx, generator, request)
+}
+
+// messageOnlyOutputs 找出这次「没有错误」的返回是否其实是文本回复。
+//
+// 真实 Generate 对「模型返回文本而非图片」不抛错，而是产出 message output
+// 并返回 nil error（image_generate.go 的多个分支）。只靠错误分类永远进不了
+// text-reply 预算，所以这里补一层：有 message、没有任何 result、且文案带
+// referenced_image_ids 标记（Python is_model_text_reply_instead_of_image 的
+// 同一判据，conversation.py:126）才算文本回复。
+//
+// 不能放宽成「全部是 message」：内容政策拒绝也是 message，Python 对它不重试，
+// 放宽会让拒图请求白烧 4 次额度并反复触犯上游。
+//
+// ⚠️ 与 Python 的有意发散：异步任务路径（message_as_error=false）在 Python 里
+// 拿到 message 就 return（conversation.py:1367），不再重试；同步路径
+// （message_as_error=true）才会因 referenced_image_ids 进入重试
+// （conversation.py:1440）。Go 两条路径都重试，因为异步任务同样会因一个
+// 抽风的账号白丢一张图，而 referenced_image_ids 已是 Python 自己的「可重试」
+// 判据。待上游行为稳定后可回退成只在同步路径启用。
+func messageOnlyOutputs(outputs []ImageOutput) (ImageOutput, bool) {
+	var message ImageOutput
+	found := false
+	for _, output := range outputs {
+		if output.Kind == ImageKindResult {
+			return ImageOutput{}, false
+		}
+		if output.Kind == ImageKindMessage && !found {
+			message = output
+			found = true
+		}
+	}
+	if !found || !IsModelTextReplyInsteadOfImage(message.Text) {
+		return ImageOutput{}, false
+	}
+	return message, true
 }
 
 // generateWithRetry 按四类预算换号重试，返回最终输出与错误。
@@ -102,16 +165,24 @@ func (p *ImagePool) generateWithRetry(ctx context.Context, request ImageRequest,
 	)
 
 	for {
-		generator, release, acquireErr := p.Acquire(ctx, index)
-		if acquireErr != nil {
-			// 取号失败（号池空/全部占用）：不重试，直接返回。
-			return outputs, acquireErr
-		}
-
-		generated, genErr := p.generateOnce(ctx, generator, request)
-		release()
+		generated, genErr := p.attemptOnce(ctx, request, index)
 
 		if genErr == nil {
+			// 无错误但产出的是「文本回复」：按 text-reply 预算换号重试。
+			if message, isTextReply := messageOnlyOutputs(generated); isTextReply {
+				outputs = generated
+				textReply++
+				if textReply > maxTextReplyRetries {
+					// 把最后一次 message 的现场带进错误，保住 account_email 与
+					// conversation_id —— 任务详情和「继续等待」都依赖后者。
+					return outputs, textReplyExhaustedError(&ImageGenerationError{
+						Message:        message.Text,
+						AccountEmail:   message.AccountEmail,
+						ConversationID: message.ConversationID,
+					})
+				}
+				continue
+			}
 			return generated, nil
 		}
 
@@ -230,13 +301,9 @@ func (p *ImagePool) runParallel(ctx context.Context, request ImageRequest) (Pool
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			generator, release, err := p.Acquire(ctx, index)
-			if err != nil {
-				results <- outcome{index: index, err: err}
-				return
-			}
-			defer release()
-			outputs, genErr := generator.Generate(ctx, request)
+			// 并行分支必须走同一条重试路径：image_parallel_generation 默认 true，
+			// 这里若直接 Acquire+Generate，默认配置下四类预算全部失效。
+			outputs, genErr := p.generateWithRetry(ctx, request, index)
 			results <- outcome{index: index, outputs: outputs, err: genErr}
 		}()
 	}

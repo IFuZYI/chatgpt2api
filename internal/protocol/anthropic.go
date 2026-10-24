@@ -77,14 +77,14 @@ func toolMetaOf(tool map[string]any) ToolMeta {
 
 // BuildToolPrompt 复刻 build_tool_prompt。
 //
-// ⚠️ 输出格式有两点「看起来像 bug」的地方，但都是 Python 的既有行为，
-// 必须原样保留（实测核对过 repr）：
+// 输出格式的两处细节都是 Python 的既有行为，必须原样保留（实测核对过 repr）：
 //
-//  1. 多个工具的 block 用 "".join 拼接，**没有分隔符** —— 所以两个工具之间是
-//     `...Parameters: {...}Tool: f2...` 直接黏在一起。
-//  2. `Tool use rules:` 紧接在最后一个 block 后面，**没有换行**。
+//  1. 多个工具的 block 用 "\n".join 拼接 —— 两个工具之间是换行
+//     （anthropic_v1_messages.py:49）。
+//  2. `Tool use rules:` 紧接在最后一个 block 后面，**没有换行**
+//     （Python 的尾段字符串 strip() 后直接拼接）。
 //
-// 这两点会影响模型对提示的理解，改动等于改提示词，不能"顺手修好"。
+// 第 2 点会影响模型对提示的理解，改动等于改提示词，不能"顺手修好"。
 func BuildToolPrompt(tools any) string {
 	list, ok := tools.([]any)
 	if !ok {
