@@ -15,12 +15,12 @@ import (
 func TestBackupSchedulerRunsWhenDue(t *testing.T) {
 	var runs atomic.Int64
 	scheduler := NewBackupScheduler(BackupSchedulerOptions{
-		Interval: 30 * time.Millisecond,
-		Enabled:  func() bool { return true },
-		IntervalMin: func() int { return 1 },
+		Interval:       30 * time.Millisecond,
+		Enabled:        func() bool { return true },
+		IntervalMin:    func() int { return 1 },
 		LastFinishedAt: func() string { return "" }, // 从未备份过 → 立即到期
-		Running:  func() bool { return false },
-		Run:      func(trigger string) { runs.Add(1) },
+		Running:        func() bool { return false },
+		Run:            func(trigger string) { runs.Add(1) },
 	})
 
 	scheduler.Start()
@@ -62,8 +62,8 @@ func TestBackupSchedulerSkipsWhenDisabled(t *testing.T) {
 func TestBackupSchedulerRespectsInterval(t *testing.T) {
 	var runs atomic.Int64
 	scheduler := NewBackupScheduler(BackupSchedulerOptions{
-		Interval: 20 * time.Millisecond,
-		Enabled:  func() bool { return true },
+		Interval:    20 * time.Millisecond,
+		Enabled:     func() bool { return true },
 		IntervalMin: func() int { return 360 }, // 6 小时
 		LastFinishedAt: func() string {
 			return time.Now().UTC().Format(time.RFC3339) // 刚备份完
