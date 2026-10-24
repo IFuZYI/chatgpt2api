@@ -1,0 +1,28 @@
+=== 覆盖率（全包）===
+ok  	internal/api	8.219s	coverage: 28.4% of statements
+ok  	internal/config	(cached)	coverage: 64.9% of statements
+ok  	internal/health	2.037s	coverage: 88.5% of statements
+ok  	internal/protocol	9.670s	coverage: 72.8% of statements
+ok  	internal/service	1.291s	coverage: 41.3% of statements
+ok  	internal/storage	(cached)	coverage: 4.9% of statements
+ok  	internal/upstream	0.057s	coverage: 36.6% of statements
+ok  	internal/web	0.041s	coverage: 91.5% of statements
+
+=== 测试总数 ===
+321
+
+=== 运行时 RSS（压测后）===
+VmRSS:	    1296 kB
+
+=== 端点连通性 ===
+/health            200
+/version           200
+/v1/models         200
+/api/accounts      200
+/api/images        200
+/api/settings      200
+/                  404
+
+=== 未知 API 路径（C1 回归）===
+/api/nonexistent     404 application/json; charset=utf-8
+/v1/nonexistent      404 application/json; charset=utf-8

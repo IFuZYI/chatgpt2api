@@ -1,0 +1,13 @@
+=== go test ./... ===
+?   	github.com/basketikun/chatgpt2api/cmd/server	[no test files]
+ok  	github.com/basketikun/chatgpt2api/internal/api	4.520s
+ok  	github.com/basketikun/chatgpt2api/internal/config	0.022s
+ok  	github.com/basketikun/chatgpt2api/internal/health	2.020s
+ok  	github.com/basketikun/chatgpt2api/internal/protocol	7.657s
+ok  	github.com/basketikun/chatgpt2api/internal/service	0.903s
+ok  	github.com/basketikun/chatgpt2api/internal/storage	0.055s
+ok  	github.com/basketikun/chatgpt2api/internal/upstream	0.027s
+ok  	github.com/basketikun/chatgpt2api/internal/web	0.015s
+?   	github.com/basketikun/chatgpt2api/tools/goldenrecord	[no test files]
+?   	github.com/basketikun/chatgpt2api/web/node_modules/flatted/golang/pkg/flatted	[no test files]
+exit=0

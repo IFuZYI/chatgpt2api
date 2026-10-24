@@ -1,0 +1,8 @@
+=== go build (CGO_ENABLED=0) ===
+exit=0
+
+=== go vet ===
+exit=0
+
+=== gofmt -l ===
+exit=0
