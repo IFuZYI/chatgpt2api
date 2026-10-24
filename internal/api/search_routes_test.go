@@ -100,9 +100,11 @@ func TestSearchRouteReturnsResultAndMarksTextUsed(t *testing.T) {
 	if !ok || len(sources) != 1 {
 		t.Fatalf("sources = %#v", body["sources"])
 	}
-	// Python handle() 会把账号邮箱塞进结果；日志层靠它记 account_email。
-	if body["_account_email"] != "a@b.c" {
-		t.Errorf("_account_email = %#v, want a@b.c", body["_account_email"])
+	// 账号邮箱只进 call 日志，不进响应。
+	// Python 的 handle() 会塞 _account_email，但 LoggedCall.run 在返回前
+	// pop 掉它（log_service.py:248）—— 客户端看不到。
+	if _, present := body["_account_email"]; present {
+		t.Errorf("_account_email leaked into response: %#v", body["_account_email"])
 	}
 
 	if len(upstream.tokens) != 1 || upstream.tokens[0] != "search-token" {
@@ -156,8 +158,8 @@ func TestSearchRouteWithoutAccountsUsesAnonymousToken(t *testing.T) {
 	if err := json.Unmarshal(payload, &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["_account_email"] != "" {
-		t.Errorf("_account_email = %#v, want empty", body["_account_email"])
+	if _, present := body["_account_email"]; present {
+		t.Errorf("_account_email leaked into response: %#v", body["_account_email"])
 	}
 }
 

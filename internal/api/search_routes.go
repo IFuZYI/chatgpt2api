@@ -57,9 +57,14 @@ func (d *Deps) registerSearchRoute(r *gin.Engine) {
 			return
 		}
 
+		// 账号邮箱只进 call 日志，不进响应。
+		//
+		// Python 的 openai_search.handle 确实把 _account_email 塞进结果
+		// （services/protocol/openai_search.py:18），但 LoggedCall.run 在
+		// 返回前会 pop 掉它（services/log_service.py:248）—— 客户端看不到。
+		// 严格对齐线上形状：日志用，响应剔除。
 		call.finish(nil, accountEmail, nil)
-		// Python handle() 把账号邮箱塞进结果（_account_email）。
-		result["_account_email"] = accountEmail
+		delete(result, "_account_email")
 		c.JSON(http.StatusOK, result)
 	})
 }
