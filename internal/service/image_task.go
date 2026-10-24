@@ -35,7 +35,9 @@ type TaskRunner func(ctx TaskContext) (TaskResult, error)
 
 // TaskContext 是执行一张图所需的一切。
 type TaskContext struct {
-	TaskID   string
+	TaskID string
+	// OwnerID 用于回写任务记录（resume-poll 要按 owner+taskID 找 token）。
+	OwnerID  string
 	Mode     string // generate | edit
 	Prompt   string
 	Model    string
@@ -275,6 +277,11 @@ func (s *ImageTaskService) loadLocked() map[string]map[string]any {
 		if errText := strings.TrimSpace(stringValue(item["error"])); errText != "" {
 			task["error"] = errText
 		}
+		// resume-poll 需要它重新构造上游；不复制的话进程重启后
+		// 「继续等待」会退化成空 token（必 401）。
+		if accessToken := strings.TrimSpace(stringValue(item["access_token"])); accessToken != "" {
+			task["access_token"] = accessToken
+		}
 		out[taskKey(owner, taskID)] = task
 	}
 	return out
@@ -503,6 +510,7 @@ func (s *ImageTaskService) Submit(
 
 	go s.runTask(key, TaskContext{
 		TaskID:  taskID,
+		OwnerID: owner,
 		Mode:    mode,
 		Prompt:  prompt,
 		Model:   orDefault(model, "gpt-image-2"),
@@ -642,4 +650,45 @@ func (s *ImageTaskService) HasRunners() bool {
 // IsTaskTerminal 报告任务状态是否终态。
 func IsTaskTerminal(status string) bool {
 	return taskTerminal[status]
+}
+
+// RecordTaskAccessToken 记下该任务用的是哪个账号的 token。
+//
+// 为什么需要：resume-poll（「继续等待」）要重新构造上游客户端去轮询
+// 已有 conversation_id，而构造上游必须带认证。任务记录里原本只有
+// conversation_id，没有 token。
+//
+// Python 的对应路径用匿名 backend（openai_backend_api.py:165）绕过了这件事，
+// 但匿名对话链路已实测不可用（ADR-0008，上游 403/500）—— 也就是说
+// Python 的「继续等待」实际也是坏的。Go 存 token 是为了让它真的能用。
+//
+// token 与 accounts.json 同级敏感，但它只在这一个任务的 JSON 里，
+// 且任务本身会按 retention 清理。
+func (s *ImageTaskService) RecordTaskAccessToken(ownerID, taskID, accessToken string) {
+	trimmed := strings.TrimSpace(accessToken)
+	if trimmed == "" {
+		return
+	}
+	key := taskKey(orDefault(ownerID, "anonymous"), strings.TrimSpace(taskID))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task := s.tasks[key]
+	if task == nil {
+		return
+	}
+	task["access_token"] = trimmed
+	s.saveLocked()
+}
+
+// TaskAccessToken 返回该任务记录里的 token（没有则空串）。
+func (s *ImageTaskService) TaskAccessToken(ownerID, taskID string) string {
+	key := taskKey(orDefault(ownerID, "anonymous"), strings.TrimSpace(taskID))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	task := s.tasks[key]
+	if task == nil {
+		return ""
+	}
+	return stringValue(task["access_token"])
 }

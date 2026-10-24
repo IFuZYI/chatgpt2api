@@ -183,7 +183,9 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 	pool := &protocol.ImagePool{
 		Parallel: d.Config.ImageParallelGeneration(),
 		Acquire: func(ctx context.Context, index int) (*protocol.ImageGenerator, func(), error) {
-			return d.acquireImageGenerator(ctx, request.Model, index)
+			// 同步链路不需要 token 回写（没有 resume-poll），丢弃第四个返回值。
+			generator, release, _, err := d.acquireImageGenerator(ctx, request.Model, index)
+			return generator, release, err
 		},
 	}
 
@@ -238,20 +240,20 @@ func imageSlotOptions(model string) service.SlotOptions {
 // acquireImageGenerator 取一个账号槽位并构造 generator。
 //
 // model 参与取号筛选（codex 模型要挑 codex 来源的号），必须由调用方传入。
-func (d *Deps) acquireImageGenerator(ctx context.Context, model string, index int) (*protocol.ImageGenerator, func(), error) {
+func (d *Deps) acquireImageGenerator(ctx context.Context, model string, index int) (*protocol.ImageGenerator, func(), string, error) {
 	if d.ImageUpstream == nil {
-		return nil, nil, protocol.ErrorfImage("image upstream factory is not configured")
+		return nil, nil, "", protocol.ErrorfImage("image upstream factory is not configured")
 	}
 
 	token, err := d.Accts.AcquireImageSlot(ctx, imageSlotOptions(model))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	upstream, closeFn, err := d.ImageUpstream(ctx, token)
 	if err != nil {
 		d.Accts.ReleaseImageSlot(token)
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	// succeeded 由 Generate 的调用方在拿到结果后回填：
@@ -279,7 +281,7 @@ func (d *Deps) acquireImageGenerator(ctx context.Context, model string, index in
 		},
 		OnResult: func() { succeeded = true },
 	}
-	return generator, release, nil
+	return generator, release, token, nil
 }
 
 // imageUsageFor 计算 usage（图片链路只算输入文本 + 输出图片 token）。

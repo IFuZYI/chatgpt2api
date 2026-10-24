@@ -84,10 +84,13 @@ func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.T
 	pool := &protocol.ImagePool{
 		Parallel: d.Config.ImageParallelGeneration(),
 		Acquire: func(acquireCtx context.Context, index int) (*protocol.ImageGenerator, func(), error) {
-			generator, release, err := d.acquireImageGenerator(acquireCtx, request.Model, index)
+			generator, release, token, err := d.acquireImageGenerator(acquireCtx, request.Model, index)
 			if err != nil {
 				return nil, nil, err
 			}
+			// 记下本任务用的 token：resume-poll（「继续等待」）要重新构造
+			// 上游去轮询已有 conversation_id，没有 token 会 401。
+			d.Tasks.RecordTaskAccessToken(taskCtx.OwnerID, taskCtx.TaskID, token)
 			// 把任务进度回调接进 generator。
 			if taskCtx.Progress != nil {
 				generator.OnProgress = taskCtx.Progress

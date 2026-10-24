@@ -383,14 +383,20 @@ func (d *Deps) runResumePoll(ownerID, taskID, conversationID string, extraTimeou
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(extraTimeout+60)*time.Second)
 	defer cancel()
 
-	// 用空 token 构造上游：任务记录里不存 access_token（只有 conversation_id）。
+	// 用任务记录里的 token 构造上游。
 	//
-	// 这是已知缺口：上游对空 Authorization 返回 401，所以「继续等待」
-	// 在没有 token 的情况下必然失败。要真正修好，需要在 Submit 时把
-	// token 落进任务记录（或让 resume-poll 重新取号 + 复用 conversation_id）。
-	// 两条路都会改变 data/image_tasks.json 的字段集，属独立决策，
-	// 本轮不擅自扩字段 —— 失败时明确报错而不是静默超时。
-	accessToken := ""
+	// 之前这里传空串：上游对空 Authorization 返回 401，「继续等待」必然失败。
+	// Python 的对应路径靠匿名 backend（openai_backend_api.py:165）绕过，
+	// 但匿名对话链路已实测不可用（ADR-0008）—— 也就是说 Python 的这条路
+	// 实际也是坏的。Go 在任务执行时把 token 记进记录，这里读回来。
+	accessToken := d.Tasks.TaskAccessToken(ownerID, taskID)
+	if accessToken == "" {
+		d.Tasks.UpdateTask(ownerID, taskID, map[string]any{
+			"status": service.TaskStatusError,
+			"error":  "task has no access token; cannot resume polling (task was created before tokens were recorded)",
+		})
+		return
+	}
 	upstream, closeFn, err := d.ImageUpstream(ctx, accessToken)
 	if err != nil {
 		d.Tasks.UpdateTask(ownerID, taskID, map[string]any{
