@@ -1,0 +1,27 @@
+
+=== 端到端冒烟（最小运行审计）===
+时间: 2026-10-24T19:03:17+00:00
+二进制: c06aa07 构建
+
+--- 端点矩阵 ---
+/                          200
+/health                    200
+/version                   200
+/v1/models                 200
+/api/accounts              200
+/api/images                200
+/api/backups               200
+/api/logs                  200
+/v1/editable-file-tasks    200
+
+--- 错误路径 ---
+/api/nope                  404 application/json; charset=utf-8
+/v1/nope                   404 application/json; charset=utf-8
+
+--- 鉴权边界 ---
+无凭据 /api/accounts    401
+错凭据 /api/accounts    401
+
+--- 参数校验 ---
+n=0                        422
+空 prompt                 400

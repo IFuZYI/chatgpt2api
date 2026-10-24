@@ -1,0 +1,92 @@
+=== 内存/Goroutine/FD 泄漏检测（最小运行审计）===
+时间: 2026-10-24T18:35:58+00:00
+
+采样函数: RSS + Swap 合计 / Threads / 打开 fd 数
+[1] 基线
+  合计 118MB (RSS 87060kB + Swap 34400kB) | Threads=9 | fd=14
+
+[2] 打 300 次混合请求（顺序，非压测）
+  完成
+  合计 106MB (RSS 75272kB + Swap 34072kB) | Threads=9 | fd=6
+
+[3] 空闲 30s（观察是否回落到基线）
+  合计 97MB (RSS 452kB + Swap 99712kB) | Threads=9 | fd=6
+
+[4] 再打 300 次
+  合计 105MB (RSS 71420kB + Swap 36968kB) | Threads=9 | fd=6
+
+[5] 进程存活与 panic 检查
+  alive
+  log panic 行数: 0
+=== 客户端断连泄漏检测（SSE 中途断开 ×10）===
+PID=775412
+[1] 基线
+  101MB | Threads=9 | fd=6
+
+[2] 发起 10 次 SSE 请求，每次 1 秒后断开
+  完成
+  110MB | Threads=9 | fd=6
+
+[3] 空闲 20s
+  98MB | Threads=9 | fd=6
+
+[4] 进程存活
+  alive
+
+=== 磁盘增长审计 ===
+
+| 资源 | 保留策略 | 权限 | 上限 | 判定 |
+|:--|:--|:--|:--|:--|
+| data/images/ (67M) | ImageRetentionDays ✓ | user | 磁盘配额 | 受控 |
+| data/image_tasks.json (31M, 旧 base64) | ImageRetentionDays ✓ | user | 15天 | 受控 |
+| data/files/ (editable 产物) | **无** | **user** | **无** | **发现** |
+| data/editable_file_tasks.json | **无清理** | user | 无 | **发现** |
+| data/logs.jsonl (572K) | 仅手动删除 | admin | 无 | 低（admin 域内） |
+| data/accounts.json (897K) | 不适用 | admin | 账号数 | 受控 |
+
+=== 日志增长量化 ===
+3440 行 / 34 小时 = 101 行/小时 ≈ 2422 行/天
+572K / 3440 行 ≈ 170 字节/行 → 约 412KB/天 ≈ 150MB/年
+List 用 readAllLines 全量读入 → 日志越大，列表请求的内存峰值越大（admin 域内）
+
+=== image_tasks.json 的 31MB 来源 ===
+  9 个任务，其中 30.8MB 是改动前写入的 base64
+  当前实现已改用 url 格式；这些旧记录会按 image_retention_days=15 到期清理
+
+=== 请求体无大小上限（我独立发现的 DoS 放大）===
+
+证据 1：200MB JSON → 内存 +685MB
+  基线 116MB → 请求后 801MB（进程存活）
+
+证据 2：空闲 30s 后仍 1010MB（未回落，Go 保留堆）
+
+证据 3：3 并发 100MB → 814MB
+
+代码位置：
+  internal/api/system.go:230  payload, err := c.GetRawData()   ← 无 io.LimitReader
+  全仓库 grep MaxBytesReader → 0 命中
+
+权限：RequireIdentity（user key 即可）
+放大比：约 3.4x（200MB 请求 → +685MB 内存）
+
+对照：产物下载有 64MB 上限（editable_file_chain.go:1471），请求体没有
+
+=== 运行时审计结论（minimal-run-and-audit）2026-10-24T20:44:48+00:00 ===
+
+内存/线程/fd：无泄漏
+  · 300+300 次混合请求 + 空闲 30s：118→106→97→105 MB，Threads=9，fd=6
+  · 10 次 SSE 中途断开：101→110→98 MB，Threads=9，fd=6
+  · 无 panic（日志 grep panic|fatal = 0）
+
+磁盘：3 项无保留策略（详见安全审计 findings）
+  · data/files（editable 产物）：无保留、无配额、user 可达
+  · editable_file_tasks.json：无清理函数（对比 image_task 的 cleanupLocked）
+  · logs.jsonl：无轮转，约 412KB/天 ≈ 150MB/年
+
+请求体：无上限（关键项）
+  · 200MB JSON → RSS 116→801 MB（+685MB，约 3.4×）
+  · 3 并发 100MB → 814 MB
+  · 8000² mask 请求 ≈ 0.3MB 上传 → CompositeMask 峰值 493 MB
+  · ulimit -v 900MB 下 8000² 触发 fatal error: out of memory（gin.Recovery 抓不到）
+
+截断证据：以上为受限本地测量，未对运行中服务做压测。
