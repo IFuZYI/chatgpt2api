@@ -91,11 +91,11 @@ Python 用三套信封（ADR-0005）：
 
 | 项 | 值 |
 |:--|:--|
-| 测试总数 | 344 |
+| 测试总数 | 507 |
 | `go test ./...` | 全绿 |
 | `go test -race ./...`（全 8 包） | 全绿 |
 | `go vet` / `gofmt` | 干净 |
-| 覆盖率（加权） | 约 45% |
+| 覆盖率（加权） | 约 59% |
 
 **覆盖率分布**（这是主要短板）：
 
@@ -103,11 +103,11 @@ Python 用三套信封（ADR-0005）：
 |:--|:--|
 | internal/web | 91.5% |
 | internal/health | 88.5% |
-| internal/protocol | 72.8% |
+| internal/protocol | 78.2% |
 | internal/config | 64.9% |
-| internal/service | 44.1% |
-| internal/upstream | 36.6% |
-| internal/api | 30.8% |
+| internal/upstream | 53.8% |
+| internal/service | 48.9% |
+| internal/api | 41.1% |
 | **internal/storage** | **4.9%** |
 
 **结论**：核心协议层覆盖充分（72.8%），但 `storage` 与 `api` 偏低。四个存储后端几乎无测试，是最大风险面。
@@ -125,9 +125,13 @@ Python 用三套信封（ADR-0005）：
 | ~~token 失效处理~~ | ✅ 已修 | invalid_count + 异常标记 + 按配置删号 |
 | auto_relogin_after_refresh | 已声明缺口 | 依赖未实现的密码重登（ADR-0009），启动时明确提示 |
 | 流式真增量 | 未实现 | 长请求期间客户端收不到字节，60s 空闲可能被切断 |
-| `/v1/ppt|psd/generations` | 501 | 可编辑 PPT/PSD 未实现（ADR-0009） |
-| `/v1/search` | 501 | 未实现（ADR-0009） |
-| 密码重新登录 | 明确报错 | 未实现（ADR-0009） |
+| ~~`/v1/ppt|psd/generations`~~ | ✅ 已实现 | 上传→prepare→conversation→轮询产物→下载 |
+| ~~`/v1/search`~~ | ✅ 已实现 | prepare（system_hints=search）→conversation→轮询 |
+| ~~`/v1/chat/completions` 图片/搜索形态~~ | ✅ 已实现 | 图片转 markdown + annotations；搜索附 url_citation |
+| ~~`/v1/responses` 图片工具~~ | ✅ 已实现 | Responses 格式事件 |
+| ~~流式真增量~~ | ✅ 已实现 | 图片流式边产边写（writeSSEFromChannel） |
+| ~~`resume-poll` 无 token~~ | ✅ 已实现 | 任务记录存 token |
+| 密码重新登录 | 明确报错 | 未实现（ADR-0009，唯一剩余） |
 
 ---
 

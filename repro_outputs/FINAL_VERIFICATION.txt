@@ -1,51 +1,43 @@
-=== 最终全量验证 2026-10-24T07:01:44+00:00 ===
+=== 最终验证 2026-10-24T14:00:39+00:00 ===
 
---- CGO_ENABLED=0 go build ./... ---
+--- build ---
 exit=0
-
---- go vet ./... ---
+--- vet ---
 exit=0
-
---- gofmt -l internal cmd ---
+--- gofmt ---
 exit=0
-
---- go test -count=1 ./... ---
+--- test ---
 ?   	github.com/basketikun/chatgpt2api/cmd/server	[no test files]
-ok  	github.com/basketikun/chatgpt2api/internal/api	6.407s
-ok  	github.com/basketikun/chatgpt2api/internal/config	0.051s
-ok  	github.com/basketikun/chatgpt2api/internal/health	2.030s
-ok  	github.com/basketikun/chatgpt2api/internal/protocol	9.354s
-ok  	github.com/basketikun/chatgpt2api/internal/service	1.568s
-ok  	github.com/basketikun/chatgpt2api/internal/storage	0.144s
-ok  	github.com/basketikun/chatgpt2api/internal/upstream	0.027s
-ok  	github.com/basketikun/chatgpt2api/internal/web	0.012s
+ok  	github.com/basketikun/chatgpt2api/internal/api	25.580s
+ok  	github.com/basketikun/chatgpt2api/internal/config	0.137s
+ok  	github.com/basketikun/chatgpt2api/internal/health	2.053s
+ok  	github.com/basketikun/chatgpt2api/internal/protocol	14.957s
+ok  	github.com/basketikun/chatgpt2api/internal/service	2.980s
+ok  	github.com/basketikun/chatgpt2api/internal/storage	0.583s
+ok  	github.com/basketikun/chatgpt2api/internal/upstream	0.951s
+ok  	github.com/basketikun/chatgpt2api/internal/web	0.016s
 ?   	github.com/basketikun/chatgpt2api/tools/goldenrecord	[no test files]
 ?   	github.com/basketikun/chatgpt2api/web/node_modules/flatted/golang/pkg/flatted	[no test files]
 exit=0
-
---- go test -race ./... ---
-?   	github.com/basketikun/chatgpt2api/cmd/server	[no test files]
-ok  	github.com/basketikun/chatgpt2api/internal/api	34.969s
-ok  	github.com/basketikun/chatgpt2api/internal/config	1.207s
-ok  	github.com/basketikun/chatgpt2api/internal/health	3.223s
-ok  	github.com/basketikun/chatgpt2api/internal/protocol	25.993s
-ok  	github.com/basketikun/chatgpt2api/internal/service	4.568s
-ok  	github.com/basketikun/chatgpt2api/internal/storage	1.146s
-ok  	github.com/basketikun/chatgpt2api/internal/upstream	1.134s
-ok  	github.com/basketikun/chatgpt2api/internal/web	1.067s
-?   	github.com/basketikun/chatgpt2api/tools/goldenrecord	[no test files]
-?   	github.com/basketikun/chatgpt2api/web/node_modules/flatted/golang/pkg/flatted	[no test files]
-exit=0
-
+--- race ---
+ok  	github.com/basketikun/chatgpt2api/internal/api	110.627s
+ok  	github.com/basketikun/chatgpt2api/internal/config	1.148s
+ok  	github.com/basketikun/chatgpt2api/internal/health	3.104s
+ok  	github.com/basketikun/chatgpt2api/internal/protocol	52.430s
+ok  	github.com/basketikun/chatgpt2api/internal/service	8.312s
+ok  	github.com/basketikun/chatgpt2api/internal/storage	3.489s
+ok  	github.com/basketikun/chatgpt2api/internal/upstream	3.391s
+ok  	github.com/basketikun/chatgpt2api/internal/web	1.168s
+--- 501 ---
+(全部清零)
+--- 测试数 ---
+507
 --- 覆盖率 ---
-ok  	internal/api	5.193s	coverage: 30.8% of statements
+ok  	internal/api	68.115s	coverage: 41.1% of statements
 ok  	internal/config	(cached)	coverage: 64.9% of statements
 ok  	internal/health	(cached)	coverage: 88.5% of statements
-ok  	internal/protocol	6.536s	coverage: 72.8% of statements
-ok  	internal/service	1.781s	coverage: 44.1% of statements
-ok  	internal/storage	(cached)	coverage: 4.9% of statements
-ok  	internal/upstream	0.017s	coverage: 36.6% of statements
+ok  	internal/protocol	27.076s	coverage: 78.2% of statements
+ok  	internal/service	14.372s	coverage: 48.9% of statements
+ok  	internal/storage	(cached)	coverage: 44.1% of statements
+ok  	internal/upstream	1.050s	coverage: 53.8% of statements
 ok  	internal/web	(cached)	coverage: 91.5% of statements
-
---- 测试总数 ---
-344

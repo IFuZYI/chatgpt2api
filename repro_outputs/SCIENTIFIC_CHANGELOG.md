@@ -127,6 +127,13 @@
 | ~~周期性备份调度器~~ | ✅ 已修（ba52a2b） | — | — |
 | ~~敏感词 / AI 审核~~ | ✅ 已修（5935c63） | — | — |
 | ~~token 失效处理~~ | ✅ 已修（fb53d26） | — | — |
+| ~~resume-poll 无 token~~ | ✅ 已修（15afd1b） | 任务记录存 access_token |
+| ~~流式真增量~~ | ✅ 已修（f92c882） | writeSSEFromChannel 边产边写 |
+| ~~`/v1/search`~~ | ✅ 已实现（f9ee0b0 28f578d） | prepare→conversation→轮询 |
+| ~~PPT/PSD~~ | ✅ 已实现（58705a8） | 上传→轮询产物→下载 |
+| ~~chat 图片/搜索形态~~ | ✅ 已实现（7de528d c5b8972 8d001f0） | 转 markdown / url_citation |
+| ~~responses 图片工具~~ | ✅ 已实现（a873e73 a81f598） | 最后一个 501 清零 |
+| ~~storage 覆盖率 4.9%~~ | ✅ 已修（4bf062a） | 44.1% |
 | auto_relogin_after_refresh | 已声明缺口（ADR-0009） | 依赖未实现的密码重登 | 启动时明确提示，不静默 |
 | 流式真增量 | 未实现 | 长请求期间客户端收不到字节 | 需重构 SSE 写出路径，属独立任务 |
 | storage 包覆盖率 4.9% | 低 | 四个后端几乎无测试 | 需补大量测试，属独立任务 |
