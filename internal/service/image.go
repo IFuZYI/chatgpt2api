@@ -40,6 +40,9 @@ type ImageService struct {
 	cfg *config.Store
 
 	indexMu sync.Mutex
+	// tagsMu 保护 image_tags.json 的 load→mutate→save 全过程。
+	// SetTags/DeleteTag/removeTags 都是读改写，无锁会互相覆盖。
+	tagsMu sync.Mutex
 
 	// uploadWG 跟踪 both 模式的异步远端上传，供关闭时等待。
 	uploadWG sync.WaitGroup
@@ -622,6 +625,9 @@ func (s *ImageService) AllTags() []string {
 
 // SetTags 复刻 set_tags：清洗、去重、空则删除条目。
 func (s *ImageService) SetTags(rel string, tags []string) []string {
+	s.tagsMu.Lock()
+	defer s.tagsMu.Unlock()
+
 	data := s.loadTags()
 	cleaned := make([]string, 0, len(tags))
 	seen := map[string]bool{}
@@ -643,6 +649,9 @@ func (s *ImageService) SetTags(rel string, tags []string) []string {
 }
 
 func (s *ImageService) removeTags(rel string) {
+	s.tagsMu.Lock()
+	defer s.tagsMu.Unlock()
+
 	data := s.loadTags()
 	if _, exists := data[rel]; !exists {
 		return
@@ -653,6 +662,9 @@ func (s *ImageService) removeTags(rel string) {
 
 // DeleteTag 从所有图片里移除某标签，返回受影响图片数。
 func (s *ImageService) DeleteTag(tag string) int {
+	s.tagsMu.Lock()
+	defer s.tagsMu.Unlock()
+
 	data := s.loadTags()
 	count := 0
 	for rel, tags := range data {
@@ -693,8 +705,16 @@ func tagsOrDefault(all map[string][]string, rel string) []string {
 //
 // 文件名格式与 Python 一致：<unix秒>_<md5>.png，目录 YYYY/MM/DD。
 // 存哪儿由 image_storage.mode 决定：local 只写本地，webdav 只传远端，
-// both 两边都写。WebDAV 失败必须让整次保存失败 —— 静默退回本地会让
-// webdav 模式的用户以为图已存到远端（本地磁盘照样涨满，重启换机就丢图）。
+// both 两边都写。
+//
+// WebDAV 失败时的行为按模式区分（ADR-0011 / ADR-0012）：
+//   - webdav：整次保存失败。静默退回本地会让用户以为图已在远端，
+//     而本地磁盘照样涨满，重启换机就丢图。
+//   - both：降级为本地并返回成功，索引如实标记 storage=local / webdav=false。
+//     远端上传转异步（ADR-0012），不阻塞生图响应。
+//
+// 早期注释写的是「WebDAV 失败必须让整次保存失败」，那只对 webdav 模式成立，
+// 已被 ADR-0011/0012 取代。
 func (s *ImageService) SaveImageBytes(payload []byte, baseURL string) (rel string, url string, err error) {
 	sum := md5.Sum(payload)
 	now := time.Now()

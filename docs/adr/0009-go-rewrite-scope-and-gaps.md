@@ -14,18 +14,46 @@
 | 图片 | 生成/编辑、并行池、轮询（settle/check-before-hit/退避）、对话清理、任务队列、resume-poll |
 | 管理面 | 账号 CRUD、图片管理（列表/删除/压缩/清理到目标/缩略图/标签）、日志、代理测试与清障、备份（R2 SigV4）、WebDAV 同步、CPA、sub2api、OAuth PKCE 桥 |
 
-## 刻意留下的空白（都返回明确错误，不假装成功）
+## 曾经的空白，现已补齐
+
+2.0 首次落地时刻意留了 6 项空白。截至 `42def84`，其中 4 项已实现：
+
+| 项 | 状态 | 落地位置 |
+|:--|:--|:--|
+| 密码重新登录（含 TOTP 两步验证） | **已实现** | `internal/service/password_login.go`、`account_relogin.go`、`internal/upstream/sentinel_flow.go` |
+| 可编辑 PPT/PSD | **已实现** | `internal/api/editable_file_routes.go` + `internal/upstream/editable_file_chain.go` |
+| 网页搜索 | **已实现** | `internal/api/search_routes.go` + `internal/upstream/search_chain.go` |
+| Responses 图片工具 | **已实现** | `internal/api/response_image_routes.go` |
+
+仍然成立的两项：
 
 | 项 | 当前行为 | 原因 |
 |:--|:--|:--|
-| 密码重新登录 | `re-login` 进度标 error，文案「未实现」 | 依赖完整的 sentinel→authorize→验证码→token 交换链路，与 OAuth 桥不同路径 |
-| 可编辑 PPT/PSD | `/v1/ppt|psd/generations` 返回 501 | 需要解析上游 sandbox 产物（zip 里的 psd/pptx），链路长且未验证 |
-| 网页搜索 | `/v1/search`、chat 的搜索分支返回 501 | 搜索链路需要轮询会话文档 + 来源提取，尚未移植 |
-| Responses 图片工具 | `/v1/responses` 带 `image_generation` 工具时返回 501 | 图片链路已就绪，但 Responses 形态的图片输出组装未接 |
 | 远程图片 URL 拉取 | `/v1/images/edits` 的 `http(s)://` 引用返回 400 | 需要出站客户端；data URL 与 multipart 已支持 |
 | 匿名对话 | 依赖上游；当前上游限制（ADR-0008） | 非实现问题 |
 
-**为什么留下这些**：它们的共同点是「链路长 + 无法在当前环境端到端验证」。把未验证的代码写成看起来能用的样子，比明确的 501 更危险——用户会以为功能可用，出问题时也无从判断是上游还是实现。每条都在 CHANGELOG 的「已知问题」里列出。
+## 遗留的已知限制
+
+| 项 | 现状 | 影响 |
+|:--|:--|:--|
+| `auto_relogin_after_refresh` 未接线 | 刷新失败不会自动触发重登，只打启动日志 | 需手动点重登；`docs/feature-status` 已如实描述 |
+| 后台任务不可取消 | `runImageTask` 用 `context.Background()`，`TaskContext` 不带 ctx | `ImageTaskService.Close` 只能等满超时；见 `internal/api/image_task_runner.go` 注释 |
+| 进度对象不淘汰 | `CleanRefreshProgress` / `CleanReloginProgress` 无调用点 | 每次 admin 刷新/重登永久保留一份号池副本，重启才回收 |
+| 可编辑任务无保留策略 | 无 `cleanupLocked`、无删除路由、无配额 | `data/files/` 与任务记录聚合无界（对比 `image_task` 有保留期） |
+| 入站请求体无上限 | `decodeJSONBody` 用 `c.GetRawData()`，全仓库无 `MaxBytesReader` | 大请求体可把进程内存推高 |
+| 备份归档默认不加密 | `backup.encrypt` 默认 false | 归档含号池全部凭据，需操作者显式开启加密 |
+| 图片标签写入非原子 | `saveTags` 直接 truncate + write | 崩溃中途丢全部标签（并发丢更新已修，见下） |
+
+## 安全审计后的修复（2026-10）
+
+一轮完整安全审计（8 个覆盖单元）发现并修复：
+
+1. **流式生图失败被吞**：`/v1/images/generations` 流式路径在 `pool.Run` 失败时只写 `[DONE]`，客户端收到 200 + 空流，无法区分「成功但 0 张图」与故障。已改为在流里补 `error` 事件，与 `response_image_routes.go` 对齐。
+2. **`SyncToWebDAV` 丢索引**：网络循环前取快照、循环后整份写回，期间 `SaveImageBytes` 新增的条目被抹掉（webdav 模式无本地副本 → 图永久不可达）。已改为只合并本次上传成功的条目，并在锁内重新读取索引。
+3. **图片标签并发丢更新**：`loadTags`/`saveTags` 无锁，50 个并发 `SetTags` 实测只留下 0 条。已加 `tagsMu`。
+4. **`config.example.json` 泄漏真实凭据**：模板曾携带一条真实 SOCKS5 出口代理凭据与私有 WebDAV 主机名，已清除；该凭据已推送过，需轮换。
+
+三处并发/吞错缺陷都没有被既有测试发现 —— 前两个是文件级丢更新，`-race` 检测器看不见。每条都补了会失败的回归用例。
 
 ## 与 Python 版的实测差异（刻意保留）
 
@@ -36,12 +64,16 @@
 
 ## 测试面
 
-170 个 Go 测试：
+561 个 Go 测试：
+- `internal/protocol` 225（SSE、缓存、token 计费、Anthropic、图片轮询/池、mask 合成）
+- `internal/service` 153（备份加密双向 OpenSSL 兼容、R2 SigV4、WebDAV、OAuth PKCE、密码登录/重登、标签并发）
+- `internal/api` 90（golden 用例、路由对齐、流式错误、n 校验、任务格式）
+- `internal/upstream` 65（PoW 跨语言 golden、sentinel fnv1a golden、TOTP RFC 向量）
 - `internal/config` 11（归一化、默认值、cookie 保留）
-- `internal/protocol` 117（SSE、缓存、token 计费、Anthropic、图片轮询/池）
-- `internal/service` 35（备份加密双向 OpenSSL 兼容、R2 SigV4、WebDAV、OAuth PKCE）
-- `internal/upstream` 5（PoW 跨语言 golden、live 握手）
-- `internal/api` 2 组（28 个 golden 用例 + 78 条路由对齐）
-- `internal/web` 4（embed、SPA fallback、路径穿越防护）
+- `internal/storage` 8（json/sqlite 后端契约）
+- `internal/web` 5（embed、SPA fallback、路径穿越防护）
+- `internal/health` 4
+
+覆盖率（语句）：web 91.5% / health 88.5% / protocol 78.2% / config 64.9% / upstream 55.8% / service 53.0% / storage 44.1% / api 42.0%。
 
 live 测试（`-tags live`）单独跑，只记录上游状态不设失败断言（ADR-0008 的教训）。

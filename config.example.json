@@ -60,8 +60,8 @@
   "image_settle_enabled": true,
   "image_settle_secs": 2,
   "image_storage": {
-    "enabled": true,
-    "mode": "webdav",
+    "enabled": false,
+    "mode": "local",
     "public_base_url": "",
     "webdav_password": "",
     "webdav_root_path": "chatgpt2api/images",
@@ -96,7 +96,7 @@
       403
     ],
     "resource_proxy_url": "",
-    "skip_ssl_verify": true
+    "skip_ssl_verify": false
   },
   "refresh_account_interval_minute": 5,
   "sensitive_words": [],

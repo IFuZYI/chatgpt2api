@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import api.ai as ai_module
 
-AUTH_HEADERS = {"Authorization": "Bearer chatgpt2api"}
+AUTH_HEADERS = {"Authorization": "Bearer test-key-not-real"}
 PNG_DATA_URL = "data:image/png;base64," + base64.b64encode(b"fake-png").decode("ascii")
 JPEG_DATA_URL = "data:image/jpeg;base64," + base64.b64encode(b"fake-jpeg").decode("ascii")
 

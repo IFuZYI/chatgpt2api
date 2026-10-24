@@ -182,6 +182,11 @@ func (s *AccountService) ReleaseImageSlot(token string) {
 
 // GetAvailableAccessToken 复刻 Python：取槽位后做一次远程校验，失败则换号。
 // verify 由上层注入（upstream 包实现），避免 service 依赖 upstream。
+//
+// 未接线：当前生产路径走 image_pool 的 Acquire + 池内重试，不经过这里。
+// 保留是因为它承载了 Python 的「校验失败就换号」语义（含 20 次上限与
+// 槽位释放），将来若把远程校验移到取号阶段可以直接接上。
+// 改动这里请先补测试 —— 目前没有测试覆盖，也没有调用者。
 func (s *AccountService) GetAvailableAccessToken(
 	ctx context.Context,
 	opts SlotOptions,

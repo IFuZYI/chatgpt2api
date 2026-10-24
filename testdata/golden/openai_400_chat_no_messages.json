@@ -6,7 +6,7 @@
   "content_type": "application/json",
   "body": "{\"error\":{\"message\":\"messages or prompt is required\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"bad_request\"}}",
   "request_headers": {
-    "Authorization": "Bearer chatgpt2api",
+    "Authorization": "Bearer test-key-not-real",
     "Content-Type": "application/json"
   },
   "request_body": "{}",

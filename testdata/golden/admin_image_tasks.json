@@ -6,7 +6,7 @@
   "content_type": "application/json",
   "body": "{\"items\":[],\"missing_ids\":[]}",
   "request_headers": {
-    "Authorization": "Bearer chatgpt2api"
+    "Authorization": "Bearer test-key-not-real"
   },
   "request_body": "",
   "compare": "json"

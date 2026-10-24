@@ -7,6 +7,29 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// maskAccountCredentials 把账号记录里的密码类字段替换成「是否已设置」标记。
+//
+// 为什么要脱敏：密码重登上线后 password / totp_secret 变成有实际作用的凭据，
+// 而 /api/accounts 是列表接口 —— 一次只读的 admin 会话就能拿到整个号池的
+// 密码与 TOTP 种子，等于号池全量接管。access_token 保留原文是既有约定
+// （前端要显示、导出要用），密码没有这个需求。
+//
+// 保留 *_set 布尔值，让前端能显示「已配置密码 / 未配置」。
+func maskAccountCredentials(items []map[string]any) []map[string]any {
+	for _, item := range items {
+		for _, field := range []string{"password", "totp_secret"} {
+			value := stringValueOf(item[field])
+			if value == "" {
+				delete(item, field)
+				continue
+			}
+			delete(item, field)
+			item[field+"_set"] = true
+		}
+	}
+	return items
+}
+
 // registerAccountCRUD 复刻 api/accounts.py 里 /api/accounts 的六个端点。
 func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 	r.GET("/api/accounts", func(c *gin.Context) {
@@ -14,7 +37,7 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			writeErr(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"items": d.Accts.ListAccounts()})
+		c.JSON(http.StatusOK, gin.H{"items": maskAccountCredentials(d.Accts.ListAccounts())})
 	})
 
 	r.POST("/api/accounts", func(c *gin.Context) {

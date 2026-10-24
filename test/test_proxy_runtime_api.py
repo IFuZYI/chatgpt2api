@@ -11,7 +11,7 @@ import api.system as system_module
 from services.config import DEFAULT_PROXY_RUNTIME
 
 
-AUTH_HEADERS = {"Authorization": "Bearer chatgpt2api"}
+AUTH_HEADERS = {"Authorization": "Bearer test-key-not-real"}
 
 
 class FakeStorage:

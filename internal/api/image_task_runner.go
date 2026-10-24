@@ -39,8 +39,13 @@ func (d *Deps) runImageTaskEdit(taskCtx service.TaskContext) (service.TaskResult
 // 刻意复用 ImagePool + acquireImageGenerator —— 与同步接口完全同一条链路，
 // 这样账号槽位、并行、失败计数、对话清理的行为不会出现两套。
 func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.TaskResult, error) {
-	// 后台任务没有请求 ctx，但也不能用 Background 裸跑：
-	// 任务取消（用户删任务 / 服务退出）需要能中断上游请求。
+	// 后台任务没有请求 ctx。
+	//
+	// 已知限制：这里用的是 Background，所以任务一旦开跑就无法被中断 ——
+	// ImageTaskService.Close 只能等满超时再记一条 "close timed out"。
+	// 真正的取消需要 TaskContext 携带 ctx（见 ADR-0009 的遗留项）。
+	// 不要在这里写「用 WithoutCancel 支持取消」之类的注释：
+	// 当前实现不支持取消，注释必须如实描述。
 	ctx := context.Background()
 
 	summary := "生图"

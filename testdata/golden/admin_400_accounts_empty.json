@@ -6,7 +6,7 @@
   "content_type": "application/json",
   "body": "{\"detail\":{\"error\":\"tokens is required\"}}",
   "request_headers": {
-    "Authorization": "Bearer chatgpt2api",
+    "Authorization": "Bearer test-key-not-real",
     "Content-Type": "application/json"
   },
   "request_body": "{}",

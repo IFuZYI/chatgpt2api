@@ -234,6 +234,11 @@ func (s *ImageService) SyncToWebDAV(ctx context.Context, settings map[string]any
 	indexed := s.loadIndexLocked()
 	s.indexMu.Unlock()
 
+	// uploadedEntries 只记录本次真正上传成功的条目。收尾时在锁内重新读取
+	// 索引、只合并这些条目 —— 否则把网络循环之前的整份快照写回去，会覆盖
+	// 期间 SaveImageBytes 新增的条目（webdav 模式没有本地副本，丢索引即丢图）。
+	uploadedEntries := make(map[string]map[string]any)
+
 	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil || info.IsDir() || !isImageRel(info.Name()) {
 			return nil
@@ -266,7 +271,7 @@ func (s *ImageService) SyncToWebDAV(ctx context.Context, settings map[string]any
 		item["webdav"] = true
 		item["storage"] = "both"
 		item["remote_url"] = remoteURL
-		indexed[relSlash] = item
+		uploadedEntries[relSlash] = item
 		uploaded++
 		return nil
 	})
@@ -274,9 +279,16 @@ func (s *ImageService) SyncToWebDAV(ctx context.Context, settings map[string]any
 		return nil, err
 	}
 
-	s.indexMu.Lock()
-	s.saveIndexLocked(indexed)
-	s.indexMu.Unlock()
+	if len(uploadedEntries) > 0 {
+		s.indexMu.Lock()
+		// 重新读取：期间可能有并发写入，必须基于最新状态合并。
+		current := s.loadIndexLocked()
+		for rel, item := range uploadedEntries {
+			current[rel] = item
+		}
+		s.saveIndexLocked(current)
+		s.indexMu.Unlock()
+	}
 
 	return map[string]any{
 		"uploaded": uploaded,

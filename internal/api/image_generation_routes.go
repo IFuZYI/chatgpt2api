@@ -116,10 +116,17 @@ func (d *Deps) registerImageGeneration(r *gin.Engine) {
 		if d.guardPrompt(c, strings.TrimSpace(stringValueOf(payload["prompt"]))) {
 			return
 		}
+		// 与 /v1/images/generations 保持同一套校验：越界报错而非静默夹取。
+		// Python 的 _parse_count 对 edits 返回 400，所以 strictPydantic=false。
+		editN, editNErr := requireImageCount(payload["n"], false)
+		if editNErr != nil {
+			writeErr(c, editNErr)
+			return
+		}
 		request := protocol.ImageRequest{
 			Prompt:         strings.TrimSpace(stringValueOf(payload["prompt"])),
 			Model:          orDefaultValue(stringValueOf(payload["model"]), "gpt-image-2"),
-			N:              clampImageCount(intOf(payload["n"])),
+			N:              editN,
 			Size:           stringValueOf(payload["size"]),
 			Quality:        orDefaultValue(stringValueOf(payload["quality"]), "auto"),
 			ResponseFormat: orDefaultValue(stringValueOf(payload["response_format"]), "b64_json"),
@@ -247,7 +254,20 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 		<-done
 
 		if runErr != nil {
-			// 头已经发出去了，只能在流里报错（不能再 writeErr 改状态码）。
+			// 头已经发出去了，改不了状态码，但必须在流里补一条 error 事件：
+			// 只写 [DONE] 会让客户端把「0 张图」当成「成功但无输出」，
+			// 这是生图接口最糟的失败形态（无法区分空结果与故障）。
+			// 与 response_image_routes.go / chat_image_routes.go 的做法对齐。
+			message := mapImageError(runErr).Error()
+			if payload, marshalErr := marshalJSON(map[string]any{
+				"error": map[string]any{
+					"message": message,
+					"type":    "server_error",
+				},
+			}); marshalErr == nil {
+				_, _ = c.Writer.WriteString("data: " + payload + "\n\n")
+				c.Writer.Flush()
+			}
 			call.finish(runErr, "", nil)
 			logged = true
 			return
@@ -380,17 +400,6 @@ func mapImageError(err error) *HTTPError {
 		})
 	}
 	return Errorf(http.StatusBadGateway, message)
-}
-
-// clampImageCount 保持 1..4 的限制（与 Python 一致）。
-func clampImageCount(value int) int {
-	if value < 1 {
-		return 1
-	}
-	if value > 4 {
-		return 4
-	}
-	return value
 }
 
 func orDefaultValue(value, fallback string) string {

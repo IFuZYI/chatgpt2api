@@ -617,6 +617,15 @@ func (s *AccountService) BuildExportItems(tokens []string) []map[string]any {
 		if exportType := stringValue(account["export_type"]); exportType != "" {
 			item["export_type"] = exportType
 		}
+		// password / totp_secret 必须一起导出：否则 export → import 之后
+		// 每个账号都变成 no_password_in_account，密码重登功能对导出的号池失效。
+		// Python 的导出同样带 password（services/account_service.py）。
+		if password := stringValue(account["password"]); password != "" {
+			item["password"] = password
+		}
+		if totpSecret := stringValue(account["totp_secret"]); totpSecret != "" {
+			item["totp_secret"] = totpSecret
+		}
 		out = append(out, item)
 	}
 	sort.SliceStable(out, func(i, j int) bool {

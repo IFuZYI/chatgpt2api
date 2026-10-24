@@ -6,7 +6,7 @@
   "content_type": "application/json",
   "body": "{\"detail\":\"Not Found\"}",
   "request_headers": {
-    "Authorization": "Bearer chatgpt2api"
+    "Authorization": "Bearer test-key-not-real"
   },
   "request_body": "",
   "compare": "json"

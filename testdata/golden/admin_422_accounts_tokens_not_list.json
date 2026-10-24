@@ -6,7 +6,7 @@
   "content_type": "application/json",
   "body": "{\"detail\":[{\"type\":\"list_type\",\"loc\":[\"body\",\"tokens\"],\"msg\":\"Input should be a valid list\",\"input\":\"nope\"}]}",
   "request_headers": {
-    "Authorization": "Bearer chatgpt2api",
+    "Authorization": "Bearer test-key-not-real",
     "Content-Type": "application/json"
   },
   "request_body": "{\"tokens\":\"nope\"}",

@@ -10,7 +10,7 @@ import (
 // n 越界必须报校验错误，不能静默夹取后打到上游。
 //
 // Python 的 pydantic 是 `n: int = Field(default=1, ge=1, le=4)`，
-// 越界返回 422（Pydantic 条目形状）。Go 侧 clampImageCount 会静默
+// 越界返回 422（Pydantic 条目形状）。Go 侧曾用 clampImageCount 静默
 // 把 0 夹成 1、5 夹成 4，然后真的去生图 —— 用户以为参数生效了。
 func TestImageGenerationsRejectsOutOfRangeN(t *testing.T) {
 	deps := newTestDeps(t)

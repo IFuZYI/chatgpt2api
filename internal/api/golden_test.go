@@ -58,7 +58,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	if err := json.Unmarshal(repoConfig, &raw); err != nil {
 		t.Fatalf("parse golden config.json: %v", err)
 	}
-	raw["auth-key"] = "chatgpt2api"
+	raw["auth-key"] = "test-key-not-real"
 	encoded, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)

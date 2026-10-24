@@ -6,7 +6,7 @@
   "content_type": "application/json",
   "body": "{\"disk_total_mb\":50088,\"disk_used_mb\":20901,\"disk_free_mb\":26611,\"image_count\":0,\"image_size_mb\":0,\"image_size_bytes\":0}",
   "request_headers": {
-    "Authorization": "Bearer chatgpt2api"
+    "Authorization": "Bearer test-key-not-real"
   },
   "request_body": "",
   "compare": "shape"

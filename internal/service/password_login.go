@@ -413,8 +413,11 @@ func passwordVerifyError(status int, data map[string]any, body []byte) error {
 		return &PasswordLoginError{Code: PasswordLoginRateLimited, Message: "上游限流: " + message, Detail: data}
 	case code == PasswordLoginAccountDeactivated:
 		return &PasswordLoginError{Code: PasswordLoginAccountDeactivated, Message: "账号已停用: " + message, Detail: data}
-	case strings.Contains(strings.ToLower(message), "invalid credentials"),
+	case code == PasswordLoginInvalidPassword,
+		strings.Contains(strings.ToLower(message), "invalid credentials"),
 		strings.Contains(strings.ToLower(message), "wrong password"):
+		// 优先认 code：上游若改用别的措辞仍能命中。消息匹配是兜底
+		// （实测上游走的是消息路径，code 未必出现）。
 		return &PasswordLoginError{Code: PasswordLoginInvalidPassword, Message: "密码错误: " + message, Detail: data}
 	}
 	detail := message
