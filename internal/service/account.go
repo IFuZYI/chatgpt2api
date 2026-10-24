@@ -28,6 +28,8 @@ const (
 const (
 	SourceWeb   = "web"
 	SourceCodex = "codex"
+	// SourcePassword 表示账号是通过邮箱密码登录（含 TOTP）拿到 token 的。
+	SourcePassword = "password"
 )
 
 // Account 是号池里的一个账号。

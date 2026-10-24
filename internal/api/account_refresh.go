@@ -78,8 +78,21 @@ func (d *Deps) registerAccountRefresh(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, "access_tokens is required"))
 			return
 		}
+		// 去重 + 同步建进度：必须发生在返回 progress_id 之前，
+		// 否则前端第一次轮询会 404（它会在 300ms 后就开始轮询）。
+		// 顺序上先确认后台任务能被托管，避免关机时留下永远 running 的进度。
+		reloginCtx, finishRelogin, ok := d.Tasks.StartBackground(context.Background(), 30*time.Minute)
+		if !ok {
+			writeErr(c, Errorf(http.StatusServiceUnavailable, "server is shutting down"))
+			return
+		}
+		tokens = service.DedupeReloginTokens(tokens)
 		progressID := newUUIDString()
-		go d.runRelogin(tokens, progressID)
+		d.Accts.InitReloginProgress(progressID, len(tokens))
+		go func() {
+			defer finishRelogin()
+			d.runRelogin(reloginCtx, tokens, progressID)
+		}()
 		c.JSON(http.StatusOK, gin.H{"progress_id": progressID})
 	})
 
@@ -107,20 +120,25 @@ func (d *Deps) refreshVerifier() service.RefreshVerifier {
 	}
 }
 
-// runRelogin 是密码重登的占位实现。
+// runRelogin 执行密码重新登录（含 TOTP 两步验证）。
 //
-// 完整的密码登录流程（sentinel → authorize → 验证码 → token 交换）
-// 依赖 OAuth 服务，尚未移植。这里如实标记为未实现，
-// 而不是假装成功——否则用户会看到「重登完成」但账号仍然是坏的。
-func (d *Deps) runRelogin(tokens []string, progressID string) {
-	d.Accts.InitReloginProgress(progressID, len(tokens))
-	for _, token := range tokens {
-		d.Accts.UpdateReloginProgress(progressID, token, "error", "password re-login is not implemented yet")
+// 与 /api/accounts/refresh 一样是异步 + 进度轮询：后台 ctx 由 Tasks 托管，
+// 进程退出时会先取消再等待（重登会写 accounts.json，不能裸跑 goroutine）。
+func (d *Deps) runRelogin(ctx context.Context, tokens []string, progressID string) {
+	d.Accts.ReloginAccounts(ctx, tokens, progressID, d.passwordLoginFunc())
+}
+
+// passwordLoginFunc 把上游客户端工厂 + LoginWithPassword 组合成 service 需要的执行体。
+//
+// 每个账号一个新会话：登录会往 cookie jar 里塞 oai-did / oai-sc，
+// 复用会话会让不同账号的 challenge 互相污染。
+func (d *Deps) passwordLoginFunc() service.PasswordLoginFunc {
+	if d.PasswordLoginClient == nil {
+		return nil
 	}
-	d.Accts.FinishReloginProgress(progressID, map[string]any{
-		"relogined": 0,
-		"errors":    []any{map[string]any{"error": "password re-login is not implemented yet"}},
-	}, "password re-login is not implemented yet")
+	return func(ctx context.Context, email, password, totpSecret string) (map[string]string, error) {
+		return service.LoginWithPassword(ctx, d.PasswordLoginClient, email, password, totpSecret)
+	}
 }
 
 // registerAccountExport 注册导出。

@@ -122,6 +122,15 @@ func main() {
 		defer client.Close()
 		return client.FetchAccountInfo(ctx)
 	}
+	// 密码重登的认证会话：Python 版 _login_with_password 用 impersonate="chrome110"，
+	// 这里对齐同档 TLS profile。每个账号一次新会话（见 runRelogin）。
+	deps.PasswordLoginClient = func() (service.PasswordLoginTransport, error) {
+		client, err := upstream.NewClient(upstream.ClientConfig{Impersonate: "chrome110", ProxyURL: cfg.Proxy()})
+		if err != nil {
+			return nil, err
+		}
+		return client, nil
+	}
 	deps.ImageUpstream = func(ctx context.Context, accessToken string) (protocol.ImageUpstream, func(), error) {
 		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
 		if err != nil {

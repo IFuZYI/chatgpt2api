@@ -119,14 +119,15 @@ func upstreamStatusCodeOf(err error) int { return upstream.StatusCodeOf(err) }
 
 // WarnUnsupportedAutoRelogin 在启动时提示 auto_relogin_after_refresh 不生效。
 //
-// 该配置依赖密码重新登录链路，而该链路未实现（ADR-0009:21，re-login 明确
-// 返回「未实现」）。不提示的话用户会以为开了就会自动恢复异常账号 ——
-// 静默不生效比明确报错更糟。
+// 密码重登链路本身已实现（/api/accounts/re-login → service.ReloginAccounts），
+// 但「刷新发现 token 失效后自动触发重登」这条自动路径还没接线：刷新的
+// 失败分支只记 invalid_count，不会去调 ReloginAccounts。不提示的话用户会
+// 以为开了就会自动恢复异常账号 —— 静默不生效比明确报错更糟。
 func (s *AccountService) WarnUnsupportedAutoRelogin() {
 	if s.cfg == nil || !s.cfg.AutoReloginAfterRefresh() {
 		return
 	}
-	fmt.Println("[account] auto_relogin_after_refresh is enabled but password " +
-		"re-login is not implemented (see ADR-0009); abnormal accounts will not " +
-		"be recovered automatically")
+	fmt.Println("[account] auto_relogin_after_refresh is enabled but the automatic " +
+		"trigger is not wired yet; abnormal accounts will not be recovered " +
+		"automatically after a refresh (run /api/accounts/re-login manually)")
 }

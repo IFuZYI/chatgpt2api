@@ -50,6 +50,10 @@ type Deps struct {
 
 	// AccountInfoFetcher 拉取账号信息（刷新链路用）。未注入时刷新会报错。
 	AccountInfoFetcher func(ctx context.Context, accessToken string) (service.Account, error)
+
+	// PasswordLoginClient 为密码重登构造一个认证会话（带 TLS 指纹的上游客户端）。
+	// 未注入时重登会逐条报 password_login_not_configured，而不是假装成功。
+	PasswordLoginClient service.PasswordLoginClientFactory
 }
 
 // Identity 是认证后的调用者身份，字段与 Python 的 require_identity 返回值一致。

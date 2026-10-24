@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -330,6 +331,15 @@ func (c *Client) doJSON(ctx context.Context, method, url, targetPath string, bod
 
 // do 是唯一的出站入口：所有请求都经过它，确保指纹头一致。
 func (c *Client) do(ctx context.Context, method, url string, headers http.Header, body []byte, timeout time.Duration) ([]byte, int, error) {
+	payload, status, _, err := c.doFull(ctx, method, url, headers, body, timeout)
+	return payload, status, err
+}
+
+// doFull 与 do 相同，但额外返回**最终** URL（跟随重定向之后）。
+//
+// 认证链路需要它：authorize 会 302 到 /log-in/password，也可能 302 到
+// /error?payload=<base64>，只有最终 URL 才能分辨这两种结果。
+func (c *Client) doFull(ctx context.Context, method, url string, headers http.Header, body []byte, timeout time.Duration) ([]byte, int, string, error) {
 	// timeout 必须真正生效：客户端级超时已设为 0（见 NewClient），
 	// 若这里也不加 deadline，长流会无限挂起。
 	if timeout > 0 {
@@ -343,21 +353,83 @@ func (c *Client) do(ctx context.Context, method, url string, headers http.Header
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, url, err
 	}
 	req.Header = headers
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, url, err
 	}
 	defer resp.Body.Close()
 
+	finalURL := url
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 32*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, finalURL, err
 	}
-	return payload, resp.StatusCode, nil
+	return payload, resp.StatusCode, finalURL, nil
+}
+
+// authHeaders 把 map 形式的头转成 fhttp.Header，键序按字母序固定。
+//
+// 认证链路（auth.openai.com / sentinel.openai.com）不走 BuildHeaders：
+// 那些请求的指纹头由调用方逐字给出（见 utils/sentinel.py 与
+// services/account_service.py 的 _login_with_password），
+// 混进 chatgpt.com 的 X-[OI]-* 头只会让请求形状偏离实测结果。
+func authHeaders(headers map[string]string) http.Header {
+	out := http.Header{}
+	names := make([]string, 0, len(headers))
+	for name, value := range headers {
+		lowered := strings.ToLower(name)
+		out[lowered] = []string{value}
+		names = append(names, lowered)
+	}
+	sortStrings(names)
+	out[http.HeaderOrderKey] = names
+	return out
+}
+
+// AuthGet 发一个认证链路的 GET，跟随重定向，返回 body / 状态码 / 最终 URL。
+func (c *Client) AuthGet(ctx context.Context, target string, headers map[string]string, timeout time.Duration) ([]byte, int, string, error) {
+	return c.doFull(ctx, http.MethodGet, target, authHeaders(headers), nil, timeout)
+}
+
+// AuthPost 发一个认证链路的 POST，body 原样发送（content-type 由 headers 决定）。
+func (c *Client) AuthPost(ctx context.Context, target string, headers map[string]string, payload []byte, timeout time.Duration) ([]byte, int, error) {
+	body, status, _, err := c.doFull(ctx, http.MethodPost, target, authHeaders(headers), payload, timeout)
+	return body, status, err
+}
+
+// SetSessionCookie 把一个 cookie 写进会话 jar。
+//
+// domain 形如 ".openai.com"：tls-client 的 jar 按 host 的末两段分桶，
+// 所以 ".openai.com" 的 cookie 会同时用于 auth.openai.com 与
+// sentinel.openai.com —— 与 Python 版 session.cookies.set(domain=".openai.com") 等价。
+func (c *Client) SetSessionCookie(domain, name, value string) {
+	if c.http == nil || strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
+		return
+	}
+	trimmed := strings.TrimSpace(domain)
+	host := strings.TrimPrefix(trimmed, ".")
+	if host == "" {
+		return
+	}
+	target := &url.URL{Scheme: "https", Host: host}
+	cookieDomain := trimmed
+	if !strings.HasPrefix(cookieDomain, ".") {
+		cookieDomain = "." + cookieDomain
+	}
+	c.http.SetCookies(target, []*http.Cookie{{
+		Name:   name,
+		Value:  value,
+		Domain: cookieDomain,
+		Path:   "/",
+	}})
 }
 
 func setHeader(headers http.Header, name, value string) {

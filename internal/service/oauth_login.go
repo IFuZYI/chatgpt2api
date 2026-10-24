@@ -257,8 +257,20 @@ func (s *OAuthLoginService) Finish(ctx CtxLike, sessionID, callback string) (map
 	return tokens, nil
 }
 
+// tokenExchangePoster 发一次 token 交换请求。
+//
+// 密码登录链路必须用它：换 token 要和 authorize/password 共用同一个会话
+// （cookie 里的 oai-did / oai-sc 是登录态的一部分），所以调用方传
+// transport.AuthPost；OAuth 桥没有会话，传 nil 走默认的 httpPostJSON。
+type tokenExchangePoster func(ctx CtxLike, target string, headers map[string]string, payload []byte, timeout time.Duration) ([]byte, int, error)
+
 // exchangeOAuthCode 复刻 _exchange_code：POST /api/accounts/oauth/token。
 func exchangeOAuthCode(ctx CtxLike, code, codeVerifier, redirectURI string) (map[string]string, error) {
+	return exchangeOAuthCodeVia(ctx, oauthAuthBase+"/api/accounts/oauth/token", code, codeVerifier, redirectURI, nil)
+}
+
+// exchangeOAuthCodeVia 是 exchangeOAuthCode 的可注入版本（post 为 nil 时用默认 HTTP 客户端）。
+func exchangeOAuthCodeVia(ctx CtxLike, target, code, codeVerifier, redirectURI string, post tokenExchangePoster) (map[string]string, error) {
 	payload, err := json.Marshal(map[string]any{
 		"client_id":     oauthClientIDConst,
 		"code_verifier": codeVerifier,
@@ -285,8 +297,13 @@ func exchangeOAuthCode(ctx CtxLike, code, codeVerifier, redirectURI string) (map
 		"sec-fetch-site":     "same-origin",
 		"user-agent":         oauthUserAgentConst,
 	}
-	target := oauthAuthBase + "/api/accounts/oauth/token"
-	body, status, err := httpPostJSON(ctx, target, headers, payload, 60*time.Second)
+	var body []byte
+	var status int
+	if post == nil {
+		body, status, err = httpPostJSON(ctx, target, headers, payload, 60*time.Second)
+	} else {
+		body, status, err = post(ctx, target, headers, payload, 60*time.Second)
+	}
 	if err != nil {
 		return nil, newOAuthError("换 token 网络异常: %v", err)
 	}
