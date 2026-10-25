@@ -99,19 +99,23 @@
 git clone https://github.com/IFuZYI/chatgpt2api.git
 cd chatgpt2api
 
-# 1. 必须先生成 config.json
-#    compose 用 create_host_path: false 绑定它 —— 文件不存在时直接报错。
-#    这是刻意的：短语法会静默建一个同名目录，服务读不到配置，
-#    而报错信息是「config 是目录」，很难排查。
+# 1. 生成 config.json。compose 用 create_host_path: false 绑定它 ——
+#    文件不存在时 compose 直接报错。这是刻意的：短语法会静默建一个
+#    同名目录，服务读不到配置，而报错信息是「config 是目录」，很难排查。
 cp config.example.json config.json
 
-# 2. 设置认证密钥。留空服务会拒绝启动并给出明确提示。
-#    用 openssl rand -hex 32 生成，不要用项目名或 admin 之类的可猜值。
+# 2. 设置认证密钥。用 openssl rand -hex 32 生成，
+#    不要用项目名或 admin 之类的可猜值。
 $EDITOR config.json     # 填 "auth-key"
 
 # 3. 启动
 docker compose up -d
 ```
+
+> **不想用 config.json？** 只设环境变量也能跑 —— 见
+> [配置](#配置) 一节的说明。但 compose 的文件挂载仍需要该文件存在，
+> 所以走 Docker 时轻量做法是 `cp config.example.json config.json`
+> 后**只用环境变量覆盖**，不必编辑文件。
 
 | | |
 |:--|:--|
@@ -150,8 +154,17 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) \
   /path/to/chatgpt2api_*_linux_amd64 --addr :8080
 ```
 
-首次运行会在当前目录创建 `config.json` 与 `data/`。二进制**已内置前端**，
-不需要额外部署静态文件。
+首次运行会在当前目录创建 `data/`。二进制**已内置前端**，不需要额外部署静态文件。
+
+`config.json` **不会**被自动创建 —— 缺少它时服务用空配置 + 环境变量启动。
+若要改配置项（如图片保留天数、代理、备份），把模板复制过来再改：
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/IFuZYI/chatgpt2api/main/config.example.json
+mv config.example.json config.json && $EDITOR config.json
+```
+
+服务正常启动后，其余配置项也可以直接在 Web 面板里改（会写回 `config.json`）。
 
 ### 源码运行
 
@@ -210,7 +223,30 @@ docker compose -f docker-compose.warp.yml up -d --build
 
 ## 配置
 
-优先级：**环境变量 > `config.json` > 代码默认值**。
+配置来源与优先级：**环境变量 > `config.json` > 代码默认值**。
+
+但要注意**范围**：只有下面这些项支持环境变量，其余项（图片保留天数、
+代理、备份、审核等）只能写 `config.json` 或用 Web 面板改。
+
+| 只能通过环境变量或 `config.json` | 说明 |
+|:--|:--|
+| `CHATGPT2API_AUTH_KEY` | 认证密钥。**没有默认值**，两处都没设则服务拒绝启动 |
+| `CHATGPT2API_BASE_URL` | 对外基础 URL |
+| `CHATGPT2API_BASE_DIR` | 数据根目录 |
+| `CHATGPT2API_ADDR` | 监听地址 |
+| `CHATGPT2API_DEBUG` | 诊断日志开关 |
+| `CHATGPT2API_WEB_DIST` | 前端静态目录 |
+| `STORAGE_BACKEND` / `DATABASE_URL` | 存储后端 |
+| `GIT_REPO_URL` / `GIT_TOKEN` / `GIT_BRANCH` / `GIT_FILE_PATH` / `GIT_AUTH_KEYS_FILE_PATH` | git 后端 |
+
+`config.json` 是**可选**的：不存在时服务用空配置启动（`readJSONObject`
+返回空 map，不报错）。所以**纯靠环境变量的最小部署是可行的**：
+
+```bash
+CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
+```
+
+只要 `auth-key` 有值（来自环境变量或文件）就能起来。
 
 ### 环境变量
 

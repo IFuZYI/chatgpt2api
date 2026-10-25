@@ -5,8 +5,10 @@
 
 **先读这三条**：
 
-1. `config.json` **不在仓库里**（避免把 WebDAV 密码、R2 密钥、代理凭据提交上去），
-   必须从 `config.example.json` 复制并填写。
+1. `config.json` **不在仓库里**（避免把 WebDAV 密码、R2 密钥、代理凭据提交上去）。
+   Docker 部署时必须从 `config.example.json` 复制一份（compose 的挂载要求文件存在）；
+   直接跑二进制时它是**可选**的 —— 只设 `CHATGPT2API_AUTH_KEY` 也能启动，
+   见 [配置来源与优先级](#配置来源与优先级)。
 2. `auth-key` **留空服务会拒绝启动**（fail-closed，见 `internal/config/config.go`）。
    这是刻意的：空密钥永不匹配任何请求，与其让管理面静默全开放，不如直接不给起。
 3. 本项目是**单实例应用**：本地状态 + 进程内任务队列，
@@ -22,6 +24,7 @@
 - [方式三：WARP / FlareSolverr 代理](#方式三warp--flaresolverr-代理)
 - [方式四：源码运行](#方式四源码运行)
 - [反向代理](#反向代理)
+- [配置来源与优先级](#配置来源与优先级)
 - [存储后端](#存储后端)
 - [图片存储](#图片存储)
 - [备份](#备份)
@@ -176,7 +179,16 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) \
   ./chatgpt2api_*_linux_amd64 --addr :8080
 ```
 
-首次运行会在当前目录创建 `config.json` 与 `data/`（若已存在则直接用）。
+首次运行会在当前目录创建 `data/`。`config.json` **不会**被自动创建 —— 缺少它时
+服务用空配置 + 环境变量启动（只要 `auth-key` 有值）。
+
+想改配置项（图片保留天数、代理、备份等，这些**不支持**环境变量）就从模板复制一份：
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/IFuZYI/chatgpt2api/main/config.example.json
+mv config.example.json config.json && $EDITOR config.json
+```
+
 用 `--base-dir` 或 `CHATGPT2API_BASE_DIR` 换数据目录。
 
 ### systemd 单元示例
@@ -343,6 +355,48 @@ Caddy 默认就会转发 `Host` 与 `X-Forwarded-Proto`。
 > 任何能发请求的人都能影响它写进日志管理台的那个地址。
 
 ---
+
+## 配置来源与优先级
+
+优先级：**环境变量 > `config.json` > 代码默认值**。
+
+但**范围**要分清 —— 只有下列项支持环境变量：
+
+| 项 | 环境变量 |
+|:--|:--|
+| 认证密钥 | `CHATGPT2API_AUTH_KEY` |
+| 对外基础 URL | `CHATGPT2API_BASE_URL` |
+| 数据根目录 | `CHATGPT2API_BASE_DIR` |
+| 监听地址 | `CHATGPT2API_ADDR` |
+| 诊断日志 | `CHATGPT2API_DEBUG` |
+| 前端静态目录 | `CHATGPT2API_WEB_DIST` |
+| 存储后端 | `STORAGE_BACKEND`、`DATABASE_URL` |
+| git 后端 | `GIT_REPO_URL`、`GIT_TOKEN`、`GIT_BRANCH`、`GIT_FILE_PATH`、`GIT_AUTH_KEYS_FILE_PATH` |
+
+**其余配置项（图片保留天数、代理运行时、备份、内容审核等）没有环境变量**，
+只能写 `config.json`，或在 Web 面板的设置页里改（会写回 `config.json`）。
+误以为「都能用环境变量设」是常见跳坑点。
+
+### config.json 是可选文件
+
+`config.json` 不存在时服务**不会报错**：`readJSONObject` 返回空 map，
+配置全部走代码默认值 + 上述环境变量。所以最小部署可以不用这个文件：
+
+```bash
+CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
+```
+
+唯一硬性要求是 `auth-key` 必须有值（环境变量或文件二选一），
+否则服务拒绝启动并给出明确提示。
+
+> **注意**：服务**不会**自动创建 `config.json` —— 首次运行只创建 `data/`。
+> 需要改配置项时从 `config.example.json` 复制一份。
+
+### 用 Web 面板改配置
+
+服务跑起来后，绝大多数配置项都能在设置页里改，保存后写回 `config.json`。
+这也意味着**容器里必须让 `config.json` 可写**（compose 示例是 bind mount，
+注意宿主机属主与权限，见 [安全加固](#安全加固)）。
 
 ## 存储后端
 

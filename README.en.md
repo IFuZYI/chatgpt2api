@@ -106,20 +106,25 @@ It provides three things:
 git clone https://github.com/IFuZYI/chatgpt2api.git
 cd chatgpt2api
 
-# 1. Create config.json first — this is required.
-#    Compose binds it with create_host_path: false, so a missing file fails
-#    loudly. That's deliberate: the short syntax would silently create a
-#    same-named *directory*, the service would fail to read config, and the
-#    error would read "config is a directory" — very hard to diagnose.
+# 1. Create config.json. Compose binds it with create_host_path: false, so a
+#    missing file fails loudly. That is deliberate: the short syntax would
+#    silently create a same-named *directory*, the service would fail to read
+#    config, and the error would read "config is a directory" — hard to diagnose.
 cp config.example.json config.json
 
-# 2. Set the auth key. An empty key makes the service refuse to start.
-#    Generate one with `openssl rand -hex 32`; do not use the project name.
+# 2. Set the auth key. Generate one with `openssl rand -hex 32`;
+#    do not use the project name or "admin".
 $EDITOR config.json     # fill in "auth-key"
 
 # 3. Start
 docker compose up -d
 ```
+
+> **Prefer not to use config.json?** Environment variables alone are enough —
+> see [Configuration](#configuration). The compose file mount still requires the
+> file to exist, so the lightweight path under Docker is to
+> `cp config.example.json config.json` and then **override only via environment**,
+> without editing the file.
 
 | | |
 |:--|:--|
@@ -158,8 +163,20 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) \
   /path/to/chatgpt2api_*_linux_amd64 --addr :8080
 ```
 
-First run creates `config.json` and `data/` in the current directory. The binary
-**already embeds the frontend** — no separate static files needed.
+First run creates `data/` in the current directory. The binary **already embeds
+the frontend** — no separate static files needed.
+
+`config.json` is **not** created automatically — without it the service starts
+from an empty config plus environment variables. To change settings (image
+retention, proxy, backup, moderation), fetch the template:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/IFuZYI/chatgpt2api/main/config.example.json
+mv config.example.json config.json && $EDITOR config.json
+```
+
+Once the service is running, the remaining settings can also be changed in the
+web console, which writes them back to `config.json`.
 
 ### From source
 
@@ -222,6 +239,32 @@ proxy_runtime defaults into `config.json`.
 ## Configuration
 
 Precedence: **environment > `config.json` > code defaults**.
+
+Mind the **scope**, though: only the settings below accept environment
+variables. Everything else (image retention, proxy, backup, moderation) must go
+in `config.json` or be set from the web console.
+
+| Environment-configurable | Notes |
+|:--|:--|
+| `CHATGPT2API_AUTH_KEY` | Auth key. **No default** — the service refuses to start if unset in both places |
+| `CHATGPT2API_BASE_URL` | Public base URL |
+| `CHATGPT2API_BASE_DIR` | Data root |
+| `CHATGPT2API_ADDR` | Listen address |
+| `CHATGPT2API_DEBUG` | Diagnostic logging |
+| `CHATGPT2API_WEB_DIST` | Frontend static dir |
+| `STORAGE_BACKEND` / `DATABASE_URL` | Storage backend |
+| `GIT_REPO_URL` / `GIT_TOKEN` / `GIT_BRANCH` / `GIT_FILE_PATH` / `GIT_AUTH_KEYS_FILE_PATH` | git backend |
+
+`config.json` is **optional**: when absent the service starts from an empty
+config (`readJSONObject` returns an empty map rather than failing). So a
+**minimal, environment-only deployment works**:
+
+```bash
+CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
+```
+
+As long as `auth-key` has a value — from the environment or the file — the
+service starts.
 
 ### Environment variables
 
