@@ -251,7 +251,22 @@ type PoolResult struct {
 // 返回值语义与 Python 一致：
 //   - 至少一张成功 → 返回 (result, nil)，失败信息放在 result.Failures
 //   - 全部失败 → 返回 (result, error)，error 是最后一条失败原因
-func (p *ImagePool) Run(ctx context.Context, request ImageRequest) (PoolResult, error) {
+func (p *ImagePool) Run(ctx context.Context, request ImageRequest) (result PoolResult, err error) {
+	// 三个分支统一在这里收 panic。
+	//
+	// runParallel 内部的 goroutine 各自有 recover（必需 —— 那里的 panic 在
+	// 独立 goroutine 上，gin.Recovery 抓不到）。但 n=1（chat 与所有异步任务的
+	// 默认路径）和 runSerial 是**同步**调 generateWithRetry：上游返回畸形数据
+	// 导致 nil 解引用时，panic 会穿到调用方 ——
+	// streamImageChat 与两个 runTask 都是裸 `go` 起的，整进程退出。
+	//
+	// 在这里兜一层，三个分支一视同仁。
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = PoolResult{}
+			err = fmt.Errorf("image generation panicked: %v", recovered)
+		}
+	}()
 	total := request.N
 	if total <= 1 {
 		return p.runSingle(ctx, request, 1, 1)

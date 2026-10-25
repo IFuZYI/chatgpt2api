@@ -9,7 +9,9 @@ import (
 // 异常账号必须能最终恢复（不能永久卡住），且重试频率要收敛。
 func TestAbnormalRetryBackoffRecoversEventually(t *testing.T) {
 	svc, _ := newTestAccountService(t, nil)
-	now := time.Now().UTC()
+	// 必须用本地时间：生产写入方（nowLocal / account_invalid）写的是本地时间，
+	// parseAccountTime 也按本地解析。用 UTC 会人为造出 8 小时偏移。
+	now := time.Now()
 	svc.mu.Lock()
 	for _, count := range []int{1, 2, 3, 4, 6, 10, 20} {
 		svc.accounts[fmt.Sprintf("t-%d", count)] = Account{

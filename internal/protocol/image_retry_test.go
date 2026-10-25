@@ -356,14 +356,16 @@ func TestPoolReleasesSlotOnPanic(t *testing.T) {
 		},
 	}
 
-	func() {
-		defer func() {
-			if recovered := recover(); recovered == nil {
-				t.Fatal("panic should propagate to the caller")
-			}
-		}()
-		_, _ = pool.Run(context.Background(), ImageRequest{Prompt: "x", Model: "gpt-image-2", N: 1})
-	}()
+	// 契约变了：panic 不再穿透给调用方，而是转成 error。
+	//
+	// 为什么改：ImagePool.Run 的三个分支（n=1 / 串行 / 并行）现在统一 recover。
+	// 之前只有并行分支有 recover，而 n=1 是 chat 与所有异步任务的默认路径 ——
+	// 同步调用时 panic 会穿到裸 `go` 起的调用方，整进程退出。
+	//
+	// 槽位释放仍然必须成立（下面的断言），那是本测试的真正目的。
+	if _, err := pool.Run(context.Background(), ImageRequest{Prompt: "x", Model: "gpt-image-2", N: 1}); err == nil {
+		t.Error("Generate panic 应转成 error，实际返回 nil")
+	}
 
 	if got := atomic.LoadInt32(&fake.released); got != 1 {
 		t.Errorf("released = %d, want 1 (slot leaked when Generate panics)", got)

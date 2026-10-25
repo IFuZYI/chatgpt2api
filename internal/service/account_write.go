@@ -141,7 +141,13 @@ func (s *AccountService) addAccountPayloads(payloads []map[string]any) map[strin
 			s.cumulativeTotal++
 			s.cumulativeMu.Unlock()
 			s.saveCumulativeTotal()
-			current = map[string]any{"created_at": nowString()}
+			// nowLocal 而不是 nowString：账号所有时间字段必须同一种时区，
+			// 否则 parseAccountTime 无法用统一规则解析。
+			//
+			// 这是 created_at 的**真实**写入点（AddAccounts/AddAccountItems），
+			// 比 normalizeAccount 里的补空分支更早生效 —— 只改后者等于没改：
+			// 新账号的 created_at 在这里就被写成 UTC，normalizeAccount 只填空值。
+			current = map[string]any{"created_at": nowLocal()}
 		} else {
 			skipped++
 		}
@@ -993,7 +999,8 @@ func (s *AccountService) recordRefreshError(token, message string) {
 	}
 	next := copyMap(current)
 	next["last_refresh_error"] = strings.TrimSpace(message)
-	next["last_refresh_error_at"] = nowString()
+	// 同类：用 nowLocal 与 last_invalid_at（同为本地）保持一致。
+	next["last_refresh_error_at"] = nowLocal()
 	if account := normalizeAccount(next); account != nil {
 		s.accounts[resolved] = account
 		s.saveAccountsLocked()
