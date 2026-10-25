@@ -554,8 +554,9 @@ func (s *AccountService) RefreshAccounts(
 	// 只在「刷新发现 401/403 且开关打开」时触发；429 限流与网络抖动不算失效
 	// （与上面 isTokenInvalidFailure 的判定一致），否则一次上游抖动会批量重登。
 	relogined := 0
-	if len(invalidTokens) > 0 && s.autoRelogin != nil && s.cfg != nil && s.cfg.AutoReloginAfterRefresh() {
-		reloginResult := s.ReloginAccounts(ctx, invalidTokens, "", s.autoRelogin)
+	relogin := s.autoReloginFunc()
+	if len(invalidTokens) > 0 && relogin != nil && s.cfg != nil && s.cfg.AutoReloginAfterRefresh() {
+		reloginResult := s.ReloginAccounts(ctx, invalidTokens, "", relogin)
 		relogined = intValue(reloginResult["relogined"])
 		if errs, ok := reloginResult["errors"].([]any); ok {
 			errorsOut = append(errorsOut, errs...)
@@ -585,6 +586,17 @@ func (s *AccountService) SetAutoRelogin(login PasswordLoginFunc) {
 	s.mu.Unlock()
 }
 
+// autoReloginFunc 在锁下取一次快照，避免与 SetAutoRelogin 形成数据竞争。
+//
+// 直接读 s.autoRelogin 是 race（写方持 s.mu，读方不持）。实践上它只在启动时
+// 接线一次，所以影响很小 —— 但既然是竞态就该修，而且 SetAutoRelogin 自己
+// 加锁说明作者本意是要安全的。
+func (s *AccountService) autoReloginFunc() PasswordLoginFunc {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.autoRelogin
+}
+
 // KeepaliveRefreshTokens 复刻 Python：批量 3 个、只对带 refresh_token 的账号。
 //
 // tokens 是 **access_token** 列表（来自 ListRefreshTokenKeepaliveTokens），
@@ -592,13 +604,22 @@ func (s *AccountService) SetAutoRelogin(login PasswordLoginFunc) {
 // refresh_token 才是换新 access_token 的凭据。早期实现把 access_token
 // 直接传给回调，语义与 RefreshTokenFunc 的签名矛盾，且换到的新 token 不回写，
 // keepalive 等于空转。两处都已修。
+//
+// 回调现在返回**完整三件套**：上游换 AT 时会轮换 refresh_token（实测 196 → 211 字符），
+// 只取 access_token 会把新 RT 丢掉，账号此后一直用旧 RT 续期。
 func (s *AccountService) KeepaliveRefreshTokens(
 	ctx context.Context,
 	tokens []string,
-	refresh func(ctx context.Context, refreshToken string) (string, error),
+	refresh TokenRefreshFunc,
 ) map[string]any {
 	errorsOut := make([]any, 0)
 	refreshed := 0
+	// RT 被上游拒绝的账号：交给 auto_relogin 用密码重登救回来。
+	//
+	// 为什么不能只记日志：RT 死了以后 AT 还能用到自然过期（最长 10 天），
+	// 这期间账号看着「正常」但续期能力已经没了。等 AT 过期才发现就太晚 ——
+	// 用户会看到账号莫名其妙全变成「异常」。这里立刻救，避免那个窗口。
+	rejectedTokens := make([]string, 0)
 	for start := 0; start < len(tokens); start += refreshTokenKeepaliveBatchSize {
 		end := start + refreshTokenKeepaliveBatchSize
 		if end > len(tokens) {
@@ -613,28 +634,57 @@ func (s *AccountService) KeepaliveRefreshTokens(
 			if refreshToken == "" {
 				continue
 			}
-			newAccessToken, err := refresh(ctx, refreshToken)
+			rotated, err := refresh(ctx, refreshToken)
 			if err != nil {
+				// 本地 ctx 取消不是上游拒绝 —— 记进去会让整批账号被推进 6 小时退避。
+				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					s.RecordTokenRefreshError(token, err.Error())
+				}
 				errorsOut = append(errorsOut, map[string]any{
 					"token": anonymizeToken(token),
 					"error": err.Error(),
 				})
+				if IsRefreshTokenRejected(err) {
+					rejectedTokens = append(rejectedTokens, token)
+				}
 				continue
 			}
-			// 回写新 access_token。空返回值表示上游没给新 token，账号保持不变。
-			if strings.TrimSpace(newAccessToken) != "" {
-				if !s.ApplyRefreshedAccessToken(token, newAccessToken) {
-					errorsOut = append(errorsOut, map[string]any{
-						"token": anonymizeToken(token),
-						"error": "账号在刷新过程中消失，新 token 未回写",
-					})
-					continue
-				}
+			// 回写完整三件套。
+			//
+			// access_token 为空时不能算成功：上游偶尔只回 refresh_token，
+			// 此时 ApplyRotatedTokens 会写回 RT 但 AT 不变 —— 那不算一次有效刷新，
+			// 计进 refreshed 会让面板显示「已续期」而实际 AT 还是旧的。
+			if strings.TrimSpace(rotated["access_token"]) == "" {
+				errorsOut = append(errorsOut, map[string]any{
+					"token": anonymizeToken(token),
+					"error": "上游未返回 access_token（仅回写 refresh_token）",
+				})
+				// 仍然调用：让它把轮换后的 RT 存下来，避免丢掉新凭据。
+				s.ApplyRotatedTokens(token, rotated)
+				continue
+			}
+			if !s.ApplyRotatedTokens(token, rotated) {
+				errorsOut = append(errorsOut, map[string]any{
+					"token": anonymizeToken(token),
+					"error": "账号在刷新过程中消失，新 token 未回写",
+				})
+				continue
 			}
 			refreshed++
 		}
 	}
-	return map[string]any{"refreshed": refreshed, "errors": errorsOut}
+	// RT 被拒的账号立即尝试密码重登（与 RefreshAccounts 的失败路径同构）。
+	relogined := 0
+	relogin := s.autoReloginFunc()
+	if len(rejectedTokens) > 0 && relogin != nil && s.cfg != nil && s.cfg.AutoReloginAfterRefresh() {
+		reloginResult := s.ReloginAccounts(ctx, rejectedTokens, "", relogin)
+		relogined = intValue(reloginResult["relogined"])
+		if errs, ok := reloginResult["errors"].([]any); ok {
+			errorsOut = append(errorsOut, errs...)
+		}
+	}
+
+	return map[string]any{"refreshed": refreshed, "relogined": relogined, "errors": errorsOut}
 }
 
 // RefreshTokenFor 返回 access_token 对应账号的 refresh_token（不存在返回空）。
@@ -648,11 +698,19 @@ func (s *AccountService) RefreshTokenFor(accessToken string) string {
 	return strings.TrimSpace(stringValue(account["refresh_token"]))
 }
 
-// ApplyRefreshedAccessToken 把 access_token 换成新的，并重建别名链。
+// ApplyRotatedTokens 把 refresh_token 交换得到的整套 token 写回账号。
 //
-// 换 token 后旧 token 立刻失效，所以别名要跟着搬：否则调用方手里还拿着
-// 旧 token 的引用会查不到账号。返回 false 表示账号已不存在。
-func (s *AccountService) ApplyRefreshedAccessToken(oldAccessToken, newAccessToken string) bool {
+// 必须写三件套而不是只写 access_token：
+//   - refresh_token：上游每次换 AT 都会轮换它（实测 196 → 211 字符）。
+//     只写 AT 会把新 RT 丢掉，账号此后一直用旧 RT 续期，等于放弃上游给的新凭据。
+//   - id_token：随 AT 一起轮换，导出/迁移时要用。
+//
+// 换 token 后旧 access_token 可能立刻失效，所以别名要跟着搬：否则调用方手里
+// 还拿着旧 token 的引用会查不到账号。返回 false 表示账号已不存在。
+//
+// refresh_token 为空时不覆盖已有值 —— 上游偶尔不回传 RT，此时保留旧的是对的
+// （旧 RT 仍可用，实测过）。
+func (s *AccountService) ApplyRotatedTokens(oldAccessToken string, tokens map[string]string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -661,22 +719,88 @@ func (s *AccountService) ApplyRefreshedAccessToken(oldAccessToken, newAccessToke
 	if !ok {
 		return false
 	}
-	newToken := strings.TrimSpace(newAccessToken)
-	if newToken == "" || newToken == oldToken {
+	newToken := strings.TrimSpace(tokens["access_token"])
+	if newToken == "" {
+		// 上游偶尔只回 refresh_token 不回 access_token（残缺响应）。
+		// 此时**仍要写回轮换后的 RT** —— 上游在轮换时已把旧 RT 作废，
+		// 丢掉新的会让账号手里只剩一个死 RT，续期能力彻底没了。
+		// access_token 保持不变。
+		if rt := strings.TrimSpace(tokens["refresh_token"]); rt != "" {
+			updated := copyMap(account)
+			updated["refresh_token"] = rt
+			if id := strings.TrimSpace(tokens["id_token"]); id != "" {
+				updated["id_token"] = id
+			}
+			updated["last_token_refresh_at"] = nowLocal()
+			s.accounts[oldToken] = updated
+			s.saveAccountsLocked()
+		}
 		return true
 	}
 
 	updated := copyMap(account)
 	updated["access_token"] = newToken
-	updated["updated_at"] = nowLocal()
+	if rt := strings.TrimSpace(tokens["refresh_token"]); rt != "" {
+		updated["refresh_token"] = rt
+	}
+	if id := strings.TrimSpace(tokens["id_token"]); id != "" {
+		updated["id_token"] = id
+	}
+	now := nowLocal()
+	updated["updated_at"] = now
 	updated["updated_ts"] = float64(time.Now().UnixNano()) / 1e9
+	// keepalive 锚点：写下这次成功刷新的时刻，下次从它 +3 天算起。
+	updated["last_token_refresh_at"] = now
+	// 刷新成功即清掉上一次的失败记录，让退避不再生效。
+	updated["last_token_refresh_error"] = nil
+	updated["last_token_refresh_error_at"] = nil
 
+	if newToken == oldToken {
+		s.accounts[oldToken] = updated
+		s.saveAccountsLocked()
+		return true
+	}
 	delete(s.accounts, oldToken)
 	s.accounts[newToken] = updated
 	// 旧 token 指向新 token，让仍持有旧引用的调用方还能找到账号。
 	s.aliases[oldToken] = newToken
+
+	// 清掉旧 token 的槽位与在飞计数。
+	//
+	// 不清的后果：每次 keepalive 轮换都留下一个孤儿 channel（容量
+	// image_account_concurrency，默认 3）和一个 *atomic.Int64。
+	// ReleaseImageSlot 会把别名解析到**新** token，所以旧 channel 永远不会
+	// 被排空 —— 按 3 天 keepalive 的号池寿命，这会无界增长。
+	// 两个兄弟函数（applyRefreshedAccount / ApplyReloginTokens）都做了这一步，
+	// 只有这里漏了。
+	s.slotsMu.Lock()
+	delete(s.slots, oldToken)
+	s.slotsMu.Unlock()
+	s.inflight.Delete(oldToken)
+
 	s.saveAccountsLocked()
 	return true
+}
+
+// RecordTokenRefreshError 记下 keepalive 失败的时刻与原因。
+//
+// 为什么必须有它：recentRefreshTokenKeepaliveErrorLocked 读
+// last_token_refresh_error_at 来决定是否退避 refreshKeepaliveErrorBackoff（6 小时）。
+// 此前没有任何代码写这个字段，退避恒定失效 —— RT 失效的账号会被每轮 tick
+// （5 分钟）重试一次，而不是退避 6 小时。
+func (s *AccountService) RecordTokenRefreshError(accessToken, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	account, ok := s.accounts[s.resolveTokenLocked(accessToken)]
+	if !ok {
+		return
+	}
+	updated := copyMap(account)
+	updated["last_token_refresh_error"] = reason
+	updated["last_token_refresh_error_at"] = nowLocal()
+	s.accounts[s.resolveTokenLocked(accessToken)] = updated
+	s.saveAccountsLocked()
 }
 
 // BuildExportItems 复刻 Python：只导出三件套齐全的账号。

@@ -192,15 +192,13 @@ func main() {
 			}
 			return deps.AccountInfoFetcher(ctx, token)
 		},
-		// keepalive：用 refresh_token 换新 access_token。
-		// 不走账号代理（refresh_token 交换在 auth.openai.com，与号池出口无关）。
-		func(ctx context.Context, refreshToken string) (string, error) {
-			tokens, err := service.RefreshAccessToken(ctx, refreshToken)
-			if err != nil {
-				return "", err
-			}
-			return tokens["access_token"], nil
-		},
+		// keepalive：用 refresh_token 换一套新 token。
+		//
+		// 返回完整三件套而不是只返回 access_token —— 上游每次换 AT 都会轮换
+		// refresh_token（实测 196 → 211 字符），只取 AT 会把新 RT 丢掉。
+		//
+		// 不走账号代理：refresh_token 交换在 auth.openai.com，与号池出口无关。
+		service.RefreshAccessToken,
 	)
 
 	cleanupScheduler := service.NewImageCleanupScheduler(service.CleanupActions{

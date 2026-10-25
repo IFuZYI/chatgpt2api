@@ -210,6 +210,18 @@ func (s *AccountService) ApplyReloginTokens(oldToken string, issued map[string]s
 	merged["source_type"] = SourcePassword
 	merged["status"] = StatusNormal
 
+	// 重登成功即重置 keepalive 状态。
+	//
+	// 为什么必须重置：重登刚拿到一个全新的 RT，它应当是 keepalive 循环的新起点。
+	// 不重置的话锚点还停在旧值上，下一轮 tick 会立刻再挑中这个账号 ——
+	// 刚花完一次密码登录又被拉去换 AT，白白多一次请求。
+	//
+	// 同时清掉上一次的失败记录：留着会让面板显示过时的错误，
+	// 并让 refreshKeepaliveErrorBackoff（6 小时）错误地继续生效。
+	merged["last_token_refresh_at"] = nowLocal()
+	merged["last_token_refresh_error"] = nil
+	merged["last_token_refresh_error_at"] = nil
+
 	account := normalizeAccount(merged)
 	if account == nil {
 		return false

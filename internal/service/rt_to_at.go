@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,32 @@ import (
 	"strings"
 	"time"
 )
+
+// RefreshTokenRejectedError 表示上游**明确拒绝**了这个 refresh_token。
+//
+// 与网络故障的区别很重要：拒绝意味着 RT 已经死了，重试没有意义，必须重新登录；
+// 网络故障只需要等下一次 tick 重试。把两者混在一起会导致
+// 「RT 死了却一直重试」或者「网络抖一下就触发密码登录」。
+type RefreshTokenRejectedError struct {
+	StatusCode int
+	Detail     string
+}
+
+func (e *RefreshTokenRejectedError) Error() string {
+	return fmt.Sprintf("oauth_refresh_http_%d: %s", e.StatusCode, e.Detail)
+}
+
+// IsRefreshTokenRejected 报告错误是否属于「RT 被上游拒绝」。
+//
+// 400/401/403 视为拒绝（RT 无效、被吊销、账号受限）。
+// 429 是限流、5xx 是上游故障、网络错误是本地问题 —— 都不算拒绝，应当重试。
+func IsRefreshTokenRejected(err error) bool {
+	var rejected *RefreshTokenRejectedError
+	if errors.As(err, &rejected) {
+		return true
+	}
+	return false
+}
 
 // RefreshAccessTokenVia 用 refresh_token 换一套新 token。
 //
@@ -77,6 +104,11 @@ func RefreshAccessTokenVia(
 		}
 		if detail == "" {
 			detail = "上游未返回 detail"
+		}
+		if resp.StatusCode == http.StatusBadRequest ||
+			resp.StatusCode == http.StatusUnauthorized ||
+			resp.StatusCode == http.StatusForbidden {
+			return nil, &RefreshTokenRejectedError{StatusCode: resp.StatusCode, Detail: detail}
 		}
 		return nil, fmt.Errorf("oauth_refresh_http_%d: %s", resp.StatusCode, detail)
 	}

@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"github.com/IFuZYI/chatgpt2api/internal/upstream"
+	"strings"
 	"time"
 )
 
@@ -73,9 +74,34 @@ func (s *AccountService) RemoveInvalidToken(accessToken, event string, quiet boo
 
 // shouldDeferInvalidTokenLocked 判断是否应推迟删除（上游抖动保护）。
 //
-// Python 的实现是 _should_defer_invalid_token；这里用「最近 10 分钟内
-// 已被标记过一次失效」作为退避条件，避免一轮刷新里同一账号被反复处理。
+// 三道防线，任何一道命中都推迟（即「这次不删」）：
+//
+//  1. 新号宽限：创建不足 newAccountInvalidGraceSeconds 的账号不删。
+//     刚导入的号常因上游会话尚未就绪而首次 401，直接删掉太粗暴。
+//  2. 二次确认：invalid_count <= 1 时一律推迟 —— **首次失效绝不删除**。
+//     这是最重要的一条。原实现用 last_invalid_at 判断，而首次失效时该字段
+//     为空、函数返回 false，于是第一次 401 就直接走删除路径：一轮上游抖动
+//     （全部 401）会把整池号删光。
+//  3. 短窗去抖：invalidConfirmSeconds 内已确认过一次则推迟，避免同一轮
+//     刷新里对同一账号反复处理。
+//
+// 注意参数是**更新前**的 account（RecordInvalidTokenSeen 传的是 current），
+// 所以 invalid_count 读到的是本次 +1 之前的计数。
 func (s *AccountService) shouldDeferInvalidTokenLocked(account Account, now time.Time) bool {
+	// ① 新号宽限
+	if created, err := time.ParseInLocation(accountTimeLayout,
+		stringValue(account["created_at"]), time.Local); err == nil {
+		if now.Sub(created) < time.Duration(newAccountInvalidGraceSeconds)*time.Second {
+			return true
+		}
+	}
+
+	// ② 二次确认：首次失效不删
+	if intValue(account["invalid_count"]) <= 1 {
+		return true
+	}
+
+	// ③ 短窗去抖
 	lastInvalid := stringValue(account["last_invalid_at"])
 	if lastInvalid == "" {
 		return false
@@ -84,7 +110,7 @@ func (s *AccountService) shouldDeferInvalidTokenLocked(account Account, now time
 	if err != nil {
 		return false
 	}
-	return now.Sub(parsed) < 10*time.Minute
+	return now.Sub(parsed) < time.Duration(invalidConfirmSeconds)*time.Second
 }
 
 // trimToDefault 去空白，空串时返回兜底值。
@@ -103,13 +129,33 @@ const accountTimeLayout = "2006-01-02 15:04:05"
 //
 // 只认 401 / 403：429（限流）与网络错误必须排除 —— 把限流当失效会
 // 在一轮刷新里删掉整个号池（Python 只对 InvalidAccessTokenError 走这条路径）。
+// isTokenInvalidFailure 判断错误是否代表「token 真的失效了」。
+//
+// 关键：403 不能无条件算失效。上游的 403 绝大多数是 **Cloudflare 挑战**，
+// 而不是死 token —— 仓库自己就记录了这一点（internal/upstream/fingerprint.go:
+// `chrome_120 403 challenge ← 不能用`，且完全不带 UA/sec-ch-ua 时连
+// chrome_150 也拿 403）。config 里 reset_session_status_codes 默认就是 [403]，
+// 即 403 是「换代理/清障」的信号，不是「删号」的信号。
+//
+// 原来的实现把 401 和 403 一视同仁，后果是一次 TLS/UA/指纹漂移、或一个坏
+// 出口 IP，就能把整池健康账号标异常（auto_remove_invalid_accounts 打开时直接删）。
+// 这是能在没有任何 token 真正失效的情况下洗掉号池的机制。
+//
+// 现在的规则：
+//   - 401 一律算失效（上游明确说未授权）
+//   - 403 **只有**来自 /backend-api/me 时才算失效
+//     （那是账号级鉴权端点；conversation/init 的 403 属于会话/挑战层）
 func isTokenInvalidFailure(err error) bool {
 	if err == nil {
 		return false
 	}
 	switch upstreamStatusCodeOf(err) {
-	case 401, 403:
+	case 401:
 		return true
+	case 403:
+		// 用错误消息里的路径区分来源（FetchAccountInfo 两个端点各带自己的前缀）。
+		msg := err.Error()
+		return strings.Contains(msg, "/backend-api/me failed")
 	}
 	return false
 }
@@ -133,7 +179,7 @@ func (s *AccountService) WarnUnsupportedAutoRelogin() {
 		return
 	}
 	s.mu.RLock()
-	wired := s.autoRelogin != nil
+	wired := s.autoReloginFunc() != nil
 	s.mu.RUnlock()
 	if wired {
 		fmt.Println("[account] auto_relogin_after_refresh enabled: 刷新发现失效账号（401/403）时会自动密码重登")

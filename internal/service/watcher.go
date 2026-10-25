@@ -29,13 +29,18 @@ type AccountRefresher interface {
 	ListLimitedTokens() []string
 	ListNormalTokens() []string
 	ListExpiringAccessTokens() []string
+	ListAbnormalTokens() []string
 	ListRefreshTokenKeepaliveTokens() []string
 	RefreshAccounts(ctx context.Context, tokens []string, progressID string, verify RefreshVerifier) map[string]any
-	KeepaliveRefreshTokens(ctx context.Context, tokens []string, refresh func(ctx context.Context, token string) (string, error)) map[string]any
+	KeepaliveRefreshTokens(ctx context.Context, tokens []string, refresh TokenRefreshFunc) map[string]any
 }
 
-// RefreshTokenFunc 用 refresh_token 换新的 access_token，返回新 token 字符串。
-type RefreshTokenFunc func(ctx context.Context, refreshToken string) (string, error)
+// TokenRefreshFunc 用 refresh_token 换一套新 token。
+//
+// 返回 map[string]string 而不是单个字符串，因为它必须带回**轮换后的新 refresh_token**。
+// 上游每次换 AT 都会返回一个新 RT（实测 196 → 211 字符），只取 access_token
+// 会把新 RT 丢掉，账号一直用旧 RT 续期。
+type TokenRefreshFunc func(ctx context.Context, refreshToken string) (map[string]string, error)
 
 // WatcherConfig 是 watcher 需要的配置访问器。
 type WatcherConfig interface {
@@ -53,7 +58,7 @@ func NewAccountWatcher(accounts AccountRefresher, cfg WatcherConfig) *AccountWat
 }
 
 // Start 启动后台循环。重复调用无副作用。
-func (w *AccountWatcher) Start(verify RefreshVerifier, refresh func(ctx context.Context, token string) (string, error)) {
+func (w *AccountWatcher) Start(verify RefreshVerifier, refresh TokenRefreshFunc) {
 	go w.run(verify, refresh)
 }
 
@@ -63,7 +68,7 @@ func (w *AccountWatcher) Stop() {
 	<-w.done
 }
 
-func (w *AccountWatcher) run(verify RefreshVerifier, refresh func(ctx context.Context, token string) (string, error)) {
+func (w *AccountWatcher) run(verify RefreshVerifier, refresh TokenRefreshFunc) {
 	defer close(w.done)
 
 	intervalMinutes := w.cfg.RefreshAccountIntervalMinute()
@@ -93,7 +98,7 @@ func (w *AccountWatcher) run(verify RefreshVerifier, refresh func(ctx context.Co
 //  1. 合并 limited + normal + expiring（去重，保持出现顺序）
 //  2. keepalive 列表要排除已过期的那批（它们走 refresh_accounts）
 //  3. 先 refresh_accounts，再 keepalive
-func (w *AccountWatcher) tick(verify RefreshVerifier, refresh func(ctx context.Context, token string) (string, error)) {
+func (w *AccountWatcher) tick(verify RefreshVerifier, refresh TokenRefreshFunc) {
 	// 单轮 panic 不能杀死整个 watcher goroutine。
 	//
 	// 后果对比：没有 recover 时，一次 panic（上游返回畸形数据、空指针、
@@ -113,12 +118,13 @@ func (w *AccountWatcher) tick(verify RefreshVerifier, refresh func(ctx context.C
 	limited := w.accounts.ListLimitedTokens()
 	normal := w.accounts.ListNormalTokens()
 	expiring := w.accounts.ListExpiringAccessTokens()
+	abnormal := w.accounts.ListAbnormalTokens()
 	keepalive := w.accounts.ListRefreshTokenKeepaliveTokens()
 
 	// 去重合并（Python 用 dict.fromkeys 保序）。
 	seen := map[string]bool{}
-	tokens := make([]string, 0, len(limited)+len(normal)+len(expiring))
-	for _, group := range [][]string{limited, normal, expiring} {
+	tokens := make([]string, 0, len(limited)+len(normal)+len(expiring)+len(abnormal))
+	for _, group := range [][]string{limited, normal, expiring, abnormal} {
 		for _, token := range group {
 			if token == "" || seen[token] {
 				continue
@@ -128,27 +134,45 @@ func (w *AccountWatcher) tick(verify RefreshVerifier, refresh func(ctx context.C
 		}
 	}
 
-	// keepalive 排除已在 tokens 里的（避免同一 token 两种刷新路径）。
-	expiringSet := map[string]bool{}
-	for _, token := range expiring {
-		expiringSet[token] = true
-	}
-	pending := make([]string, 0, len(keepalive))
+	// keepalive **优先**：它与 refresh_accounts 不是等价路径。
+	//
+	//   refresh_accounts → FetchAccountInfo，只用 access_token 读元信息，**从不续期**
+	//   keepalive        → RefreshAccessToken，用 refresh_token 换回新 AT + 新 RT
+	//
+	// 所以 keepalive 是超集。原来的实现反过来（把 expiring 从 keepalive 里剔除），
+	// 后果是：一个 AT 进入 24h 窗口、同时 RT 锚点已超 3 天的账号，
+	// 唯一能救它的路径被禁掉，交给了「AT 一过期就 401」的那条 ——
+	// 账号被标异常（auto_remove 打开时直接删除），而它的 RT 明明还能用。
+	//
+	// 现在反过来：keepalive 名单里的 token 从 tokens 里剔除，交给 keepalive 处理。
+	pendingSet := map[string]bool{}
 	for _, token := range keepalive {
-		if !expiringSet[token] {
-			pending = append(pending, token)
-		}
+		pendingSet[token] = true
 	}
+	if len(pendingSet) > 0 {
+		filtered := tokens[:0]
+		for _, token := range tokens {
+			if pendingSet[token] {
+				continue
+			}
+			filtered = append(filtered, token)
+		}
+		tokens = filtered
+	}
+	pending := keepalive
 
 	if len(tokens) > 0 {
-		fmt.Printf("[account-watcher] checking %d limited, %d normal, %d expiring\n",
-			len(limited), len(normal), len(expiring))
+		fmt.Printf("[account-watcher] checking %d limited, %d normal, %d expiring, %d abnormal\n",
+			len(limited), len(normal), len(expiring), len(abnormal))
 		// progressID 传空：watcher 不对外暴露进度。
 		w.accounts.RefreshAccounts(ctx, tokens, "", verify)
 	}
 	if len(pending) > 0 {
 		fmt.Printf("[account-watcher] keepalive %d refresh tokens\n", len(pending))
 		result := w.accounts.KeepaliveRefreshTokens(ctx, pending, refresh)
+		if relogined := intValue(result["relogined"]); relogined > 0 {
+			fmt.Printf("[account-watcher] keepalive: refresh_token 被拒，已用密码重登恢复 %d 个账号\n", relogined)
+		}
 		if errorsOut, ok := result["errors"].([]any); ok && len(errorsOut) > 0 {
 			fmt.Printf("[account-watcher] keepalive errors: %v\n", errorsOut)
 		}

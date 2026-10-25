@@ -603,6 +603,38 @@ func (s *AccountService) ListExpiringAccessTokens() []string {
 	return out
 }
 
+// ListAbnormalTokens 返回被标记为「异常」的账号。
+//
+// 为什么需要它：`异常` 原本是**终态** —— watcher 只挑 limited/normal/expiring，
+// 而 expiring 与 keepalive 都要求账号有 refresh_token。对没有 RT 的账号
+// （本仓库实测 260 个号里 256 个属于此类），一旦被 401 打成 `异常`，
+// 就再没有任何列表会选中它，只能人工处理。
+//
+// 纳入重试后：上游恢复时 applyRefreshedAccount 会把 status 合并回「正常」，
+// 账号自动救回；上游仍失效则继续 401（有 shouldDeferInvalidTokenLocked 兜底，
+// 不会误删）。
+//
+// 用 invalid_count 做简单退避：只挑失败次数较少的账号，避免对一个
+// 确定失效的号每 5 分钟打一次上游。阈值取 3 —— 与 Python 的
+// invalid_confirm 语义接近，且给上游恢复留出足够窗口。
+func (s *AccountService) ListAbnormalTokens() []string {
+	const maxInvalidCountForRetry = 3
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, 0)
+	for token, account := range s.accounts {
+		if stringValue(account["status"]) != StatusAbnormal {
+			continue
+		}
+		if intValue(account["invalid_count"]) > maxInvalidCountForRetry {
+			continue
+		}
+		out = append(out, token)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ListRefreshTokenKeepaliveTokens 返回 refresh_token 接近闲置上限的账号。
 func (s *AccountService) ListRefreshTokenKeepaliveTokens() []string {
 	now := time.Now().UTC()
@@ -685,14 +717,39 @@ func parseAccountTime(value any) *time.Time {
 	if raw == "" {
 		return nil
 	}
-	layouts := []string{
+	// 带时区的格式：按字面解析，结果已明确。
+	zonedLayouts := []string{
 		time.RFC3339Nano,
 		time.RFC3339,
+		"2006-01-02 15:04:05Z07:00", // 空格分隔 + 数字偏移（第三方导入可能产生）
+		"2006-01-02 15:04:05-07:00",
+	}
+	normalized := strings.Replace(raw, "Z", "+00:00", 1)
+	for _, layout := range zonedLayouts {
+		if parsed, err := time.Parse(layout, normalized); err == nil {
+			utc := parsed.UTC()
+			return &utc
+		}
+	}
+
+	// 不带时区的格式：必须按**本地时区**解析，因为写入方用的是
+	// nowLocal() / now.Format(...) —— 都是本地时间且不带偏移。
+	//
+	// 原来这里用 time.Parse（按 UTC），于是 UTC+X 部署下解析结果比真实时间
+	// 早 X 小时：keepalive 锚点提前 X 小时到期、6 小时错误退避永远不生效
+	// （now.Sub(未来) 为负，负数恒小于 6h）。实测 UTC+8 偏差 -8h、
+	// UTC-7 偏差 +7h。
+	//
+	// 用 ParseInLocation(time.Local) 与写入方对齐。历史数据同样是本地时间，
+	// 所以这个改动对已有记录也是正确的（不需要迁移）。
+	naiveLayouts := []string{
 		"2006-01-02 15:04:05",
 		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02T15:04:05.999999999",
 	}
-	for _, layout := range layouts {
-		if parsed, err := time.Parse(layout, strings.Replace(raw, "Z", "+00:00", 1)); err == nil {
+	for _, layout := range naiveLayouts {
+		if parsed, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
 			utc := parsed.UTC()
 			return &utc
 		}
@@ -705,13 +762,25 @@ func nowString() string {
 }
 
 func (s *AccountService) refreshTokenKeepaliveAnchorLocked(account Account) *time.Time {
+	var anchor *time.Time
 	if parsed := parseAccountTime(account["last_token_refresh_at"]); parsed != nil {
-		return parsed
+		anchor = parsed
+	} else if issued := tokenIssuedAt(stringValue(account["access_token"])); issued != nil {
+		anchor = issued
+	} else {
+		anchor = parseAccountTime(account["created_at"])
 	}
-	if issued := tokenIssuedAt(stringValue(account["access_token"])); issued != nil {
-		return issued
+	// 未来时间戳钳制到现在。
+	//
+	// 未来锚点会让「锚点 +3 天」永远在更远的未来，账号永久不被 keepalive 选中。
+	// 产生未来值的原因：系统时钟错乱、从备份恢复、或历史版本在 UTC+X 部署下
+	// 用本地时间写入了 UTC 字段。钳制是廉价保险。
+	if anchor != nil {
+		if now := time.Now().UTC(); anchor.After(now) {
+			anchor = &now
+		}
 	}
-	return parseAccountTime(account["created_at"])
+	return anchor
 }
 
 func (s *AccountService) refreshTokenKeepaliveDueAtLocked(account Account, now time.Time) *time.Time {
@@ -727,6 +796,11 @@ func (s *AccountService) recentRefreshTokenKeepaliveErrorLocked(account Account,
 	lastError := parseAccountTime(account["last_token_refresh_error_at"])
 	if lastError == nil {
 		return false
+	}
+	// 未来时间戳钳制到 now：否则 now.Sub(未来) 为负，负数恒小于退避窗口，
+	// 退避永不过期 —— 账号永久被排除在 keepalive 之外。
+	if lastError.After(now) {
+		return true
 	}
 	return now.Sub(*lastError) < time.Duration(refreshKeepaliveErrorBackoff)*time.Second
 }

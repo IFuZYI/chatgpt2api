@@ -40,6 +40,7 @@ type panickingRefresher struct {
 func (p *panickingRefresher) ListLimitedTokens() []string               { return []string{"tok-1"} }
 func (p *panickingRefresher) ListNormalTokens() []string                { return nil }
 func (p *panickingRefresher) ListExpiringAccessTokens() []string        { return nil }
+func (p *panickingRefresher) ListAbnormalTokens() []string              { return nil }
 func (p *panickingRefresher) ListRefreshTokenKeepaliveTokens() []string { return nil }
 
 func (p *panickingRefresher) RefreshAccounts(ctx context.Context, tokens []string, progressID string, verify RefreshVerifier) map[string]any {
@@ -47,7 +48,7 @@ func (p *panickingRefresher) RefreshAccounts(ctx context.Context, tokens []strin
 	panic("boom from RefreshAccounts")
 }
 
-func (p *panickingRefresher) KeepaliveRefreshTokens(ctx context.Context, tokens []string, refresh func(ctx context.Context, token string) (string, error)) map[string]any {
+func (p *panickingRefresher) KeepaliveRefreshTokens(ctx context.Context, tokens []string, refresh TokenRefreshFunc) map[string]any {
 	return map[string]any{}
 }
 
