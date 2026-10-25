@@ -371,8 +371,17 @@ func (s *ImageService) CleanupExpiredImages() int {
 	if days <= 0 {
 		return 0
 	}
-	// 保留期内的图不删：endDate = 截止日（含），即 today-retention。
-	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	// 保留期内的图不删。
+	//
+	// ListItems 的判据是 `day > endDate` 才过滤掉（image.go 里比较字符串），
+	// 也就是 `day <= endDate` 的图会被返回并删除。所以 endDate 必须是
+	// **保留期第一天的前一天**，否则保留期当天的图会被误删。
+	//
+	// 实测踩到：retention=30 时，恰好 30 天前的图被删了 ——
+	// cutoff 落在今天同一时刻，那天的日期 == endDate，被当成「已过期」。
+	//
+	// 减去 1 天让 endDate = 保留期首日 - 1，语义变成「严格早于保留期首日才删」。
+	cutoff := time.Now().AddDate(0, 0, -days-1)
 	endDate := cutoff.Format("2006-01-02")
 	// allMatching 必须是 true：DeleteImages 只在 allMatching 时按日期
 	// 构建 targets，传 false 且 paths=nil 会让 targets 为空 ——

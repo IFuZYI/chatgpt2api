@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,6 +35,41 @@ func TestCleanupExpiredImagesReallyDeletes(t *testing.T) {
 		t.Fatal("文件仍在：保留清理没有真正执行")
 	}
 	t.Logf("removed=%d，文件已删除", removed)
+}
+
+// 保留期边界：保留期当天的图**不能**被删。
+//
+// 回归点：endDate 原先是 now-retention 当天，而 ListItems 的判据是
+// `day > endDate` 才过滤掉，于是保留期当天（day == endDate）的图
+// 被当成已过期删掉 —— 实测 retention=30 时恰好 30 天前的图被误删。
+func TestCleanupKeepsBoundaryDay(t *testing.T) {
+	svc, cfg := newImageStorageFixture(t, "local", "")
+	root := cfg.ImagesDir()
+	days := cfg.ImageRetentionDays()
+
+	mk := func(offset int) string {
+		day := time.Now().AddDate(0, 0, -offset)
+		rel := fmt.Sprintf("%s/bound-%d.png", day.Format("2006/01/02"), offset)
+		full := filepath.Join(root, rel)
+		_ = os.MkdirAll(filepath.Dir(full), 0o755)
+		_ = os.WriteFile(full, []byte("png"), 0o644)
+		return full
+	}
+	kept := []string{mk(days - 1), mk(days)}
+	gone := []string{mk(days + 1), mk(days + 5)}
+
+	svc.CleanupExpiredImages()
+
+	for _, full := range kept {
+		if _, err := os.Stat(full); err != nil {
+			t.Errorf("保留期内的图被误删: %s", filepath.Base(full))
+		}
+	}
+	for _, full := range gone {
+		if _, err := os.Stat(full); !os.IsNotExist(err) {
+			t.Errorf("已过期的图未被删: %s", filepath.Base(full))
+		}
+	}
 }
 
 // 未过期的图不能被删。
