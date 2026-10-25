@@ -122,7 +122,10 @@ func buildPoWConfig(userAgent string, scriptSources []string, dataBuild string) 
 	return []any{
 		resolution[0] + resolution[1],
 		legacyParseTime(),
-		4294705152,
+		// 必须显式 int64：这个值超过 int32 上限，裸字面量在 32 位平台
+		// （linux/armv7、linux/386）会直接编译失败
+		// （cannot use 4294705152 as int value: overflows）。
+		int64(4294705152),
 		1,
 		userAgent,
 		scriptSource,

@@ -327,16 +327,25 @@ func (s *Store) BaseURL() string {
 	return strings.TrimRight(strings.TrimSpace(value), "/")
 }
 
+// BuildVersion 由构建期注入：
+//
+//	go build -ldflags "-X github.com/basketikun/chatgpt2api/internal/config.BuildVersion=2.0.0"
+//
+// 单二进制发布（GitHub Release）没有 VERSION 文件可读，靠它兜底。
+var BuildVersion = ""
+
+// AppVersion 优先读 baseDir 下的 VERSION 文件（Docker 镜像与源码运行都有），
+// 读不到再退回编译期注入的 BuildVersion，最后才是 "0.0.0"。
 func (s *Store) AppVersion() string {
-	payload, err := os.ReadFile(filepath.Join(s.baseDir, "VERSION"))
-	if err != nil {
-		return "0.0.0"
+	if payload, err := os.ReadFile(filepath.Join(s.baseDir, "VERSION")); err == nil {
+		if version := strings.TrimSpace(string(payload)); version != "" {
+			return version
+		}
 	}
-	version := strings.TrimSpace(string(payload))
-	if version == "" {
-		return "0.0.0"
+	if version := strings.TrimSpace(BuildVersion); version != "" {
+		return version
 	}
-	return version
+	return "0.0.0"
 }
 
 func (s *Store) ImagesDir() string {

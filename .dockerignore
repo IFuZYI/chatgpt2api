@@ -1,39 +1,70 @@
+# Docker 构建上下文过滤。
+#
+# 原则：只放「构建二进制真正需要的东西」进屋。
+# 需要的：VERSION、CHANGELOG.md、go.mod/go.sum、cmd/、internal/、web/（不含产物）。
+# 其余一律排除 —— 上下文越干净，构建越快，也越不容易把本地秘密带进镜像层。
+
+# ---------- 版本控制与工具配置 ----------
 .git
 .gitignore
+.github
+.codex
+.superpowers
+.audit
 .idea
+.vscode
+.editorconfig
+
+# ---------- Python 遗留（已被 Go 替代，仅作历史参考）----------
+# 这些源码还在仓库里，但构建二进制完全用不到。
 .venv
 __pycache__
+.pytest_cache
+.python-version
 *.pyc
 *.pyo
 *.pyd
-
-# Go 构建产物
-/chatgpt2api
-/goldenrecord
-*.test
-
-# 前端构建中间产物（web/out 由 web-build 阶段生成）
-web/.next
-web/node_modules
-
-# Python 后端（已被 Go 替代，保留源码仅作历史参考）
 api
 services
 utils
 main.py
 pyproject.toml
 uv.lock
-test
 scripts
+tools
 
-# 运行时数据
+# ---------- 构建产物 ----------
+# 根目录的旧二进制：曾经因为 .dockerignore 写的是 `/chatgpt2api`（带前导斜杠）
+# 而没被正确排除，56MB 的 ELF 白进了上下文。
+chatgpt2api
+goldenrecord
+*.test
+dist
+build
+wheels
+*.egg-info
+
+# 前端产物：web-build 阶段自己生成 web/out，本地那份不该进上下文。
+web/.next
+web/out
+web/node_modules
+# internal/web/web_dist 由 `COPY --from=web-build` 覆盖。本地若留着上次构建的
+# 文件，会先被拷进镜像层再被覆盖 —— 既浪费层空间，也可能留下陈旧资源。
+internal/web/web_dist
+
+# ---------- 运行时数据与秘密 ----------
 data
 config.json
+.env
 testdata
 assets
 
-# 文档：README 与 docs/ 不参与构建。
-# CHANGELOG.md 例外 —— web/next.config.ts 在构建期读它生成版本发布记录，
-# 排除掉会让 `docker build` 直接失败（COPY 找不到文件）。
+# ---------- 文档 ----------
+# README 与 docs/ 不参与构建。
+# CHANGELOG.md 例外：web/next.config.ts 在构建期读它生成版本发布记录
+# （try/catch 兜底，缺了就静默变成空列表），排除掉功能会退化但不报错。
 README.md
 docs
+GLOSSARY.md
+repro_outputs
+LICENSE

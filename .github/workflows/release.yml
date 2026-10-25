@@ -1,0 +1,172 @@
+name: Release
+
+# 打 tag（v1.2.3）时自动：跨平台编译二进制 → 建 GitHub Release → 上传产物。
+# 镜像由 docker-publish.yml 独立负责，两者都监听 tag，互不阻塞。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v2.0.0). Leave empty to build artifacts only."
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  BINARY: chatgpt2api
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # 版本号统一去掉 v 前缀：VERSION 文件里是 2.0.0，而 github.ref_name 是 v2.0.1。
+      # 不过滤会让前端显示 v2.0.1、后端（读 VERSION 或 BuildVersion）显示 2.0.0。
+      - name: Resolve version
+        id: ver
+        run: |
+          raw="${{ inputs.tag || github.ref_name }}"
+          echo "value=${raw#v}" >> "$GITHUB_OUTPUT"
+
+      # 前端是静态导出，产物要 embed 进二进制 —— 必须先在构建机上生成。
+      # 这一步失败会让 Go 编译报 `pattern all:web_dist: no matching files found`，
+      # 所以顺序不能反：先 frontend，再 stage，最后 go build。
+      - name: Build frontend
+        working-directory: web
+        env:
+          NEXT_PUBLIC_APP_VERSION: ${{ steps.ver.outputs.value }}
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Stage frontend into embed dir
+        run: |
+          rm -rf internal/web/web_dist
+          mkdir -p internal/web/web_dist
+          cp -r web/out/. internal/web/web_dist/
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          version="${{ steps.ver.outputs.value }}"
+          # -trimpath 去构建机路径；-s -w 去符号表。
+          # -X 注入 config.BuildVersion：单二进制旁边没有 VERSION 文件，
+          # 靠它让启动日志与 /version 显示正确版本（AppVersion 会优先读文件、
+          # 读不到才回退到这个变量）。
+          ldflags="-s -w -X github.com/basketikun/chatgpt2api/internal/config.BuildVersion=${version}"
+          ext=""
+          if [ "${GOOS}" = "windows" ]; then ext=".exe"; fi
+          out="${BINARY}_${version}_${GOOS}_${GOARCH}"
+          if [ -n "${GOARM:-}" ]; then out="${out}v${GOARM}"; fi
+          go build -trimpath -ldflags="${ldflags}" -o "dist/${out}${ext}" ./cmd/server
+          ls -lh "dist/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    # 只有 tag 推送（或手动给了 tag）才建 Release；纯 workflow_dispatch 只跑构建。
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          files: |
+            dist/*
+          body: |
+            ## 安装
+
+            下载对应平台的二进制，赋予执行权限后直接运行：
+
+            ```bash
+            chmod +x chatgpt2api_*_linux_amd64
+            CHATGPT2API_AUTH_KEY=your-secret ./chatgpt2api_*_linux_amd64 --addr :8080
+            ```
+
+            首次运行会在当前目录创建 `config.json` 与 `data/`。
+            也可以先复制 `config.example.json` 再改。
+
+            ## 校验
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+
+            ## Docker
+
+            ```bash
+            docker pull ghcr.io/${{ github.repository_owner }}/chatgpt2api:${{ inputs.tag || github.ref_name }}
+            ```
+
+            完整说明见 [README](https://github.com/${{ github.repository }}#快速开始) 与 [部署文档](https://github.com/${{ github.repository }}/blob/main/docs/deployment.md)。

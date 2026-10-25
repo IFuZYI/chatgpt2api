@@ -22,7 +22,7 @@
 | New API 接入 | ✅  | 已支持接入 New API。 |
 | 账号池管理 | ✅  | 已支持列表、筛选、批量操作、导出、手动编辑、刷新和删除。 |
 | 账号刷新异步进度追踪 | ✅  | 刷新和重新登录改为异步模式，前端轮询显示进度。 |
-| 密码重新登录恢复异常账号 | ✅  | 号池管理页面支持重新登录，刷新后可自动重登异常账号。 |
+| 密码重新登录恢复异常账号 | ✅  | 号池管理页面支持重新登录（含 TOTP 两步验证）。⚠️ `auto_relogin_after_refresh` 仍未接线：刷新失败**不会**自动触发重登，需手动点。 |
 | 账号额度刷新与恢复时间同步 | ✅  | 已支持账号信息刷新，限流账号也会自动继续检查。 |
 | 失效 Token 自动清理 | ✅  | 已支持自动移除失效 Token。 |
 | CPA 连接管理 | ✅  | 已支持 CPA 连接的新增、修改、查询和删除。 |
@@ -50,15 +50,15 @@
 
 | 项 | 状态 | 说明 |
 |:--|:--|:--|
-| 全部 78 条 HTTP 路由 | ✅ | 与 Python 版逐条对齐，`TestRouteParity` 常驻回归。 |
+| 全部 77 条 HTTP 路由 | ✅ | 与 Python 版逐条对齐（Python 78 条，删除 `/api/third-party-apps` 后 77 条），`TestRouteParity` 常驻回归。 |
 | 三套错误信封 | ✅ | 管理面 / OpenAI / Anthropic，28 个 golden 用例覆盖。 |
 | 上游 TLS 指纹 | ✅ | `tls-client` + header 顺序，真实上游 sentinel 握手验证通过。 |
 | 图片并行生成与槽位 | ✅ | goroutine + channel 信号量，槽位泄漏有测试。 |
 | 备份加密 | ✅ | 原生 AES + PBKDF2，与 `openssl enc` 双向兼容（有测试）。 |
-| 密码重新登录 | ⚠️ | 返回明确「未实现」，不假装成功。 |
+| 密码重新登录（含 TOTP） | ✅ | 走 authorize → sentinel（`fnv1a_32`，与 chat 的 SHA3-512 是不同算法）→ `password/verify` → TOTP → `mfa/verify`（参数是 `id` 不是 `factor_id`，且不带 sentinel）→ OAuth token 交换 → 回写 access/refresh/id。真实上游验证通过。 |
 | 可编辑 PPT/PSD | ✅ | `POST /v1/ppt|psd/generations` 走上传参考图 → `prepare`（`gpt-5-5-thinking`/`extended`）→ `/f/conversation` → 轮询 `/backend-api/conversation/{id}` 拿 pptx/psd + zip → 落 `data/files/{kind}/{task_id}/`，`GET /files/*` 提供下载（防目录穿越）。任务队列与图片链路同构（queued/running/success/error、`Close()` 等在途、重启恢复）。 |
 | 网页搜索 | ✅ | `POST /v1/search` 走 `prepare`（`system_hints:["search"]`）→ `/f/conversation` → 轮询 `/backend-api/conversation/{id}`，返回 answer + sources。超时 300s、间隔 3s、answer 连续 3 次一致即返回。 |
-| Responses 图片工具 | ⚠️ | 返回 501（文本链路可用）。 |
+| Responses 图片工具 | ✅ | `/v1/responses` 带 `image_generation` 工具时已接入生图链路；失败时在流内补 `error` 事件再 `[DONE]`。 |
 | 远程图片 URL 拉取 | ⚠️ | 返回 400（data URL 与 multipart 可用）。 |
 | 匿名对话链路 | ❌ | 上游限制，非实现问题（见 `docs/adr/0008`）。 |
 

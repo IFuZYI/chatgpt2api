@@ -49,8 +49,12 @@ func TestPoWConfigShapeMatchesPython(t *testing.T) {
 	}
 
 	// 固定值位置必须与 Python 一致。
-	if config[2] != 4294705152 {
-		t.Errorf("element 2 = %v, want 4294705152", config[2])
+	//
+	// 断言必须写 int64(...)：config[2] 的动态类型是 int64（生产代码显式标注，
+	// 因为裸字面量在 32 位平台会溢出 int）。interface 比较连动态类型一起比，
+	// 拿无类型常量 4294705152（默认推成 int）去比会永远不相等。
+	if config[2] != int64(4294705152) {
+		t.Errorf("element 2 = %v (%T), want 4294705152 (int64)", config[2], config[2])
 	}
 	if config[3] != 1 {
 		t.Errorf("element 3 = %v, want 1", config[3])
@@ -67,8 +71,9 @@ func TestPoWConfigShapeMatchesPython(t *testing.T) {
 	if config[24] != 0 {
 		t.Errorf("element 24 = %v, want 0 (chromium/edge flag)", config[24])
 	}
-	// JSON 解出来的数字是 float64，配置里是 int，比较前统一转 float64。
-	if reference[2].(float64) != float64(config[2].(int)) {
+	// JSON 解出来的数字是 float64，配置里的整数是 int / int64（元素 2 是 int64，
+	// 因为它超过 int32 上限，显式标注才能在 32 位平台编译）。比较前统一转 float64。
+	if reference[2].(float64) != float64(config[2].(int64)) {
 		t.Errorf("element 2 drifts from python reference: %v vs %v", reference[2], config[2])
 	}
 	if reference[3].(float64) != float64(config[3].(int)) {

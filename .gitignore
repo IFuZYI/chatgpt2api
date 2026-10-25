@@ -8,7 +8,12 @@
 __pycache__/
 *.py[oc]
 .venv
-web_dist
+# 前端构建产物。目录本身必须存在且被跟踪（.gitkeep）——
+# internal/web/dist.go 的 //go:embed all:web_dist 在空目录/缺目录时
+# 直接编译失败（pattern all:web_dist: no matching files found），
+# 那样全新克隆就无法 go build。
+internal/web/web_dist/*
+!internal/web/web_dist/.gitkeep
 build/
 dist/
 wheels/

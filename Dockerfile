@@ -55,7 +55,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags="-s -w" -o /out/chatgpt2api ./cmd/server
 
 # ---------- 运行时 ----------
-FROM gcr.io/distroless/static-debian12:nonroot
+# 这个 stage 必须命名（AS runtime）：CI 用 `target: runtime` 只构建到运行时层，
+# 也便于 `docker build --target runtime` 单独验证。历史上最终 stage 未命名，
+# 而 workflow 写着 `target: app` —— 那个 stage 不存在，CI 从未成功构建过。
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 
 WORKDIR /app
 

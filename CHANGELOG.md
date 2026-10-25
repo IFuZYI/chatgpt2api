@@ -1,5 +1,96 @@
 # Changelog
 
+## Unreleased - 2.0.1
+
+### 新增
+
++ [新增] **密码重新登录（含 TOTP 两步验证）**。`/api/accounts/re-login` 从「未实现」改为真实现：
+  authorize → sentinel（`fnv1a_32`，与 chat 的 SHA3-512 PoW **不同算法**）→ `password/verify`
+  → TOTP → `mfa/verify` → OAuth `token` 交换 → 回写 access/refresh/id token。
+  真实上游验证通过（access 1501 / refresh 196 / id 1369 字符）。
+  新增 46 个测试，sentinel 的 fnv1a 常数与 TOTP 都钉在真实 golden 上（RFC 6238 Appendix B 向量）。
++ [新增] 跨平台二进制 Release：`.github/workflows/release.yml` 构建
+  linux/darwin/windows × amd64/arm64（另附 linux/armv7），生成 `SHA256SUMS.txt` 并建 GitHub Release。
++ [新增] `config.BuildVersion` 支持 `-ldflags -X` 注入版本号 —— 单二进制没有 `VERSION` 文件可读，
+  靠它让启动日志与 `--version` 显示正确版本。
+
+### 修复
+
++ [修复] **流式生图失败被吞**：`/v1/images/generations` 流式路径在 `pool.Run` 失败时只写 `[DONE]`，
+  客户端收到 HTTP 200 + 空流，无法区分「成功但 0 张图」与故障。
+  改为在流内补 `{"error":{...,"type":"server_error"}}` 事件，与 `/v1/responses` 对齐。
++ [修复] **`SyncToWebDAV` 丢索引**：在网络循环前取快照、循环后整份写回，期间
+  `SaveImageBytes` 新增的条目被抹掉。`webdav` 模式没有本地副本 → 图永久不可达（不可恢复）。
+  改为只合并本次上传成功的条目，并在锁内重新读取索引。
++ [修复] **图片标签并发丢更新**：`loadTags`/`saveTags` 无锁而 `SetTags`/`DeleteTag` 是读改写，
+  实测 50 个并发 `SetTags` 只留下 **0** 条。加 `tagsMu` 保护全过程。
++ [修复] **`/v1/images/edits` 的 `n` 静默夹取**：generations 越界返 422、edits 却把 5 夹成 4，
+  同一文件两套行为。统一为校验报错（edits 返 400，对齐 Python `_parse_count`）。
++ [修复] **export 丢 `password`**：`BuildExportItems` 只导 token，导致 export → import 后
+  每个账号都 `no_password_in_account`，密码重登对导出的号池失效。补上 `password` / `totp_secret`。
++ [修复] **`/api/accounts` 泄露密码**：密码重登上线后 `password` / `totp_secret` 成为有效凭据，
+  列表接口却原样返回 —— 一次只读 admin 会话即可全量接管号池。改为脱敏，
+  保留 `password_set` / `totp_secret_set` 布尔值供前端显示。
++ [修复] **`invalid_password` 只靠英文子串匹配**：补 `code == "invalid_password"` 分支，
+  消息匹配降为兜底。
++ [修复] **admin auth-key 出现在跟踪文件里**：`.codex/skills/chatgpt2api-search/SKILL.md`
+  写着 `Authorization: Bearer chatgpt2api`，与部署实例的 `auth-key` 逐字相同。
+  任何拿到仓库的人都能直接过 `RequireAdmin`。已改为占位符。
+  18 个测试夹具 / golden 里的同形值一并改为 `test-key-not-real`。
++ [修复] **`config.example.json` 泄漏真实凭据**：模板曾携带一条真实在用的 SOCKS5 出口代理凭据
+  （与部署 `config.json` 逐字节相同）与私有 WebDAV 主机名 / 用户名。
+  已清除；**该凭据已推送过，需轮换**（修复 HEAD 无法追回已 clone 的副本）。
++ [修复] **全新克隆无法构建**：`.gitignore` 忽略了整个 `web_dist`，而 `.gitkeep` 未跟踪 ——
+  `//go:embed all:web_dist` 在缺目录时直接编译失败
+  （`pattern all:web_dist: no matching files found`）。
+  改为只忽略目录内容、跟踪 `.gitkeep`，已验证全新克隆可 `go build ./...`。
++ [修复] **CI 从未成功构建过镜像**：`docker-publish.yml` 写着 `target: app`，
+  而 Dockerfile 没有该 stage → `target stage "app" could not be found`。
+  Dockerfile 最终 stage 命名 `AS runtime`，workflow 改为 `target: runtime`。
++ [修复] **`.dockerignore` 未排除根目录旧二进制**：规则写成 `/chatgpt2api`（带前导斜杠）没生效，
+  56MB 的 ELF 白进构建上下文。同时补排除 `web/out`、`internal/web/web_dist`、
+  `.superpowers`、`.audit` 等。上下文从 195MB 降到约 2MB。
+
+### 文档
+
++ [文档] **README 重写**：修正错误的模型清单（原文写的 `gpt-5` / `gpt-5-1` 早已不存在，
+  实际是 `gpt-5-6` / `gpt-6` 系列 + 4 个生图模型）、补上 `cp config.example.json config.json`
+  这一步（缺了它 `docker compose up` 直接失败）、统一端口说明
+  （源码运行 `:8000`、Docker 容器内 8080 / 对外 3000）、修正测试数（170 → 561）。
++ [文档] **`docs/deployment.md` 重写**：新增四种部署方式对比、反向代理（nginx / Caddy 的 SSE 配置）、
+  存储后端、图片存储三模式、备份与加密、升级回滚、安全加固、排障、维护命令。
++ [文档] **ADR-0007 修正失实描述**：原文说清理用 `context.WithoutCancel`、看门狗用
+  `time.AfterFunc`，代码里都不存在。改为如实描述。
++ [文档] **ADR-0009 重写**：原文把密码重登 / PPT-PSD / 网页搜索 / Responses 图片四项列为「未实现」，
+  实际全部已落地；测试数还写 170。改为「曾经的空白，现已补齐」+「遗留的已知限制」两张表。
++ [文档] **`SaveImageBytes` 注释**与 ADR-0011 矛盾（说「WebDAV 失败必须让整次保存失败」，
+  实际 `both` 模式会降级）—— 按模式分列写清。
++ [文档] **`runImageTask` 注释**自相矛盾（写「不能用 Background 裸跑」，下一行就是
+  `context.Background()`）—— 改为如实记录「后台任务不可取消」这一已知限制。
++ [文档] 修正路由数：Python 78 条 → Go **77** 条（删除了 `/api/third-party-apps`）。
+
+### 变更
+
++ [变更] 默认模板 `config.example.json` 对齐代码默认值：
+  `image_storage.enabled=false` / `mode=local`、`proxy_runtime.skip_ssl_verify=false`。
+  此前模板带 `enabled=true` + `mode=webdav` 且密码为空，导致照模板部署后
+  **任何** `POST /api/settings` 都返回 400（连改日志级别都失败）；
+  `skip_ssl_verify=true` 则让每个部署者默认关闭上游 TLS 校验。
+
+### 已知问题
+
++ `auto_relogin_after_refresh` 仍未接线：刷新失败不会自动触发重登，只打启动日志。
++ 后台图片任务不可取消：`TaskContext` 不带 ctx，`Close` 只能等满超时。
++ 刷新 / 重登的进度对象不淘汰（`CleanRefreshProgress` / `CleanReloginProgress` 无调用点）：
+  每次 admin 操作永久保留一份号池副本，重启才回收。
++ 可编辑任务与 `data/files/` 无保留策略、无删除路由、无配额（对比图片任务有保留期）。
++ 入站请求体无大小上限（`decodeJSONBody` 用 `c.GetRawData()`，全仓库无 `MaxBytesReader`）。
++ 备份归档默认不加密（`backup.encrypt` 默认 `false`），而归档内含号池全部凭据。
++ 图片标签写入非原子（`saveTags` 直接 truncate + write），崩溃中途会丢全部标签。
++ 上游错误文本未脱敏，会跨到普通用户并写入日志。
++ 匿名对话链路受上游限制（见 ADR-0008）。
++ codex 图片链路的响应事件格式未经真实上游验证（见 ADR-0010）。
+
 ## 2.0.0 - 2026-10-23
 
 ### 重大变更：后端从 Python/FastAPI 全量重写为 Go/Gin
@@ -15,7 +106,7 @@
 
 ### 兼容性
 
-+ 全部 78 条 HTTP 路由、三套错误信封（管理面 / OpenAI / Anthropic）、`config.json` 语义、`data/` 文件格式逐字保留。
++ 全部 77 条 HTTP 路由、三套错误信封（管理面 / OpenAI / Anthropic）、`config.json` 语义、`data/` 文件格式逐字保留。
 + 认证哈希保持裸 SHA-256（无盐），存量 `data/auth_keys.json` 直接可用。
 + `logs.jsonl`、`accounts.json`、`image_tasks.json`、`cpa_config.json`、`sub2api_config.json` 字段集不变。
 
@@ -51,8 +142,8 @@
 
 + 匿名对话链路（`/backend-anon/conversation`）当前被上游限制：Python 返回 403、Go 返回 500。
   payload 与 header 已逐字段核对一致，非实现缺陷。详见 `docs/adr/0008-anonymous-conversation-unavailable.md`。
-+ 密码重新登录（`/api/accounts/re-login`）返回明确的「未实现」而非假装成功。
-+ 可编辑 PPT/PSD 生成、网页搜索、Responses 图片工具调用尚未接入（返回 501）。
++ ~~密码重新登录返回「未实现」~~ → 2.0.1 已实现（含 TOTP）。
++ ~~可编辑 PPT/PSD 生成、网页搜索、Responses 图片工具调用尚未接入（返回 501）~~ → 2.0.1 已全部接入。
 + codex 图片链路的**响应事件格式**未经真实上游验证（请求侧已逐字对齐 Python）：
   若上游改用分片事件（`partial_image_b64`）而非一次性 `result`，会报
   `No image result found in response`。详见 `docs/adr/0010-codex-responses-response-shape-unverified.md`。
