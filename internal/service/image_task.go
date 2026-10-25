@@ -533,6 +533,15 @@ func (s *ImageTaskService) Submit(
 // 必须 defer 调用，否则 Close 永远等不到它。
 func (s *ImageTaskService) runTask(key string, taskCtx TaskContext, release func()) {
 	defer release()
+	// 任务 goroutine 是裸 go，没有 gin.Recovery 兜着 ——
+	// 执行体里一个 panic 会终止整个进程（所有在途任务一起丢）。
+	// 收住并落成任务失败，比进程退出好得多。
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			fmt.Printf("[image-task] task %s panicked, recovered: %v\n", key, recovered)
+			s.finishPanickedTask(key, recovered)
+		}
+	}()
 	startedAt := time.Now()
 
 	s.mu.Lock()
@@ -576,6 +585,20 @@ func (s *ImageTaskService) runTask(key string, taskCtx TaskContext, release func
 		result.Error = err.Error()
 	}
 	s.finishTask(key, result, startedAt)
+}
+
+// finishPanickedTask 把 panic 落成任务失败状态。
+func (s *ImageTaskService) finishPanickedTask(key string, recovered any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task := s.tasks[key]
+	if task == nil {
+		return
+	}
+	task["status"] = TaskStatusError
+	task["error"] = fmt.Sprintf("task panicked: %v", recovered)
+	task["updated_at"] = nowLocal()
+	s.saveLocked()
 }
 
 func (s *ImageTaskService) finishTask(key string, result TaskResult, startedAt time.Time) {

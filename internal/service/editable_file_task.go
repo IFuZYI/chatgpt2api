@@ -169,18 +169,32 @@ func (s *EditableFileTaskService) CleanupExpired(retentionDays int) (tasksRemove
 			continue
 		}
 		// 先删产物目录，再删记录 —— 顺序反过来会失去 taskID 线索。
-		taskID := stringValue(task["task_id"])
+		//
+		// 字段名是 "id" 不是 "task_id"：记录创建（:309）与加载（:605）
+		// 都用 "id"，"task_id" 在整个仓库里从不存在。原来读 "task_id"
+		// 恒为空，RemoveAll 分支永远跳过，却仍然 delete(s.tasks, key) ——
+		// 记录被丢掉、产物目录留着，而目录的唯一指针也没了。
+		taskID := stringValue(task["id"])
 		kind := stringValue(task["kind"])
+		dirGone := true
 		if taskID != "" && kind != "" {
 			dir := filepath.Join(s.root, kind, taskID)
 			if abs, err := filepath.Abs(dir); err == nil {
 				if root, rootErr := filepath.Abs(s.root); rootErr == nil &&
 					strings.HasPrefix(abs, root+string(os.PathSeparator)) {
-					if os.RemoveAll(abs) == nil {
+					err := os.RemoveAll(abs)
+					if err == nil || os.IsNotExist(err) {
 						dirsRemoved++
+					} else {
+						// 删不掉就保留记录：否则记录消失而目录还在，
+						// 之后再也没有线索能定位它。
+						dirGone = false
 					}
 				}
 			}
+		}
+		if !dirGone {
+			continue
 		}
 		delete(s.tasks, key)
 		removed = true
@@ -345,6 +359,15 @@ func (s *EditableFileTaskService) Submit(
 // runTask 是任务 goroutine 的主体。release 必须 defer，否则 Close 永远等不到。
 func (s *EditableFileTaskService) runTask(key string, taskCtx EditableFileTaskContext, release func()) {
 	defer release()
+	// 任务 goroutine 是裸 go，没有 gin.Recovery 兜着 ——
+	// 执行体里一个 panic 会终止整个进程（所有在途任务一起丢）。
+	// 收住并落成任务失败，比进程退出好得多。
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			fmt.Printf("[editable-task] task %s panicked, recovered: %v\n", key, recovered)
+			s.finishPanickedTask(key, recovered)
+		}
+	}()
 
 	s.mu.Lock()
 	task := s.tasks[key]
@@ -403,6 +426,20 @@ func (s *EditableFileTaskService) runTask(key string, taskCtx EditableFileTaskCo
 	accounts.MarkTextUsed(token)
 	result.AccountEmail = accountEmail
 	s.finishTask(key, result, nil)
+}
+
+// finishPanickedTask 把 panic 落成任务失败状态。
+func (s *EditableFileTaskService) finishPanickedTask(key string, recovered any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task := s.tasks[key]
+	if task == nil {
+		return
+	}
+	task["status"] = TaskStatusError
+	task["error"] = fmt.Sprintf("task panicked: %v", recovered)
+	task["updated_at"] = nowLocal()
+	s.saveLocked()
 }
 
 func (s *EditableFileTaskService) finishTask(key string, result EditableFileTaskResult, taskErr error) {

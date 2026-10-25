@@ -344,7 +344,21 @@ func normalizeAccount(item map[string]any) Account {
 	out["last_token_refresh_error"] = nilIfEmpty(stringValue(out["last_token_refresh_error"]))
 	out["last_token_refresh_error_at"] = nilIfEmpty(stringValue(out["last_token_refresh_error_at"]))
 	if stringValue(out["created_at"]) == "" {
-		out["created_at"] = nowString()
+		// 用 nowLocal 而不是 nowString：账号的所有时间字段
+		// （created_at / last_invalid_at / last_token_refresh_at /
+		// last_token_refresh_error_at）都必须用同一种时区写，
+		// 否则 parseAccountTime 无法用一个规则解析它们。
+		//
+		// 原来这里用 nowString()（UTC），其余用 nowLocal()（本地）。
+		// 在 UTC+X 部署下 created_at 比真实时间早 X 小时 ——
+		// shouldDeferInvalidTokenLocked 的「新号宽限」对刚导入的号永不生效；
+		// 在 UTC-X 部署下 created_at 落在未来 —— 宽限恒真，账号永不可删。
+		// 两个方向都错，且只有非 UTC 部署才暴露。
+		//
+		// 历史数据里已有的 created_at 是 UTC：偏差只影响「新号宽限」
+		// 这一个判断（窗口 10 分钟），而历史账号都远超 10 分钟，
+		// 所以不需要迁移。
+		out["created_at"] = nowLocal()
 	}
 	return out
 }

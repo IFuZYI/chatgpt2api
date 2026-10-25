@@ -270,19 +270,16 @@ func main() {
 	// 后面两个 Close 拿到的是已过期的 ctx，立即返回 ——
 	// ADR-0012 承诺的「进程退出前不留下半截上传」在实际最需要它的场景下不成立。
 	//
-	// 顺序也调了：异步 WebDAV 上传先等（它只受 uploadWG 约束、很快），
-	// 再等不可取消的任务 goroutine。
-	uploadCtx, uploadCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	if err := deps.Images.Close(uploadCtx); err != nil {
-		log.Printf("[server] pending image uploads: %v", err)
-	}
-	uploadCancel()
-
+	// 顺序必须保持「任务先、上传后」：
+	// ImageService.Close 会置 uploadClosed=true，此后 startBackgroundUpload
+	// 直接早退。若先关 Images 再等 Tasks，仍在跑的生图任务把结果存到本地
+	// 就再也不会传远端的（both 模式下静默丢上传）——
+	// 用「半截上传」换来「完全没上传」是更差的结果。
 	taskCtx, taskCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer taskCancel()
 	if err := deps.Tasks.Close(taskCtx); err != nil {
 		log.Printf("[server] image tasks: %v", err)
 	}
+	taskCancel()
 	// 可编辑文件任务同样会写 data/（editable_file_tasks.json 与产物文件），
 	// 必须在退出前等它们收尾，否则任务文件可能只写了一半。
 	if deps.EditableTasks != nil {
@@ -292,6 +289,13 @@ func main() {
 		}
 		editCancel()
 	}
+	// 最后等异步 WebDAV 上传：此时所有任务都已收尾，不会再有新的上传入队，
+	// 独立预算也不会被任务 goroutine 吃掉。
+	uploadCtx, uploadCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := deps.Images.Close(uploadCtx); err != nil {
+		log.Printf("[server] pending image uploads: %v", err)
+	}
+	uploadCancel()
 	fmt.Println("[server] stopped")
 }
 

@@ -374,7 +374,10 @@ func (s *ImageService) CleanupExpiredImages() int {
 	// 保留期内的图不删：endDate = 截止日（含），即 today-retention。
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	endDate := cutoff.Format("2006-01-02")
-	result := s.DeleteImages(nil, "", endDate, false)
+	// allMatching 必须是 true：DeleteImages 只在 allMatching 时按日期
+	// 构建 targets，传 false 且 paths=nil 会让 targets 为空 ——
+	// 循环体一次都不执行，removed 恒为 0（即清理完全空转）。
+	result := s.DeleteImages(nil, "", endDate, true)
 	removed := 0
 	if n, ok := result["removed"].(int); ok {
 		removed = n
@@ -495,9 +498,30 @@ func (s *ImageService) EnsureThumbnail(rel string) (string, error) {
 	return target, nil
 }
 
+// webdavIndexedSet 返回「索引标记为 webdav 可用」的 rel 集合（一次解析）。
+func (s *ImageService) webdavIndexedSet() map[string]bool {
+	s.indexMu.Lock()
+	indexed := s.loadIndexLocked()
+	s.indexMu.Unlock()
+	out := make(map[string]bool, len(indexed))
+	for rel, item := range indexed {
+		if truthy(item["webdav"]) {
+			out[rel] = true
+		}
+	}
+	return out
+}
+
 // CleanupThumbnails 删除源图已消失的缩略图，并清空目录。
 func (s *ImageService) CleanupThumbnails() int {
 	root := s.cfg.ImageThumbnailsDir()
+	// 索引只读一次。
+	//
+	// 原来在 walk 里对每个缩略图调 indexedOnWebDAV(source)，它每次都
+	// loadIndexLocked() —— 读文件 + 解析整个 JSON。n 个缩略图就是 n 次全量解析，
+	// 实测 400 张 1.70s / 800 张 6.14s（超线性），而本函数由 ListResponse
+	// 调用，也就是每次打开管理页都跑。
+	webdavSet := s.webdavIndexedSet()
 	removed := 0
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -515,7 +539,7 @@ func (s *ImageService) CleanupThumbnails() int {
 		// 缩略图都删掉 —— 而 ListResponse 每次调用都触发本函数，于是每次
 		// 刷新管理页都会清空缩略图，EnsureThumbnail 再从远端整图重新生成。
 		// 用与 ReadImage 相同的门（indexedOnWebDAV）判断源是否仍在。
-		if s.indexedOnWebDAV(source) {
+		if webdavSet[source] {
 			return nil
 		}
 		if os.Remove(path) == nil {

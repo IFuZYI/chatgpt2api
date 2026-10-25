@@ -88,7 +88,7 @@ func (d *Deps) handleImageChat(c *gin.Context, body map[string]any, outcome *cha
 
 	collected := protocol.CollectImageOutputs(result.Outputs)
 	if email := stringValueOf(collected["_account_email"]); email != "" {
-		outcome.accountEmail = email
+		outcome.setAccountEmail(email)
 	}
 	outcome.urls = imageChatResultURLs(collected)
 
@@ -286,15 +286,11 @@ func (d *Deps) handleWebSearchChat(c *gin.Context, body map[string]any, outcome 
 
 	result, accountEmail, searchErr := d.runSearch(c.Request.Context(), query)
 	if searchErr != nil {
-		if outcome != nil {
-			outcome.accountEmail = accountEmail
-		}
+		outcome.setAccountEmail(accountEmail)
 		writeErr(c, mapProtocolError(searchErr))
 		return
 	}
-	if outcome != nil {
-		outcome.accountEmail = accountEmail
-	}
+	outcome.setAccountEmail(accountEmail)
 
 	text, annotations := protocol.TextWithURLCitations(result)
 	chatAnnotations := protocol.ChatCompletionAnnotations(annotations)
