@@ -136,6 +136,11 @@ docker compose up -d
 > lacks `CAP_NET_BIND_SERVICE` and cannot bind ports below 1024. The published
 > port is controlled by `CHATGPT2API_PORT` (default `3000`).
 
+> Ownership of `data/` is fixed automatically by the bundled `init-data`
+> one-shot container (chowns to uid 65532). Without it the service reports
+> `/health` 200 yet fails every write with `permission denied` — see
+> [troubleshooting](./docs/deployment.md#容器起来了但写数据报-permission-denied).
+
 Updating:
 
 ```bash

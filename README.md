@@ -127,6 +127,10 @@ docker compose up -d
 > `CAP_NET_BIND_SERVICE`，绑不上 <1024 的端口。对外端口由 `CHATGPT2API_PORT`
 > 决定，默认 `3000`。
 
+> `data/` 的属主由 compose 内置的 `init-data` 一次性容器自动改成 uid 65532。
+> 不这么做的话服务会「`/health` 200 但一写数据就 `permission denied`」——
+> 见[排障](./docs/deployment.md#容器起来了但写数据报-permission-denied)。
+
 更新：
 
 ```bash
@@ -211,13 +215,24 @@ docker compose -f docker-compose.warp.yml up -d --build
 > ⚠️ `warp` 需要 `NET_ADMIN` / `SYS_MODULE`；`init-config` 会挂载项目目录写
 > `config.json`。请确认宿主机目录权限，并注意 `.env` 里的凭据对其他容器可见。
 
-### 三种部署方式对比
+### 四种部署方式对比
 
-| 方式 | 适用场景 | 前端 | 数据 | 升级 |
-|:--|:--|:--|:--|:--|
-| Docker Compose | 生产自托管 | 镜像内 embed | `./data` 卷 | `docker compose pull` |
-| 单二进制 | 无 Docker 环境、边缘设备 | 编译期 embed | 当前目录 `data/` | 替换文件后重启 |
-| 源码运行 | 开发调试 | `CHATGPT2API_WEB_DIST` | 当前目录 `data/` | 重新编译 |
+| 方式 | 文件 | 适用场景 | 前端 | 数据 | 升级 |
+|:--|:--|:--|:--|:--|:--|
+| Docker（拉镜像） | `docker-compose.yml` | 生产自托管 | 镜像内 embed | `./data` 卷 | `docker compose pull` |
+| Docker（本地构建） | `docker-compose.local.yml` | 改了代码想直接跑 | 构建期 embed | `./data` 卷 | `docker compose up -d --build` |
+| WARP 代理 | `docker-compose.warp.yml` | 上游被 Cloudflare 拦 | 构建期 embed | `./data` 卷 | `docker compose -f ... up -d --build` |
+| 单二进制 | Releases 下载 | 无 Docker 环境、边缘设备 | 编译期 embed | 当前目录 `data/` | 替换文件后重启 |
+| 源码运行 | `go build` | 开发调试 | `CHATGPT2API_WEB_DIST` | 当前目录 `data/` | 重新编译 |
+
+`docker-compose.local.yml` 与默认 compose 的区别：它用 `build:` 从本地源码构建
+（而不是拉 GHCR 镜像），默认端口 `8000`（不是 3000），默认存储后端 `sqlite`
+（不是 json）。适合「clone 下来改了代码想立刻验证」的场景：
+
+```bash
+cp config.example.json config.json && $EDITOR config.json
+docker compose -f docker-compose.local.yml up -d --build
+```
 
 ---
 

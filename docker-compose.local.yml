@@ -1,4 +1,16 @@
 services:
+  # 一次性容器：把 data/ 属主改成容器内运行用户（uid 65532 / nonroot）。
+  # 镜像以 distroless nonroot 运行，而 `./data` 首次创建时属主是 root:root 755，
+  # nonroot 写不进去 —— 表现为「/health 200 但一加账号就 permission denied」。
+  init-data:
+    image: alpine:3.20
+    container_name: chatgpt2api-local-init-data
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    volumes:
+      - ./data:/data
+    restart: "no"
+
   app:
     build:
       context: .
@@ -10,6 +22,9 @@ services:
     # 关闭预算 ≈ 40s（Shutdown 10s + watcher/cleanup + tasks Close 30s）。
     # Docker 默认 10s 就 SIGKILL，会截断在途任务的落盘。
     stop_grace_period: 45s
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
 
     # 容器内固定 8080（distroless nonroot 不能绑 <1024）。
     ports:

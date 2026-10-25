@@ -1,4 +1,23 @@
 services:
+  # 一次性容器：把 data/ 的属主改成容器内运行用户（uid 65532 / nonroot）。
+  #
+  # 为什么需要它：镜像以 distroless nonroot 运行，而 `./data` 由 Docker 在
+  # 首次 up 时创建为 root:root 755 —— nonroot 写不进去，服务能启动、
+  # /health 也返回 200，但一加账号就报：
+  #     [account] save accounts failed: open /app/data/accounts.json.tmp: permission denied
+  # 也就是说「看起来健康、实际存不了数据」，极难排查。
+  #
+  # 手动 chown 也能解决，但要求用户先知道这件事。放在这里自动做掉。
+  # 用 alpine 而非 app 镜像：app 是 distroless，没有 chown 命令。
+  init-data:
+    image: alpine:3.20
+    container_name: chatgpt2api-init-data
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    volumes:
+      - ./data:/data
+    restart: "no"
+
   app:
     image: ghcr.io/ifuzyi/chatgpt2api:latest
     container_name: chatgpt2api
@@ -9,6 +28,10 @@ services:
     # Docker 默认只给 10s 就 SIGKILL，会把「等在途任务写完 image_tasks.json」
     # 和 JSON 后端的原子写截断。低于 45s 会真的丢数据。
     stop_grace_period: 45s
+
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
 
     # 容器内固定监听 8080（distroless nonroot 无法绑 <1024）。
     # 对外端口用 CHATGPT2API_PORT 覆盖，默认 3000。

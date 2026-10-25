@@ -1,4 +1,16 @@
 services:
+  # 一次性容器：把 data/ 属主改成容器内运行用户（uid 65532 / nonroot）。
+  # 镜像以 distroless nonroot 运行，而 `./data` 首次创建时属主是 root:root 755，
+  # nonroot 写不进去 —— 表现为「/health 200 但一加账号就 permission denied」。
+  init-data:
+    image: alpine:3.20
+    container_name: chatgpt2api-warp-init-data
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    volumes:
+      - ./data:/data
+    restart: "no"
+
   init-config:
     # 用 app 自己的镜像跑 --init-proxy-config 子命令。
     #
@@ -122,6 +134,8 @@ services:
     # Docker 默认只给 10s 就 SIGKILL，会让「等在途任务写完 image_tasks.json」被截断。
     stop_grace_period: 45s
     depends_on:
+      init-data:
+        condition: service_completed_successfully
       init-config:
         condition: service_completed_successfully
       privoxy:

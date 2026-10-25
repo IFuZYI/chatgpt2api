@@ -654,12 +654,40 @@ cp config.example.json config.json && $EDITOR config.json
 
 ### 容器起来了但写数据报 `permission denied`
 
-`data/` 对容器内 uid 65532 不可写：
+**三个 compose 都已内置 `init-data` 一次性容器自动处理这件事**，正常流程不需要
+手动介入。它的作用是把 `./data` 的属主改成容器内运行用户：
+
+```yaml
+init-data:
+  image: alpine:3.20
+  user: "0:0"
+  command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+  volumes:
+    - ./data:/data
+```
+
+> **为什么必须这么做**：镜像以 distroless `nonroot`（uid 65532）运行，而
+> `./data` 由 Docker 首次 `up` 时创建为 `root:root 755`。此时服务能启动、
+> `/health` 返回 200、读接口也正常 —— 但**一写数据就失败**：
+>
+> ```
+> [account] save accounts failed: open /app/data/accounts.json.tmp: permission denied
+> ```
+>
+> 「看起来健康、实际存不了东西」是最难排查的一类故障，所以做成默认行为。
+
+如果你用 `docker run` 而不是 compose，或者想手动处理：
 
 ```bash
 sudo chown -R 65532:65532 data/
 # 或放宽到该用户可写
 sudo chmod -R 775 data/
+```
+
+验证属主是否正确：
+
+```bash
+ls -ld data     # 期望 65532:65532
 ```
 
 ### 面板能开但接口 401
