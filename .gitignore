@@ -24,7 +24,11 @@ wheels/
 
 # 运行时数据
 data
-config.json
+# 只忽略仓库根目录的运行时配置。
+# 裸写 `config.json` 会误伤 testdata/fixtures/config.json ——
+# 那是 golden 测试的输入夹具，缺了它 TestGoldenParity 在全新克隆里直接失败
+# （read golden config.json: no such file or directory）。
+/config.json
 edit
 
 docker-compose-local.yml
