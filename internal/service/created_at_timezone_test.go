@@ -37,10 +37,21 @@ func TestCreatedAtUsesLocalTimezone(t *testing.T) {
 			skew.Round(time.Second), time.Now().Location(), raw)
 	}
 
-	// 新号宽限必须生效（shouldDefer 是未导出方法，测试同包可直接调）
+	// 新号宽限必须生效 —— 但**必须隔离到第 ① 条防线**。
+	//
+	// 直接拿刚创建的 account 调 shouldDefer 是无效断言：它的
+	// invalid_count=0，第 ② 条防线（invalid_count <= 1 → return true）
+	// 会先短路，结果与时区无关 —— 无论 created_at 写成 UTC 还是本地都返回 true。
+	//
+	// 所以构造 invalid_count=5 且 last_invalid_at 为空的账号：
+	// 此时只有第 ① 条（新号宽限）能给出 true，而它依赖 created_at 的时区正确性。
 	svc.mu.RLock()
-	defer svc.mu.RUnlock()
-	if !svc.shouldDeferInvalidTokenLocked(account, time.Now()) {
-		t.Error("新号宽限未生效：刚创建的账号会被直接删除")
+	probe := copyMap(account)
+	svc.mu.RUnlock()
+	probe["invalid_count"] = 5
+	probe["last_invalid_at"] = nil
+	if !svc.shouldDeferInvalidTokenLocked(probe, time.Now()) {
+		t.Error("新号宽限（防线 ①）未生效：created_at 时区不对，" +
+			"UTC+X 部署下刚导入的号会被直接删除")
 	}
 }

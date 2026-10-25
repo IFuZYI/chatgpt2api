@@ -1,0 +1,57 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 时区矩阵是必须的，不是可选优化。
+        #
+        # 账号侧的时间字段（created_at / last_invalid_at / last_token_refresh_at）
+        # 由 nowLocal() 写本地时间、由 parseAccountTime 按本地时区解析。
+        # 一旦写入方与解析方的时区约定不一致，只有非 UTC 部署才暴露：
+        #   - UTC+X → created_at 看起来已过 X 小时 → 新号宽限永不生效
+        #   - UTC-X → created_at 落在未来 → 宽限恒真 → 账号永不可删
+        # 实测：撤销 created_at 修复后，UTC 下测试全绿，Asia/Shanghai 与
+        # America/Los_Angeles 下才失败。只跑 UTC 等于没测。
+        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l internal cmd)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: test (${{ matrix.tz }})
+        run: go test -count=1 ./...
+
+  race:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+      # 只跑三个重包：全量 -race 在这三个之外没有并发代码。
+      - name: go test -race
+        run: go test -race -count=1 ./internal/service/ ./internal/protocol/ ./internal/api/
