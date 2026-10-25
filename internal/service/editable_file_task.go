@@ -175,6 +175,46 @@ func (s *EditableFileTaskService) track() (release func(), ok bool) {
 // Submit 创建任务并异步执行（复刻 _submit，:115-127）。
 //
 // 幂等：同一 owner + client_task_id 再次提交直接返回已有任务。
+// validEditableTaskID 校验 client_task_id 能安全地作为单个路径分量。
+//
+// 为什么必须校验：这个值会进 filepath.Join(root, kind, taskID) 并被
+// os.MkdirAll / os.WriteFile 直接使用（upstream/editable_file_chain.go）。
+// filepath.Join 会把 `..` 段折叠掉，所以 "../../../../x" 能逃出 data/files ——
+// 而 containment 检查（FileURL）在**写入之后**才跑，只能把任务标成 error，
+// 文件已经落盘了。
+//
+// 后果的严重度：/v1/ppt/generations 只需要 RequireIdentityCtx（任意有效 API key），
+// 于是任何持有 key 的人都能用进程权限往任意目录写任意文件名 —— 任意文件写入。
+// 这还能作为链条原语（往 data/image_thumbnails/ 丢软链，再经 D2 读 config.json）。
+//
+// 规则：只允许字母数字、下划线、连字符，长度 1..128。这覆盖了 UUID
+// （uuid.NewString 产生的形态）与常见的客户端自造 id，同时排掉 `/`、`\`、
+// `.`、`..`、NUL 与任何需要转义的字符。
+func validEditableTaskID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validEditableKind 校验 kind 只可能是已知的两个值。
+//
+// kind 目前只由路由层传字面量，理论上安全；但它同样进路径，所以顺手收口，
+// 避免将来有人把它接到请求体上时无声地开出同一条逃逸路径。
+func validEditableKind(kind string) bool {
+	return kind == protocol.EditableKindPPT || kind == protocol.EditableKindPSD
+}
+
 func (s *EditableFileTaskService) Submit(
 	ownerID, clientTaskID, keyName, kind, prompt string,
 	base64Images []string,
@@ -183,6 +223,13 @@ func (s *EditableFileTaskService) Submit(
 	taskID := strings.TrimSpace(clientTaskID)
 	if taskID == "" {
 		taskID = uuid.NewString()
+	}
+	// 先校验再建任务：非法 id 绝不能进 tasks map，更不能进文件系统。
+	if !validEditableTaskID(taskID) {
+		return nil, fmt.Errorf("invalid client_task_id: 只允许字母、数字、下划线、连字符，长度 1-128")
+	}
+	if !validEditableKind(kind) {
+		return nil, fmt.Errorf("invalid kind: %q", kind)
 	}
 	owner := orDefault(ownerID, "anonymous")
 	key := taskKey(owner, taskID)
@@ -219,6 +266,14 @@ func (s *EditableFileTaskService) Submit(
 	snapshot := publicEditableTask(task)
 	s.mu.Unlock()
 
+	// 注意：目录仍只有 kind/taskID，不带 owner 分量。
+	//
+	// 加 owner 会让跨 owner 的目录共租消失（一个 low 级完整性问题），但代价是
+	// 改变已落盘产物的 URL 形态（/files/ppt/<id>/... → /files/ppt/<hash>/<id>/...），
+	// 前端与既有链接全部失效。收益与代价不成比例，所以不做。
+	//
+	// 真正的安全问题（任意目录写入）已由上面的 validEditableTaskID 关闭：
+	// taskID 现在只允许字母数字下划线连字符，无法逃出 root。
 	outputDir := filepath.Join(s.root, kind, taskID)
 	go s.runTask(key, EditableFileTaskContext{
 		TaskID:       taskID,

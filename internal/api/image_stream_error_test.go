@@ -47,4 +47,18 @@ func TestStreamImageGenerationFailureEmitsErrorEvent(t *testing.T) {
 	if !strings.Contains(text, "server_error") {
 		t.Fatalf("error 事件缺少 type=server_error。实际响应:\n%s", text)
 	}
+	// 顺序断言：error 必须在 [DONE] **之前**。
+	//
+	// 标准 SSE 客户端读到 [DONE] 就停止解析，若 error 排在它后面，
+	// 客户端看到的仍是干净的空成功 —— 原来的测试只检查「error 存在」，
+	// 所以这个顺序回归测不出来。
+	doneAt := strings.Index(text, "[DONE]")
+	errAt := strings.Index(text, `"error"`)
+	if doneAt < 0 {
+		t.Fatalf("流里没有 [DONE]。实际响应:\n%s", text)
+	}
+	if errAt > doneAt {
+		t.Fatalf("error 事件在 [DONE] 之后（done@%d err@%d），客户端会当成成功。实际响应:\n%s",
+			doneAt, errAt, text)
+	}
 }

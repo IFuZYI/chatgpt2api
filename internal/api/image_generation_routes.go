@@ -250,14 +250,17 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 			close(progressChunks)
 		}()
 
+		// writeSSEFromChannel 只写 chunk，不再自己写 [DONE] —— 顺序必须由这里控制。
 		writeSSEFromChannel(c, progressChunks)
 		<-done
 
 		if runErr != nil {
-			// 头已经发出去了，改不了状态码，但必须在流里补一条 error 事件：
-			// 只写 [DONE] 会让客户端把「0 张图」当成「成功但无输出」，
-			// 这是生图接口最糟的失败形态（无法区分空结果与故障）。
-			// 与 response_image_routes.go / chat_image_routes.go 的做法对齐。
+			// 头已经发出去了，改不了状态码，但必须在 [DONE] **之前**补一条
+			// error 事件。
+			//
+			// 为什么顺序是关键：标准 SSE 客户端读到 data: [DONE] 就停止解析。
+			// 若 error 排在 [DONE] 之后，客户端看到的是一个干净的空成功 ——
+			// 与「成功但 0 张图」无法区分，正是这个缺陷最初要解决的问题。
 			message := mapImageError(runErr).Error()
 			if payload, marshalErr := marshalJSON(map[string]any{
 				"error": map[string]any{
@@ -268,10 +271,12 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 				_, _ = c.Writer.WriteString("data: " + payload + "\n\n")
 				c.Writer.Flush()
 			}
+			writeSSEDone(c)
 			call.finish(runErr, "", nil)
 			logged = true
 			return
 		}
+		writeSSEDone(c)
 		return
 	}
 

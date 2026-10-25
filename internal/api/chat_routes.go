@@ -421,6 +421,15 @@ func writeSSEFromChannel(c *gin.Context, chunks <-chan map[string]any) {
 		writer.Flush()
 	}
 
-	_, _ = writer.WriteString("data: [DONE]\n\n")
-	writer.Flush()
+}
+
+// writeSSEDone 写 SSE 终止标记。
+//
+// 从 writeSSEFromChannel 里拆出来，因为**顺序很重要**：失败时必须在
+// [DONE] **之前**写 error 事件。标准 SSE 客户端读到 [DONE] 就停止解析，
+// 若 error 排在它后面，客户端看到的是一个干净的空成功 ——
+// 正是「流式生图失败被吞」那个缺陷的原始症状。
+func writeSSEDone(c *gin.Context) {
+	_, _ = c.Writer.WriteString("data: [DONE]\n\n")
+	c.Writer.Flush()
 }

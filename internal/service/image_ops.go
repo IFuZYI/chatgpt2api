@@ -113,7 +113,15 @@ func (s *ImageService) DeleteToTarget(targetFreeMB int, dryRun bool) map[string]
 				}
 				s.removeTags(relSlash)
 			}
-			_ = os.Remove(file.path)
+			// 只有真删成功才记账。
+			//
+			// 原来 `_ = os.Remove(...)` 丢错误却照样 freed += size / removed++，
+			// 于是不可删的文件（chattr +i、EBUSY、只读挂载）会被报成
+			// removed:1 而实际还在盘上 —— 调度器以为腾出了空间就停手，
+			// 磁盘继续满着。
+			if err := os.Remove(file.path); err != nil {
+				continue
+			}
 		}
 		freed += file.size
 		removed++

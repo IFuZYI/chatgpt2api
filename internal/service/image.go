@@ -480,6 +480,14 @@ func (s *ImageService) ReadImage(rel string) ([]byte, string, error) {
 	}
 	payload, remoteErr := s.fetchRemoteImage(safe)
 	if remoteErr != nil {
+		// 远端 404 说明索引说谎了（对象已被生命周期策略/手工清理删掉）。
+		// 映射成 errImageNotFound（→ HTTP 404）而不是把原始 WebDAV 错误
+		// 冒泡成 500 —— 前者是「这张图没了」，后者是「服务器出错」，语义不同。
+		// 顺手把索引里的 webdav 标记清掉，让 ListItems 下次能回收这个僵尸条目。
+		if isWebDAVNotFound(remoteErr) {
+			s.clearWebDAVFlag(safe)
+			return nil, "", errImageNotFound
+		}
 		return nil, "", remoteErr
 	}
 	return payload, mimeForPath(full), nil
@@ -491,6 +499,32 @@ func (s *ImageService) indexedOnWebDAV(rel string) bool {
 	defer s.indexMu.Unlock()
 	item, exists := s.loadIndexLocked()[rel]
 	return exists && truthy(item["webdav"])
+}
+
+// isWebDAVNotFound 判断远端错误是否是 404。
+func isWebDAVNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "WebDAV GET failed: HTTP 404")
+}
+
+// clearWebDAVFlag 把索引条目的 webdav 标记清掉（对象已不存在）。
+func (s *ImageService) clearWebDAVFlag(rel string) {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	indexed := s.loadIndexLocked()
+	item, exists := indexed[rel]
+	if !exists {
+		return
+	}
+	if !truthy(item["webdav"]) {
+		return
+	}
+	item["webdav"] = false
+	item["remote_url"] = ""
+	if !truthy(item["local"]) {
+		item["storage"] = "local"
+	}
+	indexed[rel] = item
+	s.saveIndexLocked(indexed)
 }
 
 // fetchRemoteImage 从 WebDAV 取一张图。
@@ -537,6 +571,18 @@ func (s *ImageService) DeleteImages(paths []string, startDate, endDate string, a
 	}
 
 	removed := 0
+	// 只对**真的删掉了**的条目移除索引。
+	//
+	// 原实现对每个请求的 rel 无条件 delete(indexed, rel)，两个后果：
+	//
+	//   1. 远端删除失败（webdav 模式 500）：removed:0 但索引条目没了 ——
+	//      远端对象从此永久不可删，因为 deleteRemoteImage 要求
+	//      indexedOnWebDAV(rel)，而索引里已经没有它了。
+	//   2. 本地 os.Remove 失败（chattr/EBUSY/NFS）：索引条目没了但文件还在，
+	//      下一次 ListItems 扫盘会把它当成新条目**加回来** —— 删除静默回滚。
+	//
+	// 所以把「删成功的 rel」收集起来，索引只对它们生效。
+	deletedRels := make([]string, 0, len(targets))
 	for _, rel := range targets {
 		full, err := s.localImagePath(rel)
 		if err != nil {
@@ -553,6 +599,7 @@ func (s *ImageService) DeleteImages(paths []string, startDate, endDate string, a
 		}
 		if deleted {
 			removed++
+			deletedRels = append(deletedRels, rel)
 		}
 		if thumb, err := s.ThumbnailPath(rel); err == nil && fileExists(thumb) {
 			_ = os.Remove(thumb)
@@ -560,19 +607,21 @@ func (s *ImageService) DeleteImages(paths []string, startDate, endDate string, a
 		s.removeTags(rel)
 	}
 
-	s.indexMu.Lock()
-	indexed := s.loadIndexLocked()
-	changed := false
-	for _, rel := range targets {
-		if _, exists := indexed[rel]; exists {
-			delete(indexed, rel)
-			changed = true
+	if len(deletedRels) > 0 {
+		s.indexMu.Lock()
+		indexed := s.loadIndexLocked()
+		changed := false
+		for _, rel := range deletedRels {
+			if _, exists := indexed[rel]; exists {
+				delete(indexed, rel)
+				changed = true
+			}
 		}
+		if changed {
+			s.saveIndexLocked(indexed)
+		}
+		s.indexMu.Unlock()
 	}
-	if changed {
-		s.saveIndexLocked(indexed)
-	}
-	s.indexMu.Unlock()
 
 	removeEmptyDirs(s.cfg.ImagesDir())
 	removeEmptyDirs(s.cfg.ImageThumbnailsDir())
@@ -855,10 +904,29 @@ func mimeForPath(path string) string {
 }
 
 // removeEmptyDirs 自底向上删除空目录。
+// removeEmptyDirsMinAge 只删除「空且够旧」的目录。
+//
+// 为什么需要年龄门槛：SaveImageBytes 的流程是 MkdirAll(dir) → WriteFile。
+// 中间那一瞬目录是空的；如果清理路径此刻把它删掉，随后的 WriteFile 会
+// ENOENT —— 用户看到 502，而生图额度已经消耗。
+//
+// 实测：4 个并发 saver × 300 张 vs 清理循环 → 73 次保存失败，
+// 首个错误 `open .../2026/10/25/xxx.png: no such file or directory`。
+// 清理调度器在磁盘紧张时每 30 分钟跑一次，正是实例最忙的时候。
+//
+// 用 2 分钟门槛：任何活跃写入路径的目录都不会那么旧；而真正的空目录
+// （删除图片后留下的）迟早会被下一次清理收掉。
+const removeEmptyDirsMinAge = 2 * time.Minute
+
 func removeEmptyDirs(root string) {
+	now := time.Now()
 	var dirs []string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || !info.IsDir() || path == root {
+			return nil
+		}
+		// 太新的目录可能是并发保存刚创建的，跳过。
+		if now.Sub(info.ModTime()) < removeEmptyDirsMinAge {
 			return nil
 		}
 		dirs = append(dirs, path)
