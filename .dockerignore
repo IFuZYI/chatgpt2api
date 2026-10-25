@@ -15,23 +15,16 @@
 .vscode
 .editorconfig
 
-# ---------- Python 遗留（已被 Go 替代，仅作历史参考）----------
-# 这些源码还在仓库里，但构建二进制完全用不到。
+# ---------- Python 本地残留 ----------
+# 源码已归档到分支 archive/python-backend-2.0，main 上不再有 Python 代码。
+# 这里只排除开发者本地可能还留着的 venv 与缓存。
 .venv
 __pycache__
 .pytest_cache
 .python-version
 *.pyc
 *.pyo
-*.pyd
-api
-services
-utils
-main.py
-pyproject.toml
-uv.lock
-scripts
-tools
+.pyd
 
 # ---------- 构建产物 ----------
 # 根目录的旧二进制：曾经因为 .dockerignore 写的是 `/chatgpt2api`（带前导斜杠）

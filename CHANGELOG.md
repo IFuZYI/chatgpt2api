@@ -2,8 +2,24 @@
 
 ## Unreleased - 2.0.1
 
+### 变更
+
++ [变更] **Python 后端从 main 移除，归档到分支 `archive/python-backend-2.0`**。
+  共 99 个文件（`api/`、`services/`、`utils/`、`test/`、`scripts/`、`main.py`、
+  `pyproject.toml`、`uv.lock`、`.python-version`）。为什么归档而非删除：
+  `utils/sentinel.py` 是 Go 侧 fnv1a_32 实现的黄金基线，ADR-0003 的 golden
+  也以它为准，需要能随时回查。详见 [docs/archive-python-backend.md](./docs/archive-python-backend.md)。
+  `.audit/`（重构期验证记录）一并归档。
+
 ### 新增
 
++ [新增] **rt 换 at**：`POST /oauth/token` 用 `refresh_token` 换新 `access_token`
+  （form-urlencoded + `grant_type=refresh_token` + `client_id`，
+  与换 code 的 JSON body 形状不同，混用会 400）。上游轮换 rt 时采用新的，
+  未返回则沿用旧的；非 200 或没有 access_token 一律报错并带状态码与 detail。
++ [新增] **`auto_relogin_after_refresh` 真正接线**：刷新发现失效账号（401/403）后
+  自动密码重登。429 限流不触发（否则上游抖动会批量登录）。
+  此前 `watcher.Start` 的第三个参数是 `nil`，keepalive 分支从未生效。
 + [新增] **密码重新登录（含 TOTP 两步验证）**。`/api/accounts/re-login` 从「未实现」改为真实现：
   authorize → sentinel（`fnv1a_32`，与 chat 的 SHA3-512 PoW **不同算法**）→ `password/verify`
   → TOTP → `mfa/verify` → OAuth `token` 交换 → 回写 access/refresh/id token。
@@ -31,6 +47,11 @@
 + [修复] **`/api/accounts` 泄露密码**：密码重登上线后 `password` / `totp_secret` 成为有效凭据，
   列表接口却原样返回 —— 一次只读 admin 会话即可全量接管号池。改为脱敏，
   保留 `password_set` / `totp_secret_set` 布尔值供前端显示。
++ [修复] **`KeepaliveRefreshTokens` 两处语义错误**：
+  (a) 回调签名是 `RefreshTokenFunc(refreshToken)`，实现却传 **access_token**
+  —— refresh_token 才是换新 token 的凭据；(b) 拿到新 token 后**不回写**号池，
+  keepalive 等于空转。修复后换 token 时同步搬别名链（旧 token 立刻失效，
+  仍持有旧引用的调用方要能找到账号）。
 + [修复] **`invalid_password` 只靠英文子串匹配**：补 `code == "invalid_password"` 分支，
   消息匹配降为兜底。
 + [修复] **admin auth-key 出现在跟踪文件里**：`.codex/skills/chatgpt2api-search/SKILL.md`
@@ -79,7 +100,7 @@
 
 ### 已知问题
 
-+ `auto_relogin_after_refresh` 仍未接线：刷新失败不会自动触发重登，只打启动日志。
++ ~~`auto_relogin_after_refresh` 仍未接线~~ → 已接线（2.0.1）。
 + 后台图片任务不可取消：`TaskContext` 不带 ctx，`Close` 只能等满超时。
 + 刷新 / 重登的进度对象不淘汰（`CleanRefreshProgress` / `CleanReloginProgress` 无调用点）：
   每次 admin 操作永久保留一份号池副本，重启才回收。

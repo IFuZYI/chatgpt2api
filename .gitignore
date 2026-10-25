@@ -4,10 +4,13 @@
 /goldenrecord
 *.test
 
-# Python 遗留（重构期间保留，M7 移除）
+# Python 已归档到分支 archive/python-backend-2.0（见 docs/archive-python-backend.md）。
+# 本地若还留着 venv / 缓存，忽略掉即可 —— 它们不再参与构建或测试。
 __pycache__/
 *.py[oc]
 .venv
+.pytest_cache/
+.python-version
 # 前端构建产物。目录本身必须存在且被跟踪（.gitkeep）——
 # internal/web/dist.go 的 //go:embed all:web_dist 在空目录/缺目录时
 # 直接编译失败（pattern all:web_dist: no matching files found），

@@ -36,10 +36,11 @@
 
 | 项 | 现状 | 影响 |
 |:--|:--|:--|
-| `auto_relogin_after_refresh` 未接线 | 刷新失败不会自动触发重登，只打启动日志 | 需手动点重登；`docs/feature-status` 已如实描述 |
+| ~~`auto_relogin_after_refresh` 未接线~~ | **已接线**：刷新发现 401/403 后自动密码重登（429 不触发） | — |
 | 后台任务不可取消 | `runImageTask` 用 `context.Background()`，`TaskContext` 不带 ctx | `ImageTaskService.Close` 只能等满超时；见 `internal/api/image_task_runner.go` 注释 |
 | 进度对象不淘汰 | `CleanRefreshProgress` / `CleanReloginProgress` 无调用点 | 每次 admin 刷新/重登永久保留一份号池副本，重启才回收 |
 | 可编辑任务无保留策略 | 无 `cleanupLocked`、无删除路由、无配额 | `data/files/` 与任务记录聚合无界（对比 `image_task` 有保留期） |
+| ~~rt 换 at 未实现~~ | **已实现**：`RefreshAccessToken`，form-urlencoded 换 token | — |
 | 入站请求体无上限 | `decodeJSONBody` 用 `c.GetRawData()`，全仓库无 `MaxBytesReader` | 大请求体可把进程内存推高 |
 | 备份归档默认不加密 | `backup.encrypt` 默认 false | 归档含号池全部凭据，需操作者显式开启加密 |
 | 图片标签写入非原子 | `saveTags` 直接 truncate + write | 崩溃中途丢全部标签（并发丢更新已修，见下） |
@@ -54,6 +55,12 @@
 4. **`config.example.json` 泄漏真实凭据**：模板曾携带一条真实 SOCKS5 出口代理凭据与私有 WebDAV 主机名，已清除；该凭据已推送过，需轮换。
 
 三处并发/吞错缺陷都没有被既有测试发现 —— 前两个是文件级丢更新，`-race` 检测器看不见。每条都补了会失败的回归用例。
+
+## Python 后端已归档
+
+1.x 的 Python 实现已从 main 移除，完整保存在分支 `archive/python-backend-2.0`。
+保留而非删除的理由：`utils/sentinel.py` 是 Go 侧 fnv1a_32 的黄金基线，
+ADR-0003 的 golden 也以 Python 行为准。详见 `docs/archive-python-backend.md`。
 
 ## 与 Python 版的实测差异（刻意保留）
 

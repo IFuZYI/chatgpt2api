@@ -370,6 +370,7 @@ git tag v2.0.1 && git push origin v2.0.1
 | [上游 SSE 协议](./docs/upstream-sse-conversation.md) | 上游会话流式协议记录 |
 | [术语表](./GLOSSARY.md) | 项目内术语 |
 | [CHANGELOG](./CHANGELOG.md) | 版本变更 |
+| [Python 后端归档](./docs/archive-python-backend.md) | 1.x 的 Python 实现在哪个分支、为什么移除、怎么查 |
 
 ---
 
