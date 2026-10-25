@@ -62,7 +62,7 @@
 docker version            # 需要 Docker
 docker compose version    # 需要 Compose v2
 
-git clone https://github.com/basketikun/chatgpt2api.git
+git clone https://github.com/IFuZYI/chatgpt2api.git
 cd chatgpt2api
 cp config.example.json config.json
 ```
@@ -153,7 +153,7 @@ distroless 镜像里**没有 curl / wget**，所以用二进制自带的 `--heal
 
 适合没有 Docker 的环境（边缘设备、NAS、已有 systemd 的服务器）。
 
-从 [Releases](https://github.com/basketikun/chatgpt2api/releases) 下载对应平台的文件：
+从 [Releases](https://github.com/IFuZYI/chatgpt2api/releases) 下载对应平台的文件：
 
 | 平台 | 文件后缀 |
 |:--|:--|
@@ -255,7 +255,7 @@ docker compose -f docker-compose.warp.yml up -d --build
 适合本地开发。需要 **Go 1.27+** 与 **Node 22+**。
 
 ```bash
-git clone https://github.com/basketikun/chatgpt2api.git
+git clone https://github.com/IFuZYI/chatgpt2api.git
 cd chatgpt2api
 
 go build -o chatgpt2api ./cmd/server

@@ -50,7 +50,6 @@ data
 config.json
 .env
 testdata
-assets
 
 # ---------- 文档 ----------
 # README 与 docs/ 不参与构建。
