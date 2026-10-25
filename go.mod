@@ -1,4 +1,4 @@
-module github.com/basketikun/chatgpt2api
+module github.com/IFuZYI/chatgpt2api
 
 go 1.27
 

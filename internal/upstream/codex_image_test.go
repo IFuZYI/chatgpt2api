@@ -11,7 +11,7 @@ import (
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // captureHTTPClient 是 tls_client.HttpClient 的测试替身：

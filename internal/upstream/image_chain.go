@@ -11,7 +11,7 @@ import (
 
 	http "github.com/bogdanfinn/fhttp"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // 图片链路走的是 /backend-api/f/conversation 系列端点，不是 /backend-api/conversation。

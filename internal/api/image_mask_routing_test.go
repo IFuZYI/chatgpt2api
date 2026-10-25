@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // maskCaptureUpstream 记录送进上游的参考图，用于断言 mask 真的被合成了。

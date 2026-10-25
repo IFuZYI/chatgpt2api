@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/config"
-	"github.com/basketikun/chatgpt2api/internal/storage"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/storage"
 	"github.com/google/uuid"
 )
 

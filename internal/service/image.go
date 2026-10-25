@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
 )
 
 // 图片扩展名白名单。

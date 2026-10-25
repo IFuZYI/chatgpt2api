@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // codexRouteUpstream 记录「被选中的账号 token」与送进上游的请求，并回放一个

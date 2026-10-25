@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // newResponseImageServer 建一个注入了假图片上游的 /v1/responses 测试服务器。

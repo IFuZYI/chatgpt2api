@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/upstream"
+	"github.com/IFuZYI/chatgpt2api/internal/upstream"
 )
 
 // token 失效时必须记 invalid_count 并按配置处理。

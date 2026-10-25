@@ -13,7 +13,7 @@ import (
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // 上游默认常量，逐字取自 services/openai_backend_api.py。

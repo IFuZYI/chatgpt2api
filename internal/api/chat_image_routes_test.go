@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // chatImageUpstream 是 chat 图片链路的测试替身：

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // 敏感词必须在请求入口拦截，且不消耗任何上游资源。

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // 回归点：SetRunners 从未被调用时，异步图片任务全部报

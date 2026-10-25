@@ -13,7 +13,7 @@ import (
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // searchFake 是搜索链路的可编程上游：按路径回放响应并记录请求。

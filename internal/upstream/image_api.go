@@ -11,7 +11,7 @@ import (
 
 	http "github.com/bogdanfinn/fhttp"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // 让 *Client 满足 protocol.ImageUpstream 接口。

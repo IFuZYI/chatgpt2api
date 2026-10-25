@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 	"github.com/gin-gonic/gin"
 )
 

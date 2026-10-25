@@ -11,10 +11,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/config"
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // webdavStub 是最小 WebDAV 端点：MKCOL 恒成功，PUT 由 putStatus 决定。

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // editableTaskTimeout 是单次导出的上限。

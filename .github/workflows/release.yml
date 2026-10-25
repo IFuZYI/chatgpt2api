@@ -96,7 +96,7 @@ jobs:
           # -X 注入 config.BuildVersion：单二进制旁边没有 VERSION 文件，
           # 靠它让启动日志与 /version 显示正确版本（AppVersion 会优先读文件、
           # 读不到才回退到这个变量）。
-          ldflags="-s -w -X github.com/basketikun/chatgpt2api/internal/config.BuildVersion=${version}"
+          ldflags="-s -w -X github.com/IFuZYI/chatgpt2api/internal/config.BuildVersion=${version}"
           ext=""
           if [ "${GOOS}" = "windows" ]; then ext=".exe"; fi
           out="${BINARY}_${version}_${GOOS}_${GOARCH}"

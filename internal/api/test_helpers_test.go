@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/config"
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
-	"github.com/basketikun/chatgpt2api/internal/storage"
-	"github.com/basketikun/chatgpt2api/internal/web"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/storage"
+	"github.com/IFuZYI/chatgpt2api/internal/web"
 	"github.com/gin-gonic/gin"
 )
 

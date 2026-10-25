@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/upstream"
+	"github.com/IFuZYI/chatgpt2api/internal/upstream"
 )
 
 // 开关打开 + 执行体已注入：刷新发现失效账号后应自动重登。

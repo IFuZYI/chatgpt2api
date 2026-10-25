@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // TestStreamImageGenerationFailureEmitsErrorEvent 是「流式生图失败被吞」的回归用例。

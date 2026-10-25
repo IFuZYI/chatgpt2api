@@ -7,10 +7,10 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/config"
-	"github.com/basketikun/chatgpt2api/internal/service"
-	"github.com/basketikun/chatgpt2api/internal/storage"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/storage"
 )
 
 // TestRouteParity 断言 Go 版注册的路由集合覆盖 Python 版的全部 78 个 method。

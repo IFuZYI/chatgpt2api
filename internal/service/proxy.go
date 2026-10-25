@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
 )
 
 // normalizeProxyURL 复刻 Python 的 normalize_proxy_url：

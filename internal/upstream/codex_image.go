@@ -10,7 +10,7 @@ import (
 
 	http "github.com/bogdanfinn/fhttp"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // CodexResponsesInstructions 逐字取自 services/openai_backend_api.py:108-110。

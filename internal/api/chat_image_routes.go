@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 	"github.com/gin-gonic/gin"
 )
 

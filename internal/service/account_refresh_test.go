@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/config"
-	"github.com/basketikun/chatgpt2api/internal/storage"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/storage"
 )
 
 // newTestAccountService 建一个临时号池。

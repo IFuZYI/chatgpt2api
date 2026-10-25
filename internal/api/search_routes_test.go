@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // fakeSearchUpstream 是 protocol.SearchUpstream 的测试替身：
@@ -41,7 +41,7 @@ func searchResultFixture() map[string]any {
 		"conversation_id":      "cid-1",
 		"status":               "finished_successfully",
 		"answer":               "答案是 chatgpt2api",
-		"sources":              []any{map[string]any{"title": "GitHub", "url": "https://github.com/basketikun/chatgpt2api", "snippet": "", "source_type": "web"}},
+		"sources":              []any{map[string]any{"title": "GitHub", "url": "https://github.com/IFuZYI/chatgpt2api", "snippet": "", "source_type": "web"}},
 		"assistant_message_id": "m-1",
 		"create_time":          12.5,
 	}

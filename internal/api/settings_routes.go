@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 

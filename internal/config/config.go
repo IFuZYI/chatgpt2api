@@ -329,7 +329,7 @@ func (s *Store) BaseURL() string {
 
 // BuildVersion 由构建期注入：
 //
-//	go build -ldflags "-X github.com/basketikun/chatgpt2api/internal/config.BuildVersion=2.0.0"
+//	go build -ldflags "-X github.com/IFuZYI/chatgpt2api/internal/config.BuildVersion=2.0.0"
 //
 // 单二进制发布（GitHub Release）没有 VERSION 文件可读，靠它兜底。
 var BuildVersion = ""

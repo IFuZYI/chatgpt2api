@@ -2,7 +2,7 @@ package service
 
 import (
 	"fmt"
-	"github.com/basketikun/chatgpt2api/internal/upstream"
+	"github.com/IFuZYI/chatgpt2api/internal/upstream"
 	"time"
 )
 

@@ -10,7 +10,7 @@ import (
 
 	http "github.com/bogdanfinn/fhttp"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // 搜索链路（复刻 services/openai_backend_api.py 的 search 系列方法，:1824-1959）。

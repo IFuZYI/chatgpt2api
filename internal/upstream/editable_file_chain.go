@@ -19,7 +19,7 @@ import (
 
 	http "github.com/bogdanfinn/fhttp"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // 可编辑文件（PPT/PSD）链路：复刻 services/openai_backend_api.py:1163-1780。

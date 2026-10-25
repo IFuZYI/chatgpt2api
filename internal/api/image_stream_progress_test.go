@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 )
 
 // 图片流式必须在生成过程中就把进度 chunk 推给客户端。

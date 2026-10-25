@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/basketikun/chatgpt2api/internal/protocol"
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/protocol"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // RegisterImageTaskRunners 把图片任务的执行体注入 ImageTaskService。

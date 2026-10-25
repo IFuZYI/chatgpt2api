@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/api"
-	"github.com/basketikun/chatgpt2api/internal/web"
+	"github.com/IFuZYI/chatgpt2api/internal/api"
+	"github.com/IFuZYI/chatgpt2api/internal/web"
 )
 
 // 未知的 /api/* 与 /v1/* 必须返回 404 JSON，不能被 SPA fallback 吞成 200 HTML。

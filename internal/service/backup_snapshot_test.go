@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/storage"
+	"github.com/IFuZYI/chatgpt2api/internal/storage"
 )
 
 // 备份必须包含账号与密钥快照。

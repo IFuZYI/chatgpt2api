@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
 )
 
 // image_storage.mode 分流（D3-I17）：local / webdav / both / 非法值。

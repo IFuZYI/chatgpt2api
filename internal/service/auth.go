@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/storage"
+	"github.com/IFuZYI/chatgpt2api/internal/storage"
 	"github.com/google/uuid"
 )
 

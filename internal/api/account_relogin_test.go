@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/basketikun/chatgpt2api/internal/service"
+	"github.com/IFuZYI/chatgpt2api/internal/service"
 )
 
 // passwordLoginStub 是 api 层测试用的假认证上游：所有 POST 都回 200，

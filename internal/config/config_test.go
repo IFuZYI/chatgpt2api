@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
 )
 
 func writeConfig(t *testing.T, dir string, payload map[string]any) {

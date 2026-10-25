@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/basketikun/chatgpt2api/internal/config"
+	"github.com/IFuZYI/chatgpt2api/internal/config"
 )
 
 // 符号链接逃逸：data/images/ 下指向外部文件的软链必须被拒绝。
