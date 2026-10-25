@@ -138,6 +138,11 @@ func (s *EditableFileTaskService) HasRunner() bool {
 }
 
 // Close 停止接受新任务并等待在途任务退出（语义同 ImageTaskService.Close）。
+// cleanupGiveUpAttempts 是产物目录删除的最大尝试次数。
+//
+// 超过后放弃该记录（打日志），避免一个永久不可删的目录让清理每轮空转。
+const cleanupGiveUpAttempts = 5
+
 // CleanupExpired 清理超过保留期的可编辑文件任务与产物。
 //
 // 为什么必须有它：`data/files/` 此前**没有任何删除路径** —— 全仓库搜不到
@@ -182,13 +187,35 @@ func (s *EditableFileTaskService) CleanupExpired(retentionDays int) (tasksRemove
 			if abs, err := filepath.Abs(dir); err == nil {
 				if root, rootErr := filepath.Abs(s.root); rootErr == nil &&
 					strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+					// 先看目录是否存在：RemoveAll 对不存在的路径也返回 nil，
+					// 直接 ++ 会把「本来就没有产物」的任务计成「删掉了一个目录」，
+					// 让日志里的 dirsRemoved 虚高、也掩盖真正的回归。
+					_, statErr := os.Stat(abs)
+					existed := statErr == nil
 					err := os.RemoveAll(abs)
 					if err == nil || os.IsNotExist(err) {
-						dirsRemoved++
+						if existed {
+							dirsRemoved++
+						}
 					} else {
 						// 删不掉就保留记录：否则记录消失而目录还在，
 						// 之后再也没有线索能定位它。
-						dirGone = false
+						//
+						// 但要计次，否则一个永久不可删的目录（chattr +i、
+						// NFS 卡死、权限错配）会让这条记录每轮 tick 都重试、
+						// 永不收敛。累计到 cleanupGiveUpAttempts 次后放弃，
+						// 打一条日志让运维能看见 —— 静默重试比失败更糟。
+						attempts := intValue(task["cleanup_attempts"]) + 1
+						if attempts >= cleanupGiveUpAttempts {
+							fmt.Printf("[editable-task] 放弃清理 %s/%s：目录累计 %d 次删除失败（%v）\n",
+								kind, taskID, attempts, err)
+							// 放弃：删记录但保留目录（目录已不可达，只能人工处理）。
+							// 不能 break —— 那会跳过后面所有待清理的记录。
+							dirGone = true
+						} else {
+							task["cleanup_attempts"] = attempts
+							dirGone = false
+						}
 					}
 				}
 			}
