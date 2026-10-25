@@ -243,7 +243,18 @@ proxy_runtime defaults into `config.json`.
 
 ## Configuration
 
+**When deploying, edit `config.json` only** — it is the sole runtime config file.
+
+| File | Role | Read by the app? |
+|:--|:--|:--|
+| `config.example.json` → `config.json` | The real configuration | ✅ |
+| `.env.example` → `.env` | Only for compose variable substitution (ports etc.) | ❌ |
+| `docker-compose.yml` | Deployment orchestration | ❌ (Docker reads it) |
+
 Precedence: **environment > `config.json` > code defaults**.
+Only a handful of keys accept environment variables — see
+[Configuration](./docs/configuration.md) for the measured evidence and common
+misconceptions.
 
 Mind the **scope**, though: only the settings below accept environment
 variables. Everything else (image retention, proxy, backup, moderation) must go
@@ -606,6 +617,7 @@ Full list with rationale in
 
 | Document | Contents |
 |:--|:--|
+| [Configuration](./docs/configuration.md) | **How `config.json`, `.env` and compose relate, and which one to edit** |
 | [Deployment](./docs/deployment.md) | Deployment modes, reverse proxy, storage, backup, upgrade/rollback, hardening, troubleshooting |
 | [Feature status](./docs/feature-status.en.md) | Per-feature status |
 | [ADR](./docs/adr/) | 13 architecture decision records |

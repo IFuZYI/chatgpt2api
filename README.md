@@ -238,7 +238,17 @@ docker compose -f docker-compose.local.yml up -d --build
 
 ## 配置
 
+**部署时只改 `config.json`** —— 它是唯一的运行时配置文件。
+
+| 文件 | 角色 | 应用读它吗 |
+|:--|:--|:--|
+| `config.example.json` → `config.json` | 真正的配置 | ✅ |
+| `.env.example` → `.env` | 只给 compose 做变量替换（端口等） | ❌ |
+| `docker-compose.yml` | 部署编排 | ❌（Docker 读） |
+
 配置来源与优先级：**环境变量 > `config.json` > 代码默认值**。
+但只有少数几类键支持环境变量，详见
+[配置说明](./docs/configuration.md)（含实测的优先级证据与常见误解）。
 
 但要注意**范围**：只有下面这些项支持环境变量，其余项（图片保留天数、
 代理、备份、审核等）只能写 `config.json` 或用 Web 面板改。
@@ -580,6 +590,7 @@ goroutine 槽位模型、单实例约束、`both` 模式为何降级、为何异
 
 | 文档 | 内容 |
 |:--|:--|
+| [配置说明](./docs/configuration.md) | **config.json / .env / compose 三者关系与优先级** —— 部署时该改哪个 |
 | [部署文档](./docs/deployment.md) | 部署形态、反向代理、存储后端、备份、升级回滚、安全加固、排障 |
 | [功能清单](./docs/feature-status.en.md) | 逐项功能状态 |
 | [ADR](./docs/adr/) | 13 条架构决策记录 |

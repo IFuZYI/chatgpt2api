@@ -99,11 +99,5 @@
     "skip_ssl_verify": false
   },
   "refresh_account_interval_minute": 5,
-  "sensitive_words": [],
-  "third_party_apps": {
-    "infinite_canvas": {
-      "enabled": false,
-      "url": ""
-    }
-  }
+  "sensitive_words": []
 }
