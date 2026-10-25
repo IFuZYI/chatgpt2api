@@ -50,3 +50,8 @@ git_cache/
 loginwithpassword_*/
 logwithemailverifycode_*/
 test_batch_output/
+
+# SDD 工作区（scratch，不进版本库）
+.superpowers/
+# 自改进学习日志（本地）
+.learnings/

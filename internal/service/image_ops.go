@@ -58,11 +58,29 @@ func reencodePNG(path string) (int64, bool) {
 		return 0, false
 	}
 
+	// 压缩后反而变大时保留原文件。
+	//
+	// png.BestCompression 对已经压得很紧的图（或本身是 JPEG 转存的 PNG）
+	// 可能产出更大的字节流。原实现无条件 rename 覆盖，等于「压缩」把文件弄大。
+	originalSize := int64(0)
+	if info, statErr := os.Stat(path); statErr == nil {
+		originalSize = info.Size()
+	}
+	if originalSize > 0 && int64(buffer.Len()) >= originalSize {
+		return originalSize, false
+	}
+
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, buffer.Bytes(), 0o644); err != nil {
 		return 0, false
 	}
 	size := int64(buffer.Len())
+	// 保留原 mtime：否则「压缩」这个动作会把文件的修改时间刷新成现在，
+	// 于是按 mtime 判断的保留期清理（image_retention_days）对这些文件
+	// 永远不会触发 —— 一张 90 天前的老图压缩后变成「刚刚创建」。
+	if info, statErr := os.Stat(path); statErr == nil {
+		_ = os.Chtimes(tmp, info.ModTime(), info.ModTime())
+	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return 0, false

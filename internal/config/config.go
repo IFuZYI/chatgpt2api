@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 // 默认值。这些字面量必须与 Python 版 services/config.py 中的
@@ -367,46 +366,6 @@ func (s *Store) FilesDir() string {
 	dir := filepath.Join(s.dataDir, "files")
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
-}
-
-// CleanupOldImages 删除超过保留期的图片，再自底向上清理空目录。
-func (s *Store) CleanupOldImages() int {
-	cutoff := time.Now().Add(-time.Duration(s.ImageRetentionDays()) * 24 * time.Hour)
-	root := s.ImagesDir()
-	removed := 0
-	var dirs []string
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if path != root {
-				dirs = append(dirs, path)
-			}
-			return nil
-		}
-		if info.ModTime().Before(cutoff) {
-			if os.Remove(path) == nil {
-				removed++
-			}
-		}
-		return nil
-	})
-	// 深的先删。
-	sortByDepthDesc(dirs)
-	for _, dir := range dirs {
-		_ = os.Remove(dir)
-	}
-	return removed
-}
-
-func sortByDepthDesc(paths []string) {
-	for i := 1; i < len(paths); i++ {
-		for j := i; j > 0 && strings.Count(paths[j], string(os.PathSeparator)) >
-			strings.Count(paths[j-1], string(os.PathSeparator)); j-- {
-			paths[j], paths[j-1] = paths[j-1], paths[j]
-		}
-	}
 }
 
 // ---- 归一化子结构 ----

@@ -42,7 +42,7 @@ type ImageService struct {
 	indexMu sync.Mutex
 	// tagsMu 保护 image_tags.json 的 load→mutate→save 全过程。
 	// SetTags/DeleteTag/removeTags 都是读改写，无锁会互相覆盖。
-	tagsMu sync.Mutex
+	tagsMu sync.RWMutex
 
 	// uploadWG 跟踪 both 模式的异步远端上传，供关闭时等待。
 	uploadWG sync.WaitGroup
@@ -162,6 +162,17 @@ func isImageRel(rel string) bool {
 
 // ---- 索引 ----
 
+// loadIndexLocked 读图片索引，损坏时回退到 .bak。
+//
+// 为什么要回退：webdav 模式下本地没有副本，**索引就是唯一记录**。
+// 索引一旦损坏（进程写到一半被杀、磁盘满、手工编辑出错），原实现静默返回空表，
+// 后果是整库消失且无修复路径：
+//   - ListItems      → 0 条
+//   - ReadImage      → 每张图 404（indexedOnWebDAV 门过不去）
+//   - SyncToWebDAV   → uploaded:0（只 walk 本地文件，webdav 模式没有本地文件）
+//
+// saveIndexLocked 每次成功写入后留一份 .bak，这里解析失败就回退，
+// 并把损坏的文件改名保留（便于事后排查，不直接覆盖掉）。
 func (s *ImageService) loadIndexLocked() map[string]map[string]any {
 	payload, err := os.ReadFile(s.indexPath())
 	if err != nil {
@@ -171,6 +182,22 @@ func (s *ImageService) loadIndexLocked() map[string]map[string]any {
 		Items map[string]map[string]any `json:"items"`
 	}
 	if err := json.Unmarshal(payload, &wrapper); err != nil {
+		fmt.Printf("[image] 索引损坏，尝试从 .bak 恢复: %v\n", err)
+		// 把损坏文件留档，避免下一次 save 直接把它覆盖掉。
+		_ = os.Rename(s.indexPath(), s.indexPath()+".corrupt")
+		if backup, readErr := os.ReadFile(s.indexPath() + ".bak"); readErr == nil {
+			if json.Unmarshal(backup, &wrapper) == nil {
+				fmt.Printf("[image] 已从 .bak 恢复 %d 条索引\n", len(wrapper.Items))
+				out := make(map[string]map[string]any, len(wrapper.Items))
+				for key, value := range wrapper.Items {
+					if isImageRel(key) && value != nil {
+						out[key] = value
+					}
+				}
+				return out
+			}
+		}
+		fmt.Printf("[image] .bak 也不可用，索引为空 —— webdav 模式下已存图片将无法读取\n")
 		return map[string]map[string]any{}
 	}
 	out := make(map[string]map[string]any, len(wrapper.Items))
@@ -192,6 +219,11 @@ func (s *ImageService) saveIndexLocked(items map[string]map[string]any) {
 	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
 		_ = os.WriteFile(s.indexPath(), payload, 0o644)
 		return
+	}
+	// 覆盖前把当前索引留一份 .bak：webdav 模式下索引是唯一记录，
+	// 损坏即整库消失（loadIndexLocked 会从它回退）。
+	if current, readErr := os.ReadFile(s.indexPath()); readErr == nil && len(current) > 0 {
+		_ = os.WriteFile(s.indexPath()+".bak", current, 0o644)
 	}
 	if err := os.Rename(tmp, s.indexPath()); err != nil {
 		_ = os.WriteFile(s.indexPath(), payload, 0o644)
@@ -321,9 +353,39 @@ func dateFromRel(rel string, modTime time.Time) string {
 	return modTime.Format("2006-01-02")
 }
 
+// CleanupExpiredImages 按保留期清理，走 DeleteImages 以便同时处理
+// 本地文件、WebDAV 远端对象、索引条目与缩略图。
+//
+// 为什么不能继续用 cfg.CleanupOldImages：它只 walk data/images 删本地文件，
+// 三个模式全部有问题：
+//
+//	webdav → 本地没有副本，removed 恒为 0，**保留策略完全空转**，
+//	         远端对象与索引条目永久累积
+//	both   → 本地删了但索引条目留着且 webdav=true，ReadImage 仍从远端
+//	         提供这张「已过期」的图，/api/images 里也还在
+//	任意   → 缩略图不在此路径处理（CleanupThumbnails 在 webdav 模式自己也有 bug）
+//
+// 改成按日期调用 DeleteImages，四条清理路径一次走完。
+func (s *ImageService) CleanupExpiredImages() int {
+	days := s.cfg.ImageRetentionDays()
+	if days <= 0 {
+		return 0
+	}
+	// 保留期内的图不删：endDate = 截止日（含），即 today-retention。
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	endDate := cutoff.Format("2006-01-02")
+	result := s.DeleteImages(nil, "", endDate, false)
+	removed := 0
+	if n, ok := result["removed"].(int); ok {
+		removed = n
+	}
+	return removed
+}
+
 // ListResponse 复刻 /api/images 的返回：items + 按日期分组。
 func (s *ImageService) ListResponse(baseURL, startDate, endDate string) map[string]any {
-	s.cfg.CleanupOldImages()
+	// 保留期清理走 CleanupExpiredImages（同时处理远端/索引/缩略图）。
+	s.CleanupExpiredImages()
 	s.CleanupThumbnails()
 
 	allTags := s.loadTags()
@@ -447,6 +509,13 @@ func (s *ImageService) CleanupThumbnails() int {
 		}
 		source := strings.TrimSuffix(filepath.ToSlash(rel), ".png")
 		if full, err := s.localImagePath(source); err == nil && fileExists(full) {
+			return nil
+		}
+		// webdav 模式下本地永远没有源文件，只看「本地存在」会把**每一张**
+		// 缩略图都删掉 —— 而 ListResponse 每次调用都触发本函数，于是每次
+		// 刷新管理页都会清空缩略图，EnsureThumbnail 再从远端整图重新生成。
+		// 用与 ReadImage 相同的门（indexedOnWebDAV）判断源是否仍在。
+		if s.indexedOnWebDAV(source) {
 			return nil
 		}
 		if os.Remove(path) == nil {
@@ -630,7 +699,23 @@ func (s *ImageService) DeleteImages(paths []string, startDate, endDate string, a
 
 // ---- 标签 ----
 
+// loadTags 读标签表。
+//
+// 必须持 tagsMu.RLock：写方（saveTags）在 tagsMu 下做整文件重写，
+// 读方此前完全无锁，会读到「文件被截断但还没写完」的中间态。
+// 实测并发 SetTags 期间 4000 次读里有 197 次读到空表 ——
+// 管理页会间歇性地把所有图片渲染成「无标签」。
+//
+// 用 defer RUnlock 而不是在读之前 Unlock：读写要覆盖整个 ReadFile，
+// 否则仍有窗口。
 func (s *ImageService) loadTags() map[string][]string {
+	s.tagsMu.RLock()
+	defer s.tagsMu.RUnlock()
+	return s.loadTagsLocked()
+}
+
+// loadTagsLocked 是不加锁的读，供已持锁的写方复用（避免自死锁）。
+func (s *ImageService) loadTagsLocked() map[string][]string {
 	payload, err := os.ReadFile(s.tagsPath())
 	if err != nil {
 		return map[string][]string{}
@@ -645,14 +730,29 @@ func (s *ImageService) loadTags() map[string][]string {
 	return raw
 }
 
+// saveTags 原子写标签表（tmp + rename）。
+//
+// 原来是 os.WriteFile（截断后重写）：进程在写到一半时崩溃/被杀，
+// 文件就是半截 JSON；下次 loadTags 解析失败返回空表，
+// 再下一次 SetTags 会以空表为基底写回 —— **全部标签丢失**。
+// 索引与任务文件早就是 tmp+rename，只有这里漏了。
 func (s *ImageService) saveTags(data map[string][]string) {
 	payload, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return
 	}
 	payload = append(payload, '\n')
-	_ = os.MkdirAll(filepath.Dir(s.tagsPath()), 0o755)
-	_ = os.WriteFile(s.tagsPath(), payload, 0o644)
+	path := s.tagsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 // AllTags 复刻 get_all_tags：去重并保持首次出现顺序。
@@ -677,7 +777,7 @@ func (s *ImageService) SetTags(rel string, tags []string) []string {
 	s.tagsMu.Lock()
 	defer s.tagsMu.Unlock()
 
-	data := s.loadTags()
+	data := s.loadTagsLocked()
 	cleaned := make([]string, 0, len(tags))
 	seen := map[string]bool{}
 	for _, tag := range tags {
@@ -701,7 +801,7 @@ func (s *ImageService) removeTags(rel string) {
 	s.tagsMu.Lock()
 	defer s.tagsMu.Unlock()
 
-	data := s.loadTags()
+	data := s.loadTagsLocked()
 	if _, exists := data[rel]; !exists {
 		return
 	}
@@ -714,7 +814,7 @@ func (s *ImageService) DeleteTag(tag string) int {
 	s.tagsMu.Lock()
 	defer s.tagsMu.Unlock()
 
-	data := s.loadTags()
+	data := s.loadTagsLocked()
 	count := 0
 	for rel, tags := range data {
 		kept := make([]string, 0, len(tags))

@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -301,6 +302,20 @@ func (p *ImagePool) runParallel(ctx context.Context, request ImageRequest) (Pool
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// panic 必须在这里收住。
+			//
+			// gin.Recovery() 只能拦住 HTTP handler 所在 goroutine 上的 panic；
+			// 这是并行生图另起的 goroutine，一个 nil 解引用（上游返回畸形数据时
+			// 很常见）会直接终止整个进程 —— 所有在途请求一起死，且日志里只有
+			// 一条 goroutine panic。单图路径不受影响（它在 handler goroutine 上）。
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					results <- outcome{
+						index: index,
+						err:   fmt.Errorf("parallel generation panicked: %v", recovered),
+					}
+				}
+			}()
 			// 并行分支必须走同一条重试路径：image_parallel_generation 默认 true，
 			// 这里若直接 Acquire+Generate，默认配置下四类预算全部失效。
 			outputs, genErr := p.generateWithRetry(ctx, request, index)

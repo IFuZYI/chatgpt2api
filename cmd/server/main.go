@@ -172,8 +172,17 @@ func main() {
 	deps.RegisterEditableFileTaskRunner()
 
 	// 启动时清一次过期图片（Python 在 lifespan 里做）。
-	if removed := cfg.CleanupOldImages(); removed > 0 {
+	//
+	// 走 Images.CleanupExpiredImages 而不是 cfg.CleanupOldImages：
+	// 后者只删本地文件，webdav 模式下空转、both 模式下留下「已过期但仍可读」
+	// 的索引条目。前者复用 DeleteImages，本地/远端/索引/缩略图一起处理。
+	if removed := deps.Images.CleanupExpiredImages(); removed > 0 {
 		fmt.Printf("[startup] removed %d expired images\n", removed)
+	}
+	// 可编辑文件产物同样需要保留期清理：data/files/ 此前没有任何删除路径，
+	// 实测 ~2 MiB/任务永久累积。
+	if tasks, dirs := deps.EditableTasks.CleanupExpired(cfg.ImageRetentionDays()); tasks > 0 || dirs > 0 {
+		fmt.Printf("[startup] removed %d expired editable tasks, %d artifact dirs\n", tasks, dirs)
 	}
 
 	// 启动常驻后台任务。
@@ -202,7 +211,7 @@ func main() {
 	)
 
 	cleanupScheduler := service.NewImageCleanupScheduler(service.CleanupActions{
-		CleanupOldImages: cfg.CleanupOldImages,
+		CleanupOldImages: deps.Images.CleanupExpiredImages,
 		DiskFreeMB:       deps.Images.DiskFreeMB,
 		DeleteToTarget:   deps.Images.DeleteToTarget,
 	}, cfg)
@@ -254,6 +263,21 @@ func main() {
 	// 放在 watcher 之前则会在等待任务时让 watcher 继续改账号文件。
 	//
 	// 超时不强杀任务（生图打一半被砍会在上游留下孤儿对话），只记录日志。
+	// 每个收尾步骤用**独立**预算，不共用一个 ctx。
+	//
+	// 原来三个 Close 共享一个 30s 的 taskCtx：runImageTask 用
+	// context.Background() 且不可取消，Tasks.Close 常常把预算全部耗尽，
+	// 后面两个 Close 拿到的是已过期的 ctx，立即返回 ——
+	// ADR-0012 承诺的「进程退出前不留下半截上传」在实际最需要它的场景下不成立。
+	//
+	// 顺序也调了：异步 WebDAV 上传先等（它只受 uploadWG 约束、很快），
+	// 再等不可取消的任务 goroutine。
+	uploadCtx, uploadCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := deps.Images.Close(uploadCtx); err != nil {
+		log.Printf("[server] pending image uploads: %v", err)
+	}
+	uploadCancel()
+
 	taskCtx, taskCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer taskCancel()
 	if err := deps.Tasks.Close(taskCtx); err != nil {
@@ -262,15 +286,12 @@ func main() {
 	// 可编辑文件任务同样会写 data/（editable_file_tasks.json 与产物文件），
 	// 必须在退出前等它们收尾，否则任务文件可能只写了一半。
 	if deps.EditableTasks != nil {
-		if err := deps.EditableTasks.Close(taskCtx); err != nil {
+		editCtx, editCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		if err := deps.EditableTasks.Close(editCtx); err != nil {
 			log.Printf("[server] editable file tasks: %v", err)
 		}
+		editCancel()
 	}
-	// both 模式的 WebDAV 上传是异步的：不等待会让最后几张图只传了一半。
-	if err := deps.Images.Close(taskCtx); err != nil {
-		log.Printf("[server] pending image uploads: %v", err)
-	}
-
 	fmt.Println("[server] stopped")
 }
 

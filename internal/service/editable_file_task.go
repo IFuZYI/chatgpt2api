@@ -138,6 +138,60 @@ func (s *EditableFileTaskService) HasRunner() bool {
 }
 
 // Close 停止接受新任务并等待在途任务退出（语义同 ImageTaskService.Close）。
+// CleanupExpired 清理超过保留期的可编辑文件任务与产物。
+//
+// 为什么必须有它：`data/files/` 此前**没有任何删除路径** —— 全仓库搜不到
+// 对它的 os.Remove/os.RemoveAll（config 里的 FilesDir() 定义了但从未被调用），
+// editable_file_tasks.json 也不在备份的 include 列表里。
+//
+// 实测：10 个任务 → 20 MiB 产物（每个 1 MiB pptx + 1 MiB zip），
+// 服务重启后全部留存。即 ~2 MiB/任务永久累积，且备份时丢失（任务记录还在，
+// 指向的产物没了）。
+//
+// 保留期复用 image_retention_days：两类产物的生命周期语义一致，
+// 不为它单独加一个配置项。
+func (s *EditableFileTaskService) CleanupExpired(retentionDays int) (tasksRemoved, dirsRemoved int) {
+	retention := retentionDays
+	if retention < 1 {
+		retention = 30
+	}
+	cutoff := time.Now().Add(-time.Duration(retention) * 24 * time.Hour).Unix()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	removed := false
+	for key, task := range s.tasks {
+		if !taskTerminal[stringValue(task["status"])] {
+			continue
+		}
+		if parseTaskTimestamp(stringValue(task["updated_at"])) >= float64(cutoff) {
+			continue
+		}
+		// 先删产物目录，再删记录 —— 顺序反过来会失去 taskID 线索。
+		taskID := stringValue(task["task_id"])
+		kind := stringValue(task["kind"])
+		if taskID != "" && kind != "" {
+			dir := filepath.Join(s.root, kind, taskID)
+			if abs, err := filepath.Abs(dir); err == nil {
+				if root, rootErr := filepath.Abs(s.root); rootErr == nil &&
+					strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+					if os.RemoveAll(abs) == nil {
+						dirsRemoved++
+					}
+				}
+			}
+		}
+		delete(s.tasks, key)
+		removed = true
+		tasksRemoved++
+	}
+	if removed {
+		s.saveLocked()
+	}
+	return tasksRemoved, dirsRemoved
+}
+
 func (s *EditableFileTaskService) Close(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	s.closing = true

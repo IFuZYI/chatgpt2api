@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 	"github.com/gin-gonic/gin"
@@ -17,9 +18,24 @@ import (
 // 从图片链路带回来，避免为了多两个字段再写一条日志（Python 一次请求
 // 只对应一个 LoggedCall）。
 type chatCallOutcome struct {
-	err          error
+	err  error
+	urls []string
+
+	// accountEmail 由并行 Acquire 写入（image_parallel_generation 默认 true 时
+	// 会有多个 goroutine 同时进来），读在 handler goroutine。
+	// 用 Once 保证「只写一次」且写入对读侧可见 —— 原来是无锁的
+	// `if outcome.accountEmail == "" { outcome.accountEmail = ... }`，
+	// 是真实的 data race（-race 可复现）。
+	emailOnce    sync.Once
 	accountEmail string
-	urls         []string
+}
+
+// setAccountEmail 只在第一次调用时写入（并发安全）。
+func (o *chatCallOutcome) setAccountEmail(email string) {
+	if o == nil || email == "" {
+		return
+	}
+	o.emailOnce.Do(func() { o.accountEmail = email })
 }
 
 // handleImageChat 复刻 openai_v1_chat_complete.handle 的图片分支：
@@ -148,13 +164,30 @@ func (d *Deps) streamImageChat(c *gin.Context, request protocol.ImageRequest, ou
 		}
 	}
 
-	// 失败：还没写任何字节就报正常的 JSON 错误（客户端拿得到状态码与原因）；
-	// 已经开流了就只能截断，与 Python 抛异常中断生成器一致 —— 此时不再补
-	// stop 块与 [DONE]，否则客户端会把一次失败当成正常结束。
+	// 失败：还没写任何字节就报正常的 JSON 错误（客户端拿得到状态码与原因）。
 	if runErr != nil {
 		outcome.err = runErr
 		if !started {
 			writeErr(c, mapImageError(runErr))
+			return
+		}
+		// 已经开流了：补一条 error 事件再结束。
+		//
+		// 原来这里是「静默截断」——不写 error、不写 [DONE]、不写 finish_reason，
+		// 直接 return。客户端收到的是 HTTP 200 + 半截 chunk 流 + 一个裸 TCP 关闭，
+		// 无法区分「生成到一半上游挂了」和「模型只说了这么多」。
+		//
+		// 补 error 事件与另外两个流式实现（image_generation / responses）对齐，
+		// 它们都在失败时发出 error。仍然不写 [DONE]：终止标记意味着「正常结束」，
+		// 这次不是。
+		if payload, marshalErr := marshalJSON(map[string]any{
+			"error": map[string]any{
+				"message": mapImageError(runErr).Error(),
+				"type":    "server_error",
+			},
+		}); marshalErr == nil {
+			_, _ = c.Writer.WriteString("data: " + payload + "\n\n")
+			c.Writer.Flush()
 		}
 		return
 	}
@@ -182,9 +215,9 @@ func (d *Deps) imageChatPool(model string, outcome *chatCallOutcome) *protocol.I
 			if err != nil {
 				return generator, release, err
 			}
-			if outcome != nil && outcome.accountEmail == "" && token != "" {
+			if token != "" && outcome != nil {
 				if account := d.Accts.GetAccount(token); account != nil {
-					outcome.accountEmail = strings.TrimSpace(stringValueOf(account["email"]))
+					outcome.setAccountEmail(strings.TrimSpace(stringValueOf(account["email"])))
 				}
 			}
 			return generator, release, nil

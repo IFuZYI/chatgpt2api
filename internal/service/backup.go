@@ -102,6 +102,14 @@ func (s *BackupBuilder) Build(settings BackupSettings, trigger string) (*BackupA
 		addFile("data/image_tags.json", filepath.Join(s.DataDir, "image_tags.json"))
 		addFile("data/image_index.json", filepath.Join(s.DataDir, "image_index.json"))
 	}
+	// 可编辑文件任务记录也必须进备份。
+	//
+	// 此前它不在任何 include 分支里：产物目录 data/files/ 不进备份（体积考虑），
+	// 但**任务记录**也不进，于是恢复后连「曾经有哪些任务」都不知道。
+	// 记录很小（每任务约 600 B），和 image_tasks.json 同等对待。
+	if truthy(include["image_tasks"]) {
+		addFile("data/editable_file_tasks.json", filepath.Join(s.DataDir, "editable_file_tasks.json"))
+	}
 
 	// 快照形状必须与 Python 一致：snapshots/accounts.json 与
 	// snapshots/auth_keys.json 存的是**裸数组**（load_accounts/load_auth_keys
