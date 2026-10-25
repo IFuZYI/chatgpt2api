@@ -1,15 +1,35 @@
 services:
   init-config:
-    image: python:3.13-alpine
+    # 用 app 自己的镜像跑 --init-proxy-config 子命令。
+    #
+    # 这里**不能**依赖任何 Python 运行时：`scripts/init_proxy_config.py` 已随
+    # Python 后端一起归档到分支 archive/python-backend-2.0，main 上不再有
+    # scripts/ 目录。原来的 `image: python:3.13-alpine` + 挂载 ./scripts
+    # 会让这个一次性容器直接失败，整个 WARP 部署路径跑不起来。
+    #
+    # 复用同一镜像还有个好处：配置合并逻辑与主程序同源，不会出现
+    # 「init 写进去的字段主程序不认」这类漂移。
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chatgpt2api:warp
     container_name: chatgpt2api-warp-init
-    working_dir: /app
+    # 必须以 root 运行。
+    #
+    # 镜像本身是 distroless nonroot（uid 65532），而 config.json 由操作者在
+    # 宿主机上创建（通常属主 root、模式 644）—— nonroot 写不进去，实测报
+    # `open /app/host/config.json: permission denied`，整个 WARP 部署卡在第一步。
+    #
+    # 这个容器只做一件事：把 proxy_runtime 默认值合并进配置文件后退出，
+    # 不监听端口、不处理网络请求，所以用 root 的暴露面很小。
+    user: "0:0"
+    # init-config 负责**创建/合并** config.json（会写文件），
+    # 所以不能要求文件已存在 —— 挂项目根目录，只碰 config.json。
+    # 注意：app 服务那条用长语法 + create_host_path:false，要求文件存在 ——
+    # 顺序由 depends_on(service_completed_successfully) 保证。
     volumes:
-      # init-config 负责**创建/合并** config.json（脚本会 write_text），
-      # 所以不能要求文件已存在。挂载项目根目录，但脚本只碰 config.json。
-      # 注意：app 服务那条用长语法 + create_host_path:false，要求文件存在 ——
-      # 顺序由 depends_on(service_completed_successfully) 保证。
       - ./:/app/host
-      - ./scripts:/app/scripts:ro
+    working_dir: /app
     environment:
       CHATGPT2API_CONFIG_FILE: /app/host/config.json
       CHATGPT2API_PROXY_RUNTIME_ENABLED: ${CHATGPT2API_PROXY_RUNTIME_ENABLED:-true}
@@ -26,7 +46,12 @@ services:
       CHATGPT2API_PROXY_RUNTIME_BROWSER: ${CHATGPT2API_PROXY_RUNTIME_BROWSER:-chrome}
       CHATGPT2API_PROXY_RUNTIME_USER_AGENT: ${CHATGPT2API_PROXY_RUNTIME_USER_AGENT:-}
       CHATGPT2API_FLARESOLVERR_URL: ${CHATGPT2API_FLARESOLVERR_URL:-http://flaresolverr:8191}
-    command: ["python3", "/app/scripts/init_proxy_config.py"]
+    # 只写 flag —— 镜像的 ENTRYPOINT 已经是 /app/chatgpt2api，
+    # command 会被**追加**在它后面。若在这里再写一遍二进制路径，
+    # 实际执行变成 `/app/chatgpt2api /app/chatgpt2api --init-proxy-config`，
+    # flag.Parse 遇到位置参数就停止解析，子命令不生效，直接掉进正常启动流程
+    # 并报 "auth-key 未设置"（实测踩到）。
+    command: ["--init-proxy-config"]
     restart: "no"
 
   warp-proxy:

@@ -486,7 +486,8 @@ environment:
 
 ### 图片保留
 
-`image_retention_days`（代码默认 **30** 天）控制本地图片与任务记录的清理，
+`image_retention_days`（代码默认 **30** 天；但 `config.example.json` 里写的是 **15**，
+照模板部署会得到 15 天 —— 想用 30 就改这一项或删掉它）控制本地图片与任务记录的清理，
 由内置清理调度器执行。
 
 ### 图片也能存到 Cloudflare R2 吗
