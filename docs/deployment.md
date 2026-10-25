@@ -245,7 +245,8 @@ sudo systemctl enable --now chatgpt2api
 | `warp` | Cloudflare WARP 出口 | 内部 |
 | `privoxy` | 把 WARP 的 SOCKS5 转成 HTTP 代理 | `127.0.0.1` |
 | `flaresolverr` | 自动处理 Cloudflare 挑战 | `127.0.0.1` |
-| `init-config` | 一次性容器，把 proxy_runtime 默认值写进 `config.json` | — |
+| `init-data` | 一次性容器，把 `./data` 属主改成 uid 65532 | — |
+| `init-config` | 一次性容器，跑 `--init-proxy-config` 把 proxy_runtime 默认值写进 `config.json` | — |
 
 ```bash
 cp .env.example .env
@@ -253,10 +254,42 @@ $EDITOR .env                   # 按需改端口与 WARP_LICENSE_KEY
 docker compose -f docker-compose.warp.yml up -d --build
 ```
 
+### init-config 做什么
+
+它跑的是**同一个二进制**的子命令，不是外部脚本：
+
+```bash
+/app/chatgpt2api --init-proxy-config
+```
+
+行为：
+
+1. 读 `CHATGPT2API_CONFIG_FILE`（compose 已设为 `/app/host/config.json`）。
+   文件不存在就创建，**不要求先有 `auth-key`** —— 它只写配置、不启动服务。
+2. 从一组 `CHATGPT2API_PROXY_RUNTIME_*` 环境变量推导出 `proxy_runtime` 段
+   （`.env` 里能改，完整清单见 [`.env.example`](../.env.example)）。
+3. 幂等合并：若现有 `proxy_runtime` 还是仓库默认值就整体替换，否则**只补齐
+   缺失的键**，不动你手改过的值。想无条件覆盖设
+   `CHATGPT2API_PROXY_RUNTIME_FORCE=true`。
+4. 打印一行脱敏摘要后退出（URL 里的密码会变成 `[REDACTED]`）。
+
+手动跑（不经过 compose）：
+
+```bash
+CHATGPT2API_CONFIG_FILE=./config.json \
+CHATGPT2API_PROXY_RUNTIME_PROXY_URL=http://127.0.0.1:8118 \
+  ./chatgpt2api --init-proxy-config
+```
+
 > ⚠️ **安全提示**：`warp` 容器需要 `NET_ADMIN` 与 `SYS_MODULE` 能力；
-> `init-config` 会把项目目录挂进去写 `config.json`。
-> 请确认宿主机上该目录的权限，并注意 `.env` 里的凭据对其他容器可见
+> `init-config` 与 `init-data` 都以 `user: "0:0"` 运行（前者要写宿主机上的
+> `config.json`，后者要 chown `./data`）。这两个容器跑完即退出、不监听端口。
+> 请确认宿主机目录权限，并注意 `.env` 里的凭据对其他容器可见
 > （环境变量能通过 `docker inspect` 读到）。
+
+> **未在本仓库验证**：完整的 WARP 链路需要真实 WARP 容器与 `NET_ADMIN`，
+> 当前环境无法端到端跑通。已验证的是 `init-data` 与 `init-config` 两个
+> 一次性容器（各自的日志与产物都核对过）。
 
 用 `docker compose -f docker-compose.warp.yml logs -f` 看日志。
 

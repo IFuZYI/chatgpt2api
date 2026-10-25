@@ -293,6 +293,20 @@ See [`.env.example`](./.env.example) for the full list (git backend, proxy runti
 | `--addr` | Listen address, e.g. `:8080` |
 | `--base-dir` | Data root |
 | `--healthcheck` | Probe and exit (used by container healthcheck; distroless has no curl) |
+| `--init-proxy-config` | Merge WARP/FlareSolverr `proxy_runtime` defaults into `config.json` and exit. Used by the `init-config` container in `docker-compose.warp.yml` |
+
+> `--init-proxy-config` reads a set of `CHATGPT2API_PROXY_RUNTIME_*` environment
+> variables (see [`.env.example`](./.env.example)) and prints a redacted summary.
+> It does **not** start the server and does **not** require `auth-key` — precisely
+> so it can write config before the operator has set a key. Manual use:
+>
+> ```bash
+> CHATGPT2API_CONFIG_FILE=./config.json ./chatgpt2api --init-proxy-config
+> ```
+>
+> It is idempotent: an already-configured `proxy_runtime` only gets missing keys
+> filled in, never overwritten. Set `CHATGPT2API_PROXY_RUNTIME_FORCE=true` to
+> force replacement.
 
 ### Storage backends
 
@@ -523,7 +537,7 @@ PostgreSQL backend tests require `TEST_POSTGRES_URL`; they are skipped otherwise
 Pushing a tag triggers two independent pipelines:
 
 ```bash
-git tag v2.0.1 && git push origin v2.0.1
+git tag v2.0.2 && git push origin v2.0.2
 ```
 
 | Workflow | Purpose |
@@ -559,7 +573,7 @@ never touches the business layer.
 **Error envelopes** live in one place (`internal/api/errors.go`) rather than being
 scattered across handlers.
 
-Key decisions are recorded in [`docs/adr/`](./docs/adr/) — 12 of them, covering
+Key decisions are recorded in [`docs/adr/`](./docs/adr/) — 13 of them, covering
 why the rewrite happened, how TLS fingerprinting is replicated, where each error
 envelope applies, why data formats are preserved byte-for-byte, the goroutine
 slot model, the single-instance constraint, why `both` mode degrades, and why
@@ -594,7 +608,7 @@ Full list with rationale in
 |:--|:--|
 | [Deployment](./docs/deployment.md) | Deployment modes, reverse proxy, storage, backup, upgrade/rollback, hardening, troubleshooting |
 | [Feature status](./docs/feature-status.en.md) | Per-feature status |
-| [ADR](./docs/adr/) | 12 architecture decision records |
+| [ADR](./docs/adr/) | 13 architecture decision records |
 | [Upstream SSE protocol](./docs/upstream-sse-conversation.md) | Conversation streaming protocol notes |
 | [Python backend archive](./docs/archive-python-backend.md) | Where the 1.x Python implementation lives and why it was removed |
 | [Glossary](./GLOSSARY.md) | Project terminology |

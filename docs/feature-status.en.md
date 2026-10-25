@@ -30,7 +30,7 @@
 | CPA 导入进度跟踪 | ✅  | 已支持导入进度展示与轮询更新。 |
 | `sub2api` 连接管理与账号浏览 | ✅  | 已支持 `sub2api` 服务器的新增、修改、删除、分组查询和 OpenAI OAuth 账号列表读取。 |
 | `sub2api` 导入 | ✅  | 已支持勾选 `sub2api` 中的 OpenAI OAuth 账号，批量拉取 `access_token` 导入本地号池，并展示导入进度。 |
-| Docker 自托管部署 | ✅  | 已支持 Docker Compose 部署，并提供多架构镜像。 |
+| Docker 自托管部署 | ✅  | 三套 compose：默认（拉 GHCR 镜像）、`local`（本地构建 + sqlite）、`warp`（WARP + FlareSolverr 清障）。`data/` 属主由内置 `init-data` 自动修正，`warp` 的配置初始化由 `--init-proxy-config` 子命令完成。多架构镜像（amd64/arm64）。 |
 | 兼容接口中的多参考图能力 | ✅  | 已实现，支持在兼容接口中传入多参考图。 |
 | 更高级的 Token 调度策略 | ⚠️ | 当前已有轮询、限流刷新、槽位并发控制；更复杂的调度策略仍在完善中。 |
 | Render / Vercel 等部署表述 | ⚠️ | 当前主要以 Docker 部署为主，其他平台部署方式暂未重点说明。 |

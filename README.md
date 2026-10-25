@@ -285,6 +285,19 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
 | `--addr` | 监听地址，如 `:8080` |
 | `--base-dir` | 数据根目录 |
 | `--healthcheck` | 探活后退出（容器 healthcheck 用；distroless 无 curl） |
+| `--init-proxy-config` | 把 WARP/FlareSolverr 的 `proxy_runtime` 默认值幂等合并进 `config.json` 后退出。`docker-compose.warp.yml` 的 `init-config` 容器用它 |
+
+> `--init-proxy-config` 读一组 `CHATGPT2API_PROXY_RUNTIME_*` 环境变量
+> （见 [`.env.example`](./.env.example)），合并完打印一行脱敏摘要。
+> 它**不启动服务**，也不需要 `auth-key` —— 正因为要能在「用户还没填 key」时
+> 把配置写好。手动用法：
+>
+> ```bash
+> CHATGPT2API_CONFIG_FILE=./config.json ./chatgpt2api --init-proxy-config
+> ```
+>
+> 幂等：已配置过的 `proxy_runtime` 只补齐缺失键，不会覆盖你手改的值；
+> 想强制覆盖设 `CHATGPT2API_PROXY_RUNTIME_FORCE=true`。
 
 ### 存储后端
 
@@ -504,7 +517,7 @@ PostgreSQL 后端测试需要 `TEST_POSTGRES_URL`，未设置时跳过。
 打 tag 触发两条独立流水线：
 
 ```bash
-git tag v2.0.1 && git push origin v2.0.1
+git tag v2.0.2 && git push origin v2.0.2
 ```
 
 | 工作流 | 作用 |
@@ -537,7 +550,7 @@ protocol   storage   web   config      ← 无内部依赖
 
 **错误信封**集中在一处（`internal/api/errors.go`），不在各 handler 里散落。
 
-关键设计决策记录在 [`docs/adr/`](./docs/adr/) —— 12 条，包括：
+关键设计决策记录在 [`docs/adr/`](./docs/adr/) —— 13 条，包括：
 为什么全量重写、TLS 指纹怎么复刻、三套错误信封的边界、数据格式为何逐字保留、
 goroutine 槽位模型、单实例约束、`both` 模式为何降级、为何异步上传。
 
@@ -569,7 +582,7 @@ goroutine 槽位模型、单实例约束、`both` 模式为何降级、为何异
 |:--|:--|
 | [部署文档](./docs/deployment.md) | 部署形态、反向代理、存储后端、备份、升级回滚、安全加固、排障 |
 | [功能清单](./docs/feature-status.en.md) | 逐项功能状态 |
-| [ADR](./docs/adr/) | 12 条架构决策记录 |
+| [ADR](./docs/adr/) | 13 条架构决策记录 |
 | [上游 SSE 协议](./docs/upstream-sse-conversation.md) | 会话流式协议记录 |
 | [Python 后端归档](./docs/archive-python-backend.md) | 1.x 的 Python 实现在哪个分支、为什么移除 |
 | [术语表](./GLOSSARY.md) | 项目内术语 |

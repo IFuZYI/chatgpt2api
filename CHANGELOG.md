@@ -1,5 +1,61 @@
 # Changelog
 
+## 2.0.2 - 2026-10-25
+
+修三个部署阻断。2.0.1 的镜像与 compose 文件都无法直接按 README 跑通。
+
+### 修复
+
++ [修复] **WARP 部署完全跑不起来**：`docker-compose.warp.yml` 的 `init-config`
+  容器原本执行 `python3 /app/scripts/init_proxy_config.py`，但 `scripts/` 已随
+  Python 后端归档到分支 `archive/python-backend-2.0`，`main` 上不再存在。
+  改为跑同一二进制的子命令 `--init-proxy-config`（见下方「新增」）。
++ [修复] **`init-config` 的 command 被追加到 ENTRYPOINT**：Dockerfile 里是
+  `ENTRYPOINT ["/app/chatgpt2api"]`，若 `command` 再写一遍二进制路径，实际执行
+  变成 `/app/chatgpt2api /app/chatgpt2api --init-proxy-config`。
+  `flag.Parse` 遇到位置参数即停止解析，子命令不生效，程序掉进正常启动流程
+  并报 `auth-key 未设置` —— 报错完全不指向真正原因。
++ [修复] **默认 compose「能启动但存不了数据」**：镜像以 distroless `nonroot`
+  （uid 65532）运行，而 `./data` 由 Docker 首次创建为 `root:root 755`。
+  结果是 `/health` 返回 200、读接口全部正常，但一写数据就失败：
+
+  ```
+  [account] save accounts failed: open /app/data/accounts.json.tmp: permission denied
+  ```
+
+  三个 compose 都加了 `init-data` 一次性容器，`app` 通过
+  `depends_on: service_completed_successfully` 等它把 `./data` chown 到 65532。
++ [修复] **`docker-compose.local.yml` 无限重启**：它默认用 sqlite 后端，需要
+  **创建** `data/accounts.db`，在权限问题下直接
+  `storage: unable to open database file (14)` 并反复重启。修完权限后正常。
+  （json 后端因为空号池时延迟写入，反而「看起来能跑」，掩盖了同一个根因。）
+
+### 新增
+
++ [新增] `chatgpt2api --init-proxy-config` 子命令：从 `CHATGPT2API_PROXY_RUNTIME_*`
+  环境变量推导 WARP/FlareSolverr 的 `proxy_runtime` 默认值，幂等合并进
+  `config.json` 后退出。**不启动服务、不需要 `auth-key`** —— 正是为了能在
+  用户填 key 之前把配置写好。幂等语义：已配置过的只补齐缺失键，不覆盖手改值；
+  `CHATGPT2API_PROXY_RUNTIME_FORCE=true` 强制覆盖。输出一行脱敏摘要
+  （URL 里的密码变 `[REDACTED]`）。13 个测试 / 37 个子测试覆盖。
+  设计取舍见 [ADR-0013](./docs/adr/0013-warp-init-config-as-go-subcommand.md)。
+
+### 文档
+
++ [文档] README / README.en / `docs/deployment.md` 补上 `--init-proxy-config`
+  的说明与手动用法（此前三份文档零提及，而它是 WARP 部署的必需组件）。
++ [文档] `.env.example` 补 `CHATGPT2API_CONFIG_FILE` 与
+  `CHATGPT2API_PROXY_RUNTIME_FORCE`，并说明这组变量由子命令消费、主程序不读。
++ [文档] README 的部署对比表补上 `docker-compose.local.yml`（它一直存在且可用，
+  但此前三份文档都没提）。写明与默认 compose 的三个差异：本地 `build:` vs
+  拉 GHCR、默认端口 8000 vs 3000、默认存储 sqlite vs json。
++ [文档] `docs/deployment.md` 的排障章节补充：`init-data` 做什么、为什么必须
+  这么做、手动处理方式、如何验证属主正确。
++ [文档] 明确标注**未验证**的部分：完整 WARP 链路需要真实 WARP 容器与
+  `NET_ADMIN`，当前环境无法端到端跑通；postgres / git 存储后端需要外部服务。
++ [文档] 新增 [ADR-0013](./docs/adr/0013-warp-init-config-as-go-subcommand.md)，
+  记录「为什么用 Go 子命令而不是恢复 Python 脚本」。
+
 ## 2.0.1 - 2026-10-25
 
 ### 变更
