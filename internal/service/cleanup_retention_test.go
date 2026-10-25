@@ -120,3 +120,9 @@ func TestCleanupEditableReallyDeletesDir(t *testing.T) {
 	}
 	t.Logf("tasksRemoved=%d dirsRemoved=%d，目录已删除", tasks, dirs)
 }
+
+// 注：`CleanupExpired` 的 dirGone 守卫（目录删不掉时保留记录）没有测试覆盖。
+// 构造「目录存在但不可删」在当前环境不可能 —— 容器以 root 运行，
+// 目录权限位不生效；chattr +i 在 overlayfs 上不可用。
+// 该分支的逻辑本身已在实现里加注释说明，且它是「宁可留记录也不丢线索」的
+// 保守方向（错了也只是多点重试，不会丢数据）。
