@@ -591,6 +591,7 @@ goroutine 槽位模型、单实例约束、`both` 模式为何降级、为何异
 | 文档 | 内容 |
 |:--|:--|
 | [配置说明](./docs/configuration.md) | **config.json / .env / compose 三者关系与优先级** —— 部署时该改哪个 |
+| [图片存储三模式](./docs/image-storage-modes.md) | `local` / `webdav` / `both` 的写入、读取、删除全流程与实测耗时 |
 | [部署文档](./docs/deployment.md) | 部署形态、反向代理、存储后端、备份、升级回滚、安全加固、排障 |
 | [功能清单](./docs/feature-status.en.md) | 逐项功能状态 |
 | [ADR](./docs/adr/) | 13 条架构决策记录 |

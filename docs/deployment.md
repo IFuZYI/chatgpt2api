@@ -488,6 +488,9 @@ environment:
 | `webdav` | 只写 WebDAV；失败即整次失败 | 想彻底不占本地盘 |
 | `both` | 本地 + WebDAV | 兼顾可靠性（推荐） |
 
+> 逐环节的完整流程（写入/读取/删除/URL/退出）与实测耗时见
+> [图片存储三模式](./image-storage-modes.md)。
+
 ### `webdav` 与 `both` 的关键差别
 
 - **`webdav`**：WebDAV 写失败 → 整次保存失败。静默退回本地会让用户以为图已在远端，

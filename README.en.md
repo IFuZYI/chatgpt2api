@@ -618,6 +618,7 @@ Full list with rationale in
 | Document | Contents |
 |:--|:--|
 | [Configuration](./docs/configuration.md) | **How `config.json`, `.env` and compose relate, and which one to edit** |
+| [Image storage modes](./docs/image-storage-modes.md) | `local` / `webdav` / `both` — full write/read/delete flows with measured timings |
 | [Deployment](./docs/deployment.md) | Deployment modes, reverse proxy, storage, backup, upgrade/rollback, hardening, troubleshooting |
 | [Feature status](./docs/feature-status.en.md) | Per-feature status |
 | [ADR](./docs/adr/) | 13 architecture decision records |
