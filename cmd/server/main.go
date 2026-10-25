@@ -32,8 +32,16 @@ func main() {
 		baseDir = flag.String("base-dir", "", "project root holding config.json / data / VERSION")
 		// healthcheck 供容器 HEALTHCHECK 使用（distroless 没有 curl/wget）。
 		healthcheck = flag.Bool("healthcheck", false, "probe /health on --addr and exit 0 if healthy")
+		// init-proxy-config 替代已归档的 scripts/init_proxy_config.py：
+		// WARP 部署的一次性 init 容器用它把 proxy_runtime 默认值合并进 config.json。
+		initProxyConfig = flag.Bool("init-proxy-config", false,
+			"merge WARP/FlareSolverr proxy_runtime defaults into config.json and exit")
 	)
 	flag.Parse()
+
+	if *initProxyConfig {
+		os.Exit(config.RunInitProxyRuntime())
+	}
 
 	if *healthcheck {
 		probeAddr := *addr
