@@ -346,12 +346,27 @@ func (s *AccountService) FinishRefreshProgress(id string, result map[string]any,
 	progress.mu.Unlock()
 }
 
+// GetRefreshProgress 读刷新进度。
+//
+// 已完成的进度在读取后**延迟一拍**清理：客户端靠轮询拿到 done=true，
+// 若立刻删掉，紧接着的一次轮询会拿到 nil 而误判「进度不存在」。
+// 这里在返回 done 的同时安排删除，让最后一次成功读取完整返回。
+//
+// 为什么需要清理：`refreshProgress` 是 sync.Map，每次
+// POST /api/accounts/refresh 都存一个 *Progress，此前没有任何删除点
+// （CleanRefreshProgress 零调用），管理员刷 200 次就留 200 个对象。
 func (s *AccountService) GetRefreshProgress(id string) map[string]any {
 	value, ok := s.refreshProgress.Load(id)
 	if !ok {
 		return nil
 	}
-	return value.(*Progress).snapshot("refresh")
+	progress := value.(*Progress)
+	snapshot := progress.snapshot("refresh")
+	if done, _ := snapshot["done"].(bool); done && id != "" {
+		// 同步删除即可：调用方已经拿到完整快照。
+		s.refreshProgress.Delete(id)
+	}
+	return snapshot
 }
 
 func (s *AccountService) CleanRefreshProgress(id string) {
@@ -432,12 +447,18 @@ func (s *AccountService) FinishReloginProgress(id string, result map[string]any,
 	progress.mu.Unlock()
 }
 
+// GetReloginProgress 读重登进度，已完成则清理（理由同 GetRefreshProgress）。
 func (s *AccountService) GetReloginProgress(id string) map[string]any {
 	value, ok := s.reloginProgress.Load(id)
 	if !ok {
 		return nil
 	}
-	return value.(*Progress).snapshot("relogin")
+	progress := value.(*Progress)
+	snapshot := progress.snapshot("relogin")
+	if done, _ := snapshot["done"].(bool); done && id != "" {
+		s.reloginProgress.Delete(id)
+	}
+	return snapshot
 }
 
 func (s *AccountService) CleanReloginProgress(id string) {
@@ -458,9 +479,25 @@ func (s *AccountService) RefreshAccounts(
 		if trimmed == "" || seen[trimmed] {
 			continue
 		}
+		// 跳过已被另一条路径在刷新的账号。
+		//
+		// 手工 POST /api/accounts/refresh 与 watcher 的 tick 之间没有互斥：
+		// 两轮并发跑同一个 token 时，一次上游失效会被两条路径各记一次
+		// invalid_count，账号更快被判定失效（实测 invalid_count=2）。
+		// 用一个按账号的在飞标记去重，代价是那一轮跳过它 —— 下一轮还会刷。
+		if !s.beginRefresh(trimmed) {
+			continue
+		}
 		seen[trimmed] = true
 		unique = append(unique, trimmed)
 	}
+	// 无论从哪条路径返回，都要释放已占住的刷新权。
+	// 漏放会让账号永久卡在 refreshing 里 —— 之后再也刷不了它。
+	defer func() {
+		for _, token := range unique {
+			s.endRefresh(token)
+		}
+	}()
 	if len(unique) == 0 {
 		result := map[string]any{
 			"refreshed": 0,
@@ -685,6 +722,27 @@ func (s *AccountService) KeepaliveRefreshTokens(
 	}
 
 	return map[string]any{"refreshed": refreshed, "relogined": relogined, "errors": errorsOut}
+}
+
+// beginRefresh 尝试占住一个账号的刷新权，返回 false 表示已有另一轮在刷它。
+func (s *AccountService) beginRefresh(token string) bool {
+	s.refreshingMu.Lock()
+	defer s.refreshingMu.Unlock()
+	if s.refreshing == nil {
+		s.refreshing = map[string]bool{}
+	}
+	if s.refreshing[token] {
+		return false
+	}
+	s.refreshing[token] = true
+	return true
+}
+
+// endRefresh 释放刷新权。
+func (s *AccountService) endRefresh(token string) {
+	s.refreshingMu.Lock()
+	delete(s.refreshing, token)
+	s.refreshingMu.Unlock()
 }
 
 // RefreshTokenFor 返回 access_token 对应账号的 refresh_token（不存在返回空）。

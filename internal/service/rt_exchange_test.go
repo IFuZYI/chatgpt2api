@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // 回归点 1：KeepaliveRefreshTokens 传给回调的必须是 refresh_token，
@@ -325,5 +328,57 @@ func TestRefreshTokenReusedIsTreatedAsRejection(t *testing.T) {
 		if IsRefreshTokenRejected(e) {
 			t.Errorf("%v 被误判为拒绝", e)
 		}
+	}
+}
+
+// 回归：手工刷新与 watcher 不能并发处理同一个账号。
+//
+// 之前两条路径之间没有互斥，一次上游失效会被各记一次 invalid_count，
+// 账号更快被判定失效（实测 invalid_count=2）。
+func TestConcurrentRefreshDeduplicatesSameAccount(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-1", "type": "free", "status": StatusNormal,
+			"created_at": "2020-01-01 00:00:00"},
+	})
+
+	var calls atomic.Int64
+	verify := func(ctx context.Context, token, event string) (Account, error) {
+		calls.Add(1)
+		time.Sleep(80 * time.Millisecond) // 让第二轮一定撞上在飞标记
+		return Account{"access_token": token, "email": "a@x.test", "quota": 1, "status": StatusNormal}, nil
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			svc.RefreshAccounts(context.Background(), []string{"at-1"}, "", verify)
+		}()
+	}
+	wg.Wait()
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("同一账号被并发刷新 %d 次，应为 1 次", got)
+	}
+	// 锁必须已释放：再刷一次应当能真正执行
+	calls.Store(0)
+	svc.RefreshAccounts(context.Background(), []string{"at-1"}, "", verify)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("刷新权未释放：后续刷新被跳过（verify 调用 %d 次）", got)
+	}
+}
+
+// 回归：已完成进度读取后应被清理，避免 sync.Map 无界增长。
+func TestRefreshProgressCleanedAfterDone(t *testing.T) {
+	svc, _ := newTestAccountService(t, nil)
+	svc.InitRefreshProgress("p1", 1)
+	svc.FinishRefreshProgress("p1", map[string]any{"refreshed": 1}, "")
+
+	if got := svc.GetRefreshProgress("p1"); got == nil {
+		t.Fatal("第一次读取应返回完整进度")
+	}
+	if got := svc.GetRefreshProgress("p1"); got != nil {
+		t.Error("已完成进度未被清理，sync.Map 会无界增长")
 	}
 }

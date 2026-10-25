@@ -77,6 +77,11 @@ type AccountService struct {
 	refreshProgress sync.Map // progressID -> *Progress
 	reloginProgress sync.Map // progressID -> *Progress
 
+	// refreshing 标记「正在被某条路径刷新」的账号，防止手工刷新与
+	// watcher tick 并发处理同一个 token（会让一次上游失效被计两次）。
+	refreshingMu sync.Mutex
+	refreshing   map[string]bool
+
 	cumulativeTotal int
 	cumulativeMu    sync.Mutex
 
@@ -614,11 +619,26 @@ func (s *AccountService) ListExpiringAccessTokens() []string {
 // 账号自动救回；上游仍失效则继续 401（有 shouldDeferInvalidTokenLocked 兜底，
 // 不会误删）。
 //
-// 用 invalid_count 做简单退避：只挑失败次数较少的账号，避免对一个
-// 确定失效的号每 5 分钟打一次上游。阈值取 3 —— 与 Python 的
-// invalid_confirm 语义接近，且给上游恢复留出足够窗口。
+// 退避策略：invalid_count 越大，重试间隔越长（指数退避，封顶 6 小时）。
+//
+// 为什么不能简单地「超过 N 次就不再重试」：那样一个真正失效的号确实不再
+// 浪费请求，但**上游恢复后它也永远回不来** —— 账号卡在异常状态，只能人工处理。
+// 而这批账号大多没有 refresh_token（本仓库实测 260 个里 256 个），
+// 人工之外没有别的恢复路径。
+//
+// 改成按次数退避：刚失效时每轮都试（快速捕获上游抖动恢复），
+// 之后间隔按 2^n 拉长到 6 小时封顶 —— 一个死号一天最多 4 次请求，
+// 代价可以忽略，但恢复能力保住了。
+//
+// 锚点用 last_invalid_at（每次 401 都会刷新），所以退避窗口是相对
+// 「最后一次失败」而不是「第一次失败」。
+const (
+	abnormalRetryBaseDelay = 5 * time.Minute
+	abnormalRetryMaxDelay  = 6 * time.Hour
+)
+
 func (s *AccountService) ListAbnormalTokens() []string {
-	const maxInvalidCountForRetry = 3
+	now := time.Now().UTC()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]string, 0)
@@ -626,13 +646,36 @@ func (s *AccountService) ListAbnormalTokens() []string {
 		if stringValue(account["status"]) != StatusAbnormal {
 			continue
 		}
-		if intValue(account["invalid_count"]) > maxInvalidCountForRetry {
+		if !s.abnormalRetryDueLocked(account, now) {
 			continue
 		}
 		out = append(out, token)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// abnormalRetryDueLocked 判断异常账号是否到了下一次重试时间。
+func (s *AccountService) abnormalRetryDueLocked(account Account, now time.Time) bool {
+	count := intValue(account["invalid_count"])
+	if count <= 1 {
+		return true // 刚失效，立即重试（捕获上游抖动恢复）
+	}
+	delay := abnormalRetryBaseDelay
+	for i := 1; i < count && delay < abnormalRetryMaxDelay; i++ {
+		delay *= 2
+	}
+	if delay > abnormalRetryMaxDelay {
+		delay = abnormalRetryMaxDelay
+	}
+	last := parseAccountTime(account["last_invalid_at"])
+	if last == nil {
+		return true
+	}
+	if last.After(now) {
+		return true // 未来时间戳（时钟错乱）：当作已到期，避免永久冻结
+	}
+	return now.Sub(*last) >= delay
 }
 
 // ListRefreshTokenKeepaliveTokens 返回 refresh_token 接近闲置上限的账号。

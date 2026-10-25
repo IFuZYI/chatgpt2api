@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 )
 
 // image_task 的 Submit 幂等分支与 editable_file_task 有同一个竞态。
@@ -40,4 +42,13 @@ func TestImageTaskSubmitIdempotentNoRace(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+
+	// 必须等后台 goroutine 收尾再让 TempDir 被删。
+	//
+	// 不 Close 的话 `t.TempDir()` 的自动清理会与仍在写 data/ 的任务 goroutine
+	// 竞争，报 `TempDir RemoveAll cleanup: directory not empty` ——
+	// 单次跑通常侥幸躲过，-count=5 就稳定复现。
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = svc.Close(ctx)
 }
