@@ -123,11 +123,23 @@ func upstreamStatusCodeOf(err error) int { return upstream.StatusCodeOf(err) }
 // 但「刷新发现 token 失效后自动触发重登」这条自动路径还没接线：刷新的
 // 失败分支只记 invalid_count，不会去调 ReloginAccounts。不提示的话用户会
 // 以为开了就会自动恢复异常账号 —— 静默不生效比明确报错更糟。
+// WarnUnsupportedAutoRelogin 在开关打开但执行体未注入时给出启动警告。
+//
+// 语义已变更：auto_relogin_after_refresh 现在是**已实现**的（刷新发现 401/403
+// 后自动调 ReloginAccounts）。这里只在「开关开着、但 SetAutoRelogin 没被调用」
+// 时警告 —— 那是接线遗漏，不是功能缺失。两者要区分开，否则日志会误导。
 func (s *AccountService) WarnUnsupportedAutoRelogin() {
 	if s.cfg == nil || !s.cfg.AutoReloginAfterRefresh() {
 		return
 	}
-	fmt.Println("[account] auto_relogin_after_refresh is enabled but the automatic " +
-		"trigger is not wired yet; abnormal accounts will not be recovered " +
-		"automatically after a refresh (run /api/accounts/re-login manually)")
+	s.mu.RLock()
+	wired := s.autoRelogin != nil
+	s.mu.RUnlock()
+	if wired {
+		fmt.Println("[account] auto_relogin_after_refresh enabled: 刷新发现失效账号（401/403）时会自动密码重登")
+		return
+	}
+	fmt.Println("[account] auto_relogin_after_refresh is enabled but no password-login " +
+		"implementation was injected (SetAutoRelogin); automatic recovery is skipped. " +
+		"This is a wiring bug, not a missing feature.")
 }

@@ -125,14 +125,14 @@ func (d *Deps) refreshVerifier() service.RefreshVerifier {
 // 与 /api/accounts/refresh 一样是异步 + 进度轮询：后台 ctx 由 Tasks 托管，
 // 进程退出时会先取消再等待（重登会写 accounts.json，不能裸跑 goroutine）。
 func (d *Deps) runRelogin(ctx context.Context, tokens []string, progressID string) {
-	d.Accts.ReloginAccounts(ctx, tokens, progressID, d.passwordLoginFunc())
+	d.Accts.ReloginAccounts(ctx, tokens, progressID, d.PasswordLoginFunc())
 }
 
 // passwordLoginFunc 把上游客户端工厂 + LoginWithPassword 组合成 service 需要的执行体。
 //
 // 每个账号一个新会话：登录会往 cookie jar 里塞 oai-did / oai-sc，
 // 复用会话会让不同账号的 challenge 互相污染。
-func (d *Deps) passwordLoginFunc() service.PasswordLoginFunc {
+func (d *Deps) PasswordLoginFunc() service.PasswordLoginFunc {
 	if d.PasswordLoginClient == nil {
 		return nil
 	}

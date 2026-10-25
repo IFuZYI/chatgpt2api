@@ -54,6 +54,9 @@ type AccountService struct {
 	accounts map[string]Account
 	aliases  map[string]string
 	cursor   atomic.Uint64
+	// autoRelogin 是 auto_relogin_after_refresh 用的密码登录实现。
+	// 由 api 层注入（service 不依赖 upstream）；nil 表示未接线。
+	autoRelogin PasswordLoginFunc
 	// version 在号池内容变化时自增。
 	//
 	// 存在的理由：ModelCatalog 需要判断「号池是否变了」来决定缓存是否失效。

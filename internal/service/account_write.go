@@ -514,6 +514,8 @@ func (s *AccountService) RefreshAccounts(
 
 	refreshed := 0
 	errorsOut := make([]any, 0)
+	// 本轮确认失效的 token，供 auto_relogin_after_refresh 自动重登用。
+	invalidTokens := make([]string, 0)
 	for item := range results {
 		if item.err != nil {
 			errorsOut = append(errorsOut, map[string]any{
@@ -526,6 +528,7 @@ func (s *AccountService) RefreshAccounts(
 			// 再按 auto_remove_invalid_accounts 决定删号还是标记异常。
 			// 限流（429）与网络错误不算失效 —— 否则一次上游抖动会删光号池。
 			if isTokenInvalidFailure(item.err) {
+				invalidTokens = append(invalidTokens, item.token)
 				if s.RecordInvalidTokenSeen(item.token, "refresh", item.err.Error(), true) {
 					s.RemoveInvalidToken(item.token, "refresh", false)
 				}
@@ -546,11 +549,24 @@ func (s *AccountService) RefreshAccounts(
 		}
 	}
 
+	// auto_relogin_after_refresh：本轮确认失效的账号，按配置自动尝试密码重登。
+	//
+	// 只在「刷新发现 401/403 且开关打开」时触发；429 限流与网络抖动不算失效
+	// （与上面 isTokenInvalidFailure 的判定一致），否则一次上游抖动会批量重登。
+	relogined := 0
+	if len(invalidTokens) > 0 && s.autoRelogin != nil && s.cfg != nil && s.cfg.AutoReloginAfterRefresh() {
+		reloginResult := s.ReloginAccounts(ctx, invalidTokens, "", s.autoRelogin)
+		relogined = intValue(reloginResult["relogined"])
+		if errs, ok := reloginResult["errors"].([]any); ok {
+			errorsOut = append(errorsOut, errs...)
+		}
+	}
+
 	result := map[string]any{
 		"refreshed": refreshed,
 		"errors":    errorsOut,
 		"items":     s.ListAccounts(),
-		"relogined": 0,
+		"relogined": relogined,
 	}
 	if progressID != "" {
 		s.FinishRefreshProgress(progressID, result, "")
@@ -558,11 +574,28 @@ func (s *AccountService) RefreshAccounts(
 	return result
 }
 
+// SetAutoRelogin 注入自动重登用的密码登录实现。
+//
+// 由 api 层在启动时接线（service 不依赖 upstream）。为 nil 时
+// auto_relogin_after_refresh 不生效 —— 与「开关打开但功能未接线」的区别是：
+// 前者会打启动警告，后者不会。
+func (s *AccountService) SetAutoRelogin(login PasswordLoginFunc) {
+	s.mu.Lock()
+	s.autoRelogin = login
+	s.mu.Unlock()
+}
+
 // KeepaliveRefreshTokens 复刻 Python：批量 3 个、只对带 refresh_token 的账号。
+//
+// tokens 是 **access_token** 列表（来自 ListRefreshTokenKeepaliveTokens），
+// 回调要的是这些账号的 **refresh_token** —— 两者不是一回事：
+// refresh_token 才是换新 access_token 的凭据。早期实现把 access_token
+// 直接传给回调，语义与 RefreshTokenFunc 的签名矛盾，且换到的新 token 不回写，
+// keepalive 等于空转。两处都已修。
 func (s *AccountService) KeepaliveRefreshTokens(
 	ctx context.Context,
 	tokens []string,
-	refresh func(ctx context.Context, token string) (string, error),
+	refresh func(ctx context.Context, refreshToken string) (string, error),
 ) map[string]any {
 	errorsOut := make([]any, 0)
 	refreshed := 0
@@ -575,17 +608,75 @@ func (s *AccountService) KeepaliveRefreshTokens(
 			if refresh == nil {
 				continue
 			}
-			if _, err := refresh(ctx, token); err != nil {
+			// 取该账号的 refresh_token；没有就跳过（Python 同样只处理带 rt 的号）。
+			refreshToken := s.RefreshTokenFor(token)
+			if refreshToken == "" {
+				continue
+			}
+			newAccessToken, err := refresh(ctx, refreshToken)
+			if err != nil {
 				errorsOut = append(errorsOut, map[string]any{
 					"token": anonymizeToken(token),
 					"error": err.Error(),
 				})
 				continue
 			}
+			// 回写新 access_token。空返回值表示上游没给新 token，账号保持不变。
+			if strings.TrimSpace(newAccessToken) != "" {
+				if !s.ApplyRefreshedAccessToken(token, newAccessToken) {
+					errorsOut = append(errorsOut, map[string]any{
+						"token": anonymizeToken(token),
+						"error": "账号在刷新过程中消失，新 token 未回写",
+					})
+					continue
+				}
+			}
 			refreshed++
 		}
 	}
 	return map[string]any{"refreshed": refreshed, "errors": errorsOut}
+}
+
+// RefreshTokenFor 返回 access_token 对应账号的 refresh_token（不存在返回空）。
+func (s *AccountService) RefreshTokenFor(accessToken string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	account, ok := s.accounts[s.resolveTokenLocked(accessToken)]
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(stringValue(account["refresh_token"]))
+}
+
+// ApplyRefreshedAccessToken 把 access_token 换成新的，并重建别名链。
+//
+// 换 token 后旧 token 立刻失效，所以别名要跟着搬：否则调用方手里还拿着
+// 旧 token 的引用会查不到账号。返回 false 表示账号已不存在。
+func (s *AccountService) ApplyRefreshedAccessToken(oldAccessToken, newAccessToken string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	oldToken := s.resolveTokenLocked(oldAccessToken)
+	account, ok := s.accounts[oldToken]
+	if !ok {
+		return false
+	}
+	newToken := strings.TrimSpace(newAccessToken)
+	if newToken == "" || newToken == oldToken {
+		return true
+	}
+
+	updated := copyMap(account)
+	updated["access_token"] = newToken
+	updated["updated_at"] = nowLocal()
+	updated["updated_ts"] = float64(time.Now().UnixNano()) / 1e9
+
+	delete(s.accounts, oldToken)
+	s.accounts[newToken] = updated
+	// 旧 token 指向新 token，让仍持有旧引用的调用方还能找到账号。
+	s.aliases[oldToken] = newToken
+	s.saveAccountsLocked()
+	return true
 }
 
 // BuildExportItems 复刻 Python：只导出三件套齐全的账号。

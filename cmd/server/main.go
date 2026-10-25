@@ -131,6 +131,9 @@ func main() {
 		}
 		return client, nil
 	}
+	// auto_relogin_after_refresh 用的执行体：复用同一套密码登录实现。
+	// 必须在 NewRouter 之前接，否则第一次自动重登会因为未接线而被跳过。
+	deps.Accts.SetAutoRelogin(deps.PasswordLoginFunc())
 	deps.ImageUpstream = func(ctx context.Context, accessToken string) (protocol.ImageUpstream, func(), error) {
 		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
 		if err != nil {
@@ -181,7 +184,15 @@ func main() {
 			}
 			return deps.AccountInfoFetcher(ctx, token)
 		},
-		nil, // keepalive 的 refresh_token 交换尚未实现，传 nil 时该分支自动跳过
+		// keepalive：用 refresh_token 换新 access_token。
+		// 不走账号代理（refresh_token 交换在 auth.openai.com，与号池出口无关）。
+		func(ctx context.Context, refreshToken string) (string, error) {
+			tokens, err := service.RefreshAccessToken(ctx, refreshToken)
+			if err != nil {
+				return "", err
+			}
+			return tokens["access_token"], nil
+		},
 	)
 
 	cleanupScheduler := service.NewImageCleanupScheduler(service.CleanupActions{
