@@ -23,21 +23,22 @@ func TestImageModelSettings25SeriesPassThrough(t *testing.T) {
 // gpt-image-2 仍走配置的上游模型（保持原有语义）。
 func TestImageModelSettingsGPTImage2UsesDefault(t *testing.T) {
 	c := &Client{}
-	upstream, _ := c.imageModelSettings("gpt-image-2", "gpt-5-5", "auto")
-	if upstream != "gpt-5-5" {
-		t.Errorf("upstream = %q, want gpt-5-5", upstream)
+	// 配置值原样透传（用当前上游存在的模型名做夹具）
+	upstream, _ := c.imageModelSettings("gpt-image-2", "gpt-5-6", "auto")
+	if upstream != "gpt-5-6" {
+		t.Errorf("upstream = %q, want gpt-5-6", upstream)
 	}
-	// 空配置时兜底 gpt-5-5
+	// 空配置时兜底 auto —— gpt-5-5 已从上游模型列表消失
 	upstream, _ = c.imageModelSettings("gpt-image-2", "", "auto")
-	if upstream != "gpt-5-5" {
-		t.Errorf("empty default should fall back to gpt-5-5, got %q", upstream)
+	if upstream != "auto" {
+		t.Errorf("empty default should fall back to auto, got %q", upstream)
 	}
 }
 
 // 未收录的模型名必须返回 auto（不透传）。
 func TestImageModelSettingsUnknownModel(t *testing.T) {
 	c := &Client{}
-	upstream, effort := c.imageModelSettings("gpt-image-99", "gpt-5-5", "auto")
+	upstream, effort := c.imageModelSettings("gpt-image-99", "gpt-5-6", "auto")
 	if upstream != "auto" || effort != "" {
 		t.Errorf("unknown model should yield (auto, \"\"), got (%q, %q)", upstream, effort)
 	}

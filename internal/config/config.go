@@ -261,7 +261,10 @@ func (s *Store) DefaultUpstreamModelName() string {
 	if trimmed := strings.TrimSpace(value); trimmed != "" {
 		return trimmed
 	}
-	return "gpt-5-5"
+	// 回退值用 auto：gpt-5-5 已从上游 /backend-api/models 消失
+	// （实测列表里没有它），继续用它会让 gpt-image-2 这个入口指向一个
+	// 不存在的模型。auto 是上游始终提供的兜底项。
+	return "auto"
 }
 
 func (s *Store) DefaultThinkingEffort() string {

@@ -60,6 +60,10 @@ func TestMissingAuthKeyFails(t *testing.T) {
 }
 
 // 默认值必须与 Python 的 config.json 一致，否则 /api/settings 会漂移。
+//
+// 例外：default_upstream_model_name 从 "gpt-5-5" 改成了 "auto"。
+// 那是有意偏离 Python —— gpt-5-5 已从上游 /backend-api/models 消失（实测），
+// 继续用它会让 gpt-image-2 这个入口指向不存在的模型。
 func TestDefaultsMatchPythonConfig(t *testing.T) {
 	store, _ := newStore(t, nil)
 	got := store.Get()
@@ -75,7 +79,7 @@ func TestDefaultsMatchPythonConfig(t *testing.T) {
 		{"image_parallel_generation", true},
 		{"image_remove_conversation_after_result", false},
 		{"auto_remove_invalid_accounts", false},
-		{"default_upstream_model_name", "gpt-5-5"},
+		{"default_upstream_model_name", "auto"}, // 偏离 Python，见函数注释
 		{"default_thinking_effort", "auto"},
 		{"global_system_prompt", ""},
 	}

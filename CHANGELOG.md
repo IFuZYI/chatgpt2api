@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### 变更
+
++ [变更] `default_upstream_model_name` 的默认值从 `gpt-5-5` 改为 `auto`。
+  该键决定 `gpt-image-2` 这个通用出图入口实际调用哪个上游模型。
+
+  改的原因：`gpt-5-5` 已不在上游 `/backend-api/models` 返回的列表里（实测）。
+  它目前仍被上游接受（搜索链路用它仍能正常返回），但作为**默认值**指向一个
+  已不对外列出的模型是脆弱的 —— 上游随时可能真正下线它，而那时所有用默认值
+  的生图请求会一起失败。`auto` 是上游始终提供的兜底项，语义也更贴合
+  「让上游自己挑」。
+
+  改动位置：
+  - `internal/config/config.go` 的回退值
+  - `internal/upstream/image_chain.go` 的空值兜底
+  - `config.example.json`（模板）
+  - 相关测试断言（`TestDefaultsMatchPythonConfig` 等 3 处）
+
+  注意：这是**有意偏离 Python 默认值**的唯一一项，已在测试注释里写明理由。
+
+  已有部署不会自动改 —— `config.json` 里若显式写着 `gpt-5-5`，它继续生效。
+  想跟随新默认值，在 Web 面板设置页改，或把它从 `config.json` 删掉。
+
 ## 2.0.2 - 2026-10-25
 
 修三个部署阻断。2.0.1 的镜像与 compose 文件都无法直接按 README 跑通。

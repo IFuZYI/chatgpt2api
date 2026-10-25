@@ -33,10 +33,13 @@ func (c *Client) imageModelSettings(model string, defaultUpstream string, defaul
 	var upstreamModel string
 	switch baseModel {
 	case "gpt-image-2":
-		// gpt-image-2 是「通用出图」入口：上游模型由配置决定（默认 gpt-5-5），
+		// gpt-image-2 是「通用出图」入口：上游模型由配置决定（默认 auto），
 		// 这样用户可以用 default_upstream_model_name 切换底层模型。
+		//
+		// 回退值用 auto 而不是 gpt-5-5：后者已从上游模型列表消失，
+		// 继续用它会让这条链路指向不存在的模型。
 		if defaultUpstream == "" {
-			defaultUpstream = "gpt-5-5"
+			defaultUpstream = "auto"
 		}
 		upstreamModel = defaultUpstream
 	default:
@@ -46,7 +49,7 @@ func (c *Client) imageModelSettings(model string, defaultUpstream string, defaul
 		// 2.5 系列（gpt-image-2.5 / -flare / -sunburst）：模型名本身就是上游 slug，
 		// 直接透传。实测把这三个名字作为 upstream_model 传给 /f/conversation
 		// 能正常出图（三者字节数各异，确认是不同模型）。
-		// 不要走 defaultUpstream 映射 —— 那会把它们全变成 gpt-5-5，退化成同一个模型。
+		// 不要走 defaultUpstream 映射 —— 那会把它们全变成同一个模型，退化。
 		if protocol.IsSupportedImageModel(baseModel) {
 			upstreamModel = baseModel
 		} else {
@@ -54,7 +57,7 @@ func (c *Client) imageModelSettings(model string, defaultUpstream string, defaul
 		}
 	}
 
-	// 支持 "gpt-5-5-standard" 这类后缀覆盖思考强度。
+	// 支持 "<模型名>-standard" 这类后缀覆盖思考强度。
 	name, suffix, found := cutLast(upstreamModel, "-")
 	if found {
 		switch suffix {

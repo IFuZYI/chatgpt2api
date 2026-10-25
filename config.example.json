@@ -45,7 +45,7 @@
     "ttl_seconds": 60
   },
   "default_thinking_effort": "auto",
-  "default_upstream_model_name": "gpt-5-5",
+  "default_upstream_model_name": "auto",
   "global_system_prompt": "",
   "image_account_concurrency": 3,
   "image_check_before_hit_enabled": true,

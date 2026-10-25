@@ -70,7 +70,7 @@
 
 | 模型 | 状态 | 备注 |
 |:--|:--|:--|
-| `gpt-image-2` | ✅ | 通用入口，上游模型由 `default_upstream_model_name` 决定（默认 `gpt-5-5`） |
+| `gpt-image-2` | ✅ | 通用入口，上游模型由 `default_upstream_model_name` 决定（默认 `auto`） |
 | `gpt-image-2.5` | ✅ | 模型名直接作为上游 slug 透传 |
 | `gpt-image-2.5-flare` | ✅ | 同上 |
 | `gpt-image-2.5-sunburst` | ✅ | 同上 |
