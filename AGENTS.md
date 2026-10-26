@@ -73,14 +73,34 @@ go build ./...              # 确认能编译
 给已有数据回填标识时，**不要用随机值**（`uuid.New()`）—— 那会让每次服务重启
 给同一记录一个新 ID，等于没有稳定标识。
 
-本仓库用 `uuid.NewSHA1(namespace, seed)`，种子优先级
-`user_id > email > access_token`（见 `internal/service/account.go`）。
+本仓库用 `uuid.NewSHA1(namespace, seed)`，种子取**第一个非空字段**
+（`user_id > email > access_token`）。
 
 `accountIDNamespace` 是**固定常量，改了会让所有历史账号派生出新 ID**。
 
-新增此类回填逻辑时，必须有「重复加载得到相同值」的测试。
+### 关键：纯函数无法同时满足「稳定」与「唯一」
 
-来源：`.learnings/LEARNINGS.md#LRN-20261026-004`
+这两个需求**本质冲突** —— 唯一性要求把池内唯一的 `access_token` 纳入种子，
+稳定性则要求它**不**纳入（否则轮换会派生新 ID）。实测踩过：
+
+- 把 token 纳入种子 → 轮换稳定性崩（既有测试立刻失败）
+- 只用一个种子字段 → 两个账号共享 `user_id`/`email` 时**派生出相同 ID**，
+  且按 ID 查询会返回**不确定的账号**（map 迭代顺序随机）
+
+**正确做法是把两件事分开**：
+
+| 关注点 | 位置 | 职责 |
+|:--|:--|:--|
+| 派生 | `ensureAccountID`（纯函数） | 只保证「同种子同结果」 |
+| 唯一性 | `disambiguateAccountIDs`（插入点） | 看到全局，消歧并优先保留已持久化 ID |
+
+插入点实现有个坑：`persisted` 集合必须在插入循环**之前**快照。
+若用「id 非空」判断，`normalizeAccount` 已给每个账号填过 id，
+会把本轮刚派生的也当成已持久化，导致冲突账号拿不到消歧。
+
+对照测试：`internal/service/account_id_test.go`。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261026-004`、`.learnings/LEARNINGS.md#LRN-20261026-006`
 
 ---
 
