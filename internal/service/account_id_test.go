@@ -216,3 +216,109 @@ func TestLegacyAccountsBackfilledDeterministically(t *testing.T) {
 		}
 	}
 }
+
+// account_id 必须唯一 —— 即使两个账号的派生种子相同。
+//
+// 回归点：派生只用 user_id/email 作为种子。若两个账号共享同一个 user_id
+// 或同一个 email（重复导入、同一邮箱多账号），会得到**完全相同的**
+// account_id。后果：
+//   - 前端 React key 重复 → 渲染错乱、选中态互相影响
+//   - findByAccountIDLocked 返回 map 迭代中的第一个匹配 ——
+//     Go 的 map 顺序随机，同一个 ID 可能解析到不同账号
+//   - 外部系统按 ID 引用时指向不确定的账号
+func TestAccountIDsUniqueWhenSeedsCollide(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-1", "email": "dup@x.test", "user_id": "user-same", "type": "free", "status": StatusNormal},
+		{"access_token": "at-2", "email": "dup@x.test", "user_id": "user-same", "type": "free", "status": StatusNormal},
+	})
+
+	ids := map[string]string{}
+	for _, account := range svc.ListAccounts() {
+		token := stringValue(account["access_token"])
+		id := stringValue(account["account_id"])
+		if id == "" {
+			t.Fatalf("%s 没有 account_id", token)
+		}
+		ids[token] = id
+	}
+
+	if ids["at-1"] == ids["at-2"] {
+		t.Errorf("两个账号共享 account_id %s —— 引用会指向不确定的账号", ids["at-1"])
+	}
+}
+
+// 按 account_id 查询必须稳定解析到同一个账号（不能依赖 map 迭代顺序）。
+func TestDetailByAccountIDIsStable(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-1", "email": "dup@x.test", "user_id": "user-same", "type": "free", "status": StatusNormal},
+		{"access_token": "at-2", "email": "dup@x.test", "user_id": "user-same", "type": "free", "status": StatusNormal},
+	})
+
+	accounts := svc.ListAccounts()
+	if len(accounts) != 2 {
+		t.Fatalf("账号数 %d，应为 2", len(accounts))
+	}
+	for _, account := range accounts {
+		id := stringValue(account["account_id"])
+		want := stringValue(account["access_token"])
+
+		// 反复查，必须每次都解析到同一个账号
+		for i := 0; i < 50; i++ {
+			got := svc.Detail(id)
+			if got == nil {
+				t.Fatalf("按 %s 查不到", id)
+			}
+			if token := stringValue(got["access_token"]); token != want {
+				t.Fatalf("按 id=%s 解析不稳定：期望 %s，第 %d 次得到 %s", id, want, i, token)
+			}
+		}
+	}
+}
+
+// 重复导入同一邮箱/同一 user_id 的账号时，新增路径也要消歧。
+//
+// 这是很现实的场景：注册机重新注册、或用户重复导入同一批账号，
+// 会得到「同 email、不同 token」的两条记录。若派生不做消歧，
+// 第二条会拿到与第一条相同的 account_id。
+func TestAddAccountsDisambiguatesSharedSeed(t *testing.T) {
+	svc, _ := newTestAccountService(t, nil)
+
+	svc.AddAccounts([]string{"at-first"}, "")
+	svc.AddAccountItems([]map[string]any{
+		{"access_token": "at-second", "email": "same@x.test", "user_id": "user-same"},
+	}, nil)
+	svc.AddAccountItems([]map[string]any{
+		{"access_token": "at-third", "email": "same@x.test", "user_id": "user-same"},
+	}, nil)
+
+	seen := map[string]string{}
+	for _, account := range svc.ListAccounts() {
+		id := stringValue(account["account_id"])
+		token := stringValue(account["access_token"])
+		if id == "" {
+			t.Errorf("%s 没有 account_id", token)
+			continue
+		}
+		if prev, dup := seen[id]; dup {
+			t.Errorf("account_id 冲突：%s 与 %s 都是 %s", prev, token, id)
+		}
+		seen[id] = token
+	}
+
+	// 再导入一次也不能破坏已有分配
+	before := map[string]string{}
+	for _, account := range svc.ListAccounts() {
+		before[stringValue(account["access_token"])] = stringValue(account["account_id"])
+	}
+	svc.AddAccountItems([]map[string]any{
+		{"access_token": "at-fourth", "email": "same@x.test", "user_id": "user-same"},
+	}, nil)
+	for _, account := range svc.ListAccounts() {
+		token := stringValue(account["access_token"])
+		if prev, ok := before[token]; ok {
+			if got := stringValue(account["account_id"]); got != prev {
+				t.Errorf("%s 的 account_id 在后续导入中变了：%q → %q", token, prev, got)
+			}
+		}
+	}
+}

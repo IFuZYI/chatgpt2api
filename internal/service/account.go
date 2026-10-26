@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -208,6 +209,9 @@ func (s *AccountService) loadAccounts() map[string]Account {
 		return map[string]Account{}
 	}
 	out := make(map[string]Account, len(raw))
+	// 记录哪些账号在磁盘上**已经**有 account_id —— 消歧时要优先保留它们，
+	// 因为它们可能已被外部系统引用。
+	persisted := make(map[string]bool, len(raw))
 	for _, item := range raw {
 		normalized := normalizeAccount(item)
 		if normalized == nil {
@@ -215,7 +219,12 @@ func (s *AccountService) loadAccounts() map[string]Account {
 		}
 		token, _ := normalized["access_token"].(string)
 		out[token] = normalized
+		if strings.TrimSpace(stringValue(item["account_id"])) != "" {
+			persisted[token] = true
+		}
 	}
+	// 历史账号（或共享种子的账号）可能派生出一致的 id，这里消歧。
+	disambiguateAccountIDs(out, persisted)
 	return out
 }
 
@@ -457,33 +466,124 @@ func accountMatchesAnyPlanType(account Account, planTypes []string) bool {
 // 派生必须**确定性**：随机生成会让每次服务重启给同一账号一个新 id ——
 // 那就等于没有稳定标识。所以用 UUIDv5（名字空间 + 种子）：
 //
-//	种子优先级：user_id > email > access_token
+// accountIDNamespace 是 UUIDv5 的名字空间。
+// 固定值，不能改 —— 改了会让所有历史账号派生出新 id。
+var accountIDNamespace = uuid.MustParse("6f4a1d2e-6b1c-4a7f-9f3e-1b2c3d4e5f60")
+
+// 种子取**第一个非空字段**，顺序 user_id > email > access_token。
 //
-// user_id 是上游的永久用户标识，最稳；email 次之；access_token 最后
-// —— 它虽然会轮换，但对「只有 token 的历史账号」是唯一可用的种子。
-// 一旦账号有了 account_id 就会被落盘，后续轮换不会重新派生，
-// 所以用 access_token 做种子不会在轮换时产生新 id。
+// 为什么只用第一个而不是拼上全部字段：**轮换稳定性**。
+// 若 access_token 参与种子，一个「只有 token 的历史账号」在 token 轮换后
+// 会派生出不同的 account_id —— 引用就断了。用 user_id/email 时不受影响。
+//
+// 唯一性不在这里解决：两个账号可能共享同一个 user_id 或 email
+// （重复导入、同一邮箱多账号）。那种碰撞由 disambiguateAccountIDs
+// 在**插入点**处理 —— 那里能看到全部账号，也能优先保留已持久化的 id。
 func ensureAccountID(account Account) string {
 	if existing := strings.TrimSpace(stringValue(account["account_id"])); existing != "" {
 		return existing
 	}
-	seed := ""
 	for _, key := range []string{"user_id", "email", "access_token"} {
 		if value := strings.TrimSpace(stringValue(account[key])); value != "" {
-			seed = key + ":" + value
-			break
+			return deriveAccountID(key+"="+value, 0)
 		}
 	}
-	if seed == "" {
-		// 理论上不可达：normalizeAccount 已保证 access_token 非空。
-		return uuid.NewString()
+	// 理论上不可达：normalizeAccount 已保证 access_token 非空。
+	return uuid.NewString()
+}
+
+// deriveAccountID 由种子派生 UUIDv5。attempt>0 时追加消歧后缀。
+func deriveAccountID(seed string, attempt int) string {
+	if attempt > 0 {
+		seed = seed + "\x00#" + strconv.Itoa(attempt)
 	}
 	return uuid.NewSHA1(accountIDNamespace, []byte(seed)).String()
 }
 
-// accountIDNamespace 是 UUIDv5 的名字空间。
-// 固定值，不能改 —— 改了会让所有历史账号派生出新 id。
-var accountIDNamespace = uuid.MustParse("6f4a1d2e-6b1c-4a7f-9f3e-1b2c3d4e5f60")
+// disambiguateAccountIDs 保证一组账号的 account_id 互不相同。
+//
+// 为什么需要：ensureAccountID 是纯函数，同种子必然同结果。两个账号共享
+// user_id 或 email 时会拿到**相同的** account_id（实测确认），后果是
+// findByAccountIDLocked 返回 map 迭代中的第一个匹配 —— Go 的 map 顺序随机，
+// 同一个 ID 会解析到**不同的账号**（实测连续两次查询分别得到 at-1 与 at-2）。
+//
+// 消歧规则：
+//  1. **已持久化的 id 优先保留** —— 它们可能已被外部系统引用，不能改
+//     （logs、书签、注册机的库）。persisted 集合由调用方给出。
+//  2. 派生来的 id 按 access_token 排序后依次分配，冲突时用 attempt 递增
+//     重新派生。排序保证结果**确定性** —— 否则重启后谁拿到原 id 是随机的。
+//
+// 返回是否有账号的 id 被改动（调用方据此决定是否落盘）。
+func disambiguateAccountIDs(accounts map[string]Account, persisted map[string]bool) bool {
+	tokens := make([]string, 0, len(accounts))
+	for token := range accounts {
+		tokens = append(tokens, token)
+	}
+	sort.Strings(tokens)
+
+	taken := map[string]bool{}
+	changed := false
+
+	// 第一轮：保留已持久化的 id
+	for _, token := range tokens {
+		account := accounts[token]
+		id := strings.TrimSpace(stringValue(account["account_id"]))
+		if id == "" || !persisted[token] {
+			continue
+		}
+		if taken[id] {
+			// 磁盘上就已经重复 —— 后面的那条让位（下一轮重新派生）
+			continue
+		}
+		taken[id] = true
+	}
+
+	// 第二轮：给其余账号分配唯一 id
+	for _, token := range tokens {
+		account := accounts[token]
+		id := strings.TrimSpace(stringValue(account["account_id"]))
+		if id != "" && persisted[token] && taken[id] {
+			// 它已经在上面的第一轮里占位成功
+			continue
+		}
+
+		seed := ""
+		for _, key := range []string{"user_id", "email", "access_token"} {
+			if value := strings.TrimSpace(stringValue(account[key])); value != "" {
+				seed = key + "=" + value
+				break
+			}
+		}
+		if seed == "" {
+			if id == "" {
+				account["account_id"] = uuid.NewString()
+				changed = true
+			}
+			continue
+		}
+
+		candidate := id
+		if candidate == "" || taken[candidate] {
+			candidate = ""
+			for attempt := 1; attempt <= 64; attempt++ {
+				derived := deriveAccountID(seed, attempt)
+				if !taken[derived] {
+					candidate = derived
+					break
+				}
+			}
+			if candidate == "" {
+				continue // 极端情况：放弃消歧，保持原值
+			}
+		}
+		if candidate != id {
+			account["account_id"] = candidate
+			changed = true
+		}
+		taken[candidate] = true
+	}
+	return changed
+}
 
 // resolveTokenLocked 顺着别名链把旧 token 解析到当前 token。
 func (s *AccountService) resolveTokenLocked(token string) string {

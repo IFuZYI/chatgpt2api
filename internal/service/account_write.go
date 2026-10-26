@@ -131,6 +131,18 @@ func (s *AccountService) addAccountPayloads(payloads []map[string]any) map[strin
 	}
 
 	s.mu.Lock()
+	// 快照「本轮之前就存在」的账号 —— 它们的 account_id 已经在磁盘上
+	// （或已在本进程的先前一轮里分配过），消歧时必须优先保留：
+	// 它们可能已被外部系统引用（日志、书签、注册机的库）。
+	//
+	// 必须在插入循环**之前**快照：循环里新账号会被 normalizeAccount
+	// 填上刚派生的 id，与旧账号分不出来。
+	preExisting := make(map[string]bool, len(s.accounts))
+	for token, account := range s.accounts {
+		if strings.TrimSpace(stringValue(account["account_id"])) != "" {
+			preExisting[token] = true
+		}
+	}
 	added, skipped := 0, 0
 	for _, accessToken := range order {
 		payload := deduped[accessToken]
@@ -169,6 +181,15 @@ func (s *AccountService) addAccountPayloads(payloads []map[string]any) map[strin
 			s.accounts[accessToken] = account
 		}
 	}
+	// 新导入的账号可能与已有账号共享 user_id/email（重复导入、同一邮箱多账号），
+	// 那样会派生出相同的 account_id —— 必须消歧，否则按 ID 查询会解析到
+	// 不确定的账号（Go 的 map 迭代顺序随机）。
+	//
+	// 这里传 nil 而不是「所有已有账号」：本轮的账号 id 都是 normalizeAccount
+	// 刚派生的，尚未落盘，不享有「持久化优先」—— 否则新账号会把自己刚派生的
+	// id 占住，冲突的另一个反而拿不到消歧。
+	//
+	disambiguateAccountIDs(s.accounts, preExisting)
 	s.saveAccountsLocked()
 	items := s.listAccountsLocked()
 	s.mu.Unlock()
