@@ -141,8 +141,11 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, "access_token is required"))
 			return
 		}
+		// totp_secret / password 也允许改：注册机常先传 token，
+		// 事后才发现账号开了 2FA 需要补 TOTP；要求「重新上传整个账号对象」
+		// 既笨拙又容易把已有字段覆盖成空。
 		updates := map[string]any{}
-		for _, key := range []string{"type", "status", "quota", "proxy"} {
+		for _, key := range []string{"type", "status", "quota", "proxy", "password", "totp_secret", "email"} {
 			if value, ok := body[key]; ok && value != nil {
 				updates[key] = value
 			}

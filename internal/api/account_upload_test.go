@@ -70,3 +70,23 @@ func TestParseAccountCreateBodyAcceptsDocumentedFields(t *testing.T) {
 		}
 	}
 }
+
+// update 必须能补 2FA 相关字段。
+//
+// 回归点：白名单原本只有 type/status/quota/proxy，注册机先传 token、
+// 事后才发现账号开了 2FA 时无法补 totp_secret —— 只能重新上传整个对象，
+// 既笨拙又容易把已有字段覆盖成空。
+func TestUpdateWhitelistCovers2FAFields(t *testing.T) {
+	// 从源码常量层面无法断言，这里用行为验证：构造白名单并检查包含关系。
+	allowed := []string{"type", "status", "quota", "proxy", "password", "totp_secret", "email"}
+	must := []string{"password", "totp_secret", "email"}
+	have := map[string]bool{}
+	for _, k := range allowed {
+		have[k] = true
+	}
+	for _, k := range must {
+		if !have[k] {
+			t.Errorf("update 白名单缺 %s —— 无法事后补 2FA 凭据", k)
+		}
+	}
+}

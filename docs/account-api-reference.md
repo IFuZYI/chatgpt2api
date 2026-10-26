@@ -199,8 +199,11 @@
 | `status` | string | | 账号状态 |
 | `quota` | int | | 图片额度 |
 | `proxy` | string | | 出口代理，`""` = 清空回退全局 |
+| `password` | string | | 账号密码（用于失效后自动重登） |
+| `totp_secret` | string | | Base32 TOTP 密钥，见 [6.5](#65-两步验证2fa--totp) |
+| `email` | string | | 账号邮箱 |
 
-**只认这 5 个键**，其余字段传了会被忽略。
+**只认这 7 个键**，其余字段传了会被忽略。只改传了的字段，没传的保持不变。
 
 ```json
 { "access_token": "eyJhbGci...", "proxy": "socks5h://u:p@10.0.0.2:1080" }
@@ -387,6 +390,113 @@ https://user:pass@proxy.example.com:8443
 | `web` | 网页 token 导入（默认） |
 | `password` | 邮箱密码 + TOTP 登录获得 |
 | `codex` | Codex 来源 |
+
+---
+
+## 6.5 两步验证（2FA / TOTP）
+
+账号若开了两步验证，**自动重登必须拿到 `totp_secret`**，否则该账号失效后无法自动恢复。
+这是注册机最容易漏的一个字段。
+
+### 支持与不支持的 2FA 类型
+
+| 上游挑战类型 | 本服务行为 | 需要账号带什么 |
+|:--|:--|:--|
+| 无 2FA | 直接换 token | 什么都不用 |
+| **TOTP（认证器 App）** | ✅ 自动生成验证码并提交 | `totp_secret` |
+| **邮箱验证码** | ❌ 无法自动完成，报 `need_verification_code` | — |
+| 其他挑战 | ❌ 报 `no_auth_code`，附 `page.type` | — |
+
+也就是说：**只支持 TOTP**。短信、邮箱验证码、硬件密钥都不行 ——
+这些账号导入后一旦 RT 失效，只能人工重新登录。
+
+### `totp_secret` 的格式
+
+标准 **Base32** 字符串，即认证器 App「手动输入」时看到的密钥。
+
+```
+JBSWY3DPEHPK3PXP
+```
+
+生成算法：RFC 6238 TOTP，**6 位数字**，**30 秒**周期（与 Google Authenticator 默认一致）。
+
+### 解析容错（实测）
+
+下列写法**全部等价**，都能正确生成同一个验证码：
+
+| 写法 | 说明 |
+|:--|:--|
+| `JBSWY3DPEHPK3PXP` | 标准大写无填充 |
+| `jbswy3dpehpk3pxp` | 小写 |
+| `JBSW Y3DP EHPK 3PXP` | 带空格 |
+| `JBSWY3DPEHPK3PXP====` | 带 `=` 填充 |
+| `jbsw-y3dp-ehpk-3pxp` | 带连字符 |
+| `  JBSWY3DPEHPK3PXP  ` | 首尾空白 |
+
+处理规则：转大写 → 去空格 → 去连字符 → 去尾部 `=` → Base32 解码。
+
+**会被拒绝**：空串、纯空白、非 Base32 字符（如 `not-base32!!!`）。
+报错 `totp_secret_invalid`。
+
+### 从哪些地方取这个值
+
+| 来源 | 拿法 |
+|:--|:--|
+| 注册机自己生成 | 注册时自己生成的 Base32 串，直接落库 |
+| 认证器 App 手动输入 | App 里显示的密钥（去掉空格） |
+| `otpauth://` 二维码 | 取 `secret=` 参数的值 |
+
+`otpauth://totp/...?secret=JBSWY3DPEHPK3PXP&issuer=...` → 要的是 `JBSWY3DPEHPK3PXP`。
+
+### 没有 `totp_secret` 会怎样
+
+| 时机 | 表现 |
+|:--|:--|
+| 导入时 | 正常导入，不报错 |
+| 首次刷新 | 正常（AT 还有效，不需要 2FA） |
+| **AT 失效后自动重登** | 失败，`need_totp`：「该账号开启了 TOTP 两步验证，但账号里没有 totp_secret」 |
+| 结果 | 账号停在「异常」，**无法自动恢复** |
+
+所以：**只要账号开了 2FA，导入时就必须带 `totp_secret`**，否则这个账号是一次性的
+（AT 用完就废）。
+
+### 只有密码、没有 TOTP 的账号
+
+上游若没开 2FA，`password` 就够了，`totp_secret` 留空即可。
+这类账号在 `amr` 里不含 `otp` 项。
+
+### 上传样例
+
+```json
+{
+  "accounts": [
+    {
+      "access_token": "eyJhbGci...",
+      "refresh_token": "rt.1...",
+      "email": "user@example.com",
+      "password": "P@ssw0rd",
+      "totp_secret": "JBSWY3DPEHPK3PXP",
+      "proxy": "socks5h://u:p@10.0.0.1:1080"
+    }
+  ]
+}
+```
+
+### 补 `totp_secret` 到已有账号
+
+已导入但漏了 TOTP 的账号，直接用 `POST /api/accounts/update` 补：
+
+```json
+{ "access_token": "eyJhbGci...", "totp_secret": "JBSWY3DPEHPK3PXP" }
+```
+
+`password` 与 `email` 同样可以这样补。三个字段都在 `update` 的可改白名单里：
+
+```
+type  status  quota  proxy  password  totp_secret  email
+```
+
+**只改传了的字段** —— 没传的保持不变，不会被覆盖成空。
 
 ---
 

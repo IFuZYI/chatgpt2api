@@ -44,6 +44,24 @@ POST /api/accounts
 `password` + `totp_secret` 是「账号被救回来」的前提：RT 失效后唯一出路是重新登录。
 只传 access_token 的账号一旦失效就只能人工处理。
 
+### 2FA 要点
+
+**只支持 TOTP（认证器 App）**，不支持短信/邮箱验证码/硬件密钥。
+
+| 账号情况 | 要带什么 |
+|:--|:--|
+| 无 2FA | 只需 `password` |
+| TOTP 2FA | `password` + `totp_secret`（Base32，6 位/30 秒） |
+| 邮箱验证码 2FA | 无法自动重登，导入了也是一次性 |
+
+`totp_secret` 的容错很宽：大小写、空格、连字符、`=` 填充都能接受。
+`JBSW Y3DP EHPK 3PXP` 与 `jbswy3dpehpk3pxp` 等价。
+
+漏了 `totp_secret` 不会导致导入失败，但**该账号 AT 失效后无法自动恢复** ——
+停在「异常」等人工处理。可以用 `POST /api/accounts/update` 事后补。
+
+细节见[格式参考的 2FA 章节](./account-api-reference.md#65-两步验证2fa--totp)。
+
 ### 返回
 
 ```json
