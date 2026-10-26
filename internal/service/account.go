@@ -318,6 +318,7 @@ func normalizeAccount(item map[string]any) Account {
 	if stringValue(out["status"]) == "" {
 		out["status"] = StatusNormal
 	}
+	out["account_id"] = ensureAccountID(out)
 	out["quota"] = maxInt(intValue(out["quota"]), 0)
 	out["email"] = nilIfEmpty(stringValue(out["email"]))
 	out["user_id"] = nilIfEmpty(stringValue(out["user_id"]))
@@ -442,6 +443,47 @@ func accountMatchesAnyPlanType(account Account, planTypes []string) bool {
 	}
 	return false
 }
+
+// ensureAccountID 返回账号的稳定标识，缺失时**确定性**派生。
+//
+// 为什么需要它：access_token 会被轮换 —— 两条路径都会换掉它：
+//  1. RT 换 AT（keepalive，每 3 天一次）
+//  2. 密码重登（失效恢复）
+//
+// 拿 access_token 当引用键时，同一个账号在轮换前后是两个不同的键：
+// 前端 React key 变化会重建 DOM（选中态/展开态丢失），SQL 后端更会把
+// 旧行 DELETE、新行 INSERT，自增 id 随之改变（实测 id=1 → id=3）。
+//
+// 派生必须**确定性**：随机生成会让每次服务重启给同一账号一个新 id ——
+// 那就等于没有稳定标识。所以用 UUIDv5（名字空间 + 种子）：
+//
+//	种子优先级：user_id > email > access_token
+//
+// user_id 是上游的永久用户标识，最稳；email 次之；access_token 最后
+// —— 它虽然会轮换，但对「只有 token 的历史账号」是唯一可用的种子。
+// 一旦账号有了 account_id 就会被落盘，后续轮换不会重新派生，
+// 所以用 access_token 做种子不会在轮换时产生新 id。
+func ensureAccountID(account Account) string {
+	if existing := strings.TrimSpace(stringValue(account["account_id"])); existing != "" {
+		return existing
+	}
+	seed := ""
+	for _, key := range []string{"user_id", "email", "access_token"} {
+		if value := strings.TrimSpace(stringValue(account[key])); value != "" {
+			seed = key + ":" + value
+			break
+		}
+	}
+	if seed == "" {
+		// 理论上不可达：normalizeAccount 已保证 access_token 非空。
+		return uuid.NewString()
+	}
+	return uuid.NewSHA1(accountIDNamespace, []byte(seed)).String()
+}
+
+// accountIDNamespace 是 UUIDv5 的名字空间。
+// 固定值，不能改 —— 改了会让所有历史账号派生出新 id。
+var accountIDNamespace = uuid.MustParse("6f4a1d2e-6b1c-4a7f-9f3e-1b2c3d4e5f60")
 
 // resolveTokenLocked 顺着别名链把旧 token 解析到当前 token。
 func (s *AccountService) resolveTokenLocked(token string) string {

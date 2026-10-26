@@ -31,6 +31,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 |:--|:--|:--|:--|
 | `access_token` | string | **必填** | 上游 JWT。空字符串会被整条丢弃 |
+| `account_id` | string | 自动生成 | **稳定标识**，终身不变。见 [2.6](#26-account_id稳定标识)。不传则确定性派生 |
 | `refresh_token` | string | `""` | 有它才能走 RT 续期，不必重新登录 |
 | `id_token` | string | `""` | 导出/迁移时带上更完整 |
 | `email` | string | `""` | 不填会在首次刷新时从上游补齐 |
@@ -251,6 +252,72 @@ curl -sS --get "$BASE/api/accounts/detail" \
   -H "$AUTH" \
   --data-urlencode "access_token=$TOKEN"
 ```
+
+---
+
+## 2.6 `account_id`（稳定标识）
+
+每个账号有一个 **UUID 形态的稳定标识**，从创建起终身不变。
+
+```json
+{ "account_id": "838823ef-f8f8-5b75-8ad1-e7221d78a7d6" }
+```
+
+### 为什么需要它
+
+`access_token` **会变**。两条路径都会换掉它：
+
+| 路径 | 触发时机 |
+|:--|:--|
+| RT 换 AT（keepalive） | 每 3 天一次 |
+| 密码重登 | token 失效后自动恢复 |
+
+拿 `access_token` 当引用键的后果：
+
+- 前端 React key 变化 → 该行 DOM 被重建，**选中态与展开态丢失**
+- SQL 后端会把旧行 `DELETE`、新行 `INSERT`，自增 `id` 随之改变（实测 `id=1` → `id=3`）
+- 外部系统（报表、审计日志、注册机数据库）记下的引用在轮换后失效
+
+`account_id` 不受这些影响。
+
+### 生成规则
+
+**你不必传它** —— 后端会自动处理：
+
+1. **新账号**：创建时生成 UUIDv5（确定性，非随机）
+2. **已带 `account_id` 的记录**：原样保留
+3. **历史账号**（升级前导入的）：按种子**确定性派生**
+
+派生用的种子优先级：
+
+```
+user_id  >  email  >  access_token
+```
+
+**为什么是确定性派生而不是随机生成**：随机的话每次服务重启都会给同一账号一个新
+ID —— 那就等于没有稳定标识。确定性派生保证即使某次保存失败、或你从旧备份恢复
+`accounts.json`，ID 也不会变。已实测：260 个账号重启前后 ID 全部一致。
+
+### 用于别处
+
+**详情接口可以按 `account_id` 查**，不必再用 token：
+
+```bash
+curl -sS --get "$BASE/api/accounts/detail" \
+  -H "$AUTH" \
+  --data-urlencode "account_id=838823ef-f8f8-5b75-8ad1-e7221d78a7d6"
+```
+
+三个参数名都接受，优先级 `access_token` → `account_id` → `id`（`id` 是简写）。
+
+### 建议
+
+| 场景 | 用哪个 |
+|:--|:--|
+| 外部系统记录账号 | **`account_id`** |
+| 前端行标识 / 选中态 | **`account_id`** |
+| 书签、日志、审计 | **`account_id`** |
+| 调用刷新/删除/导出接口 | `access_token`（这些接口按 token 工作） |
 
 ---
 

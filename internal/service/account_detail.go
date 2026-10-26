@@ -25,6 +25,11 @@ import (
 //	                                bool，供前端渲染「已配置 / 未配置」
 //
 // 返回 nil 表示账号不存在（含空 token）。返回值是副本，调用方改写它不会污染号池。
+// 入参可以是 access_token，也可以是 account_id —— 后者才是稳定引用键。
+//
+// 为什么两个都收：access_token 是既有约定（前端一直用它），不能直接去掉；
+// 但 token 会轮换，外部系统/书签/日志里记下的 token 在轮换后就查不到了。
+// account_id 终身不变，是推荐的引用方式。
 func (s *AccountService) Detail(token string) map[string]any {
 	trimmed := strings.TrimSpace(token)
 	if trimmed == "" {
@@ -34,6 +39,14 @@ func (s *AccountService) Detail(token string) map[string]any {
 	s.mu.RLock()
 	resolved := s.resolveTokenLocked(trimmed)
 	account := s.accounts[resolved]
+	if account == nil {
+		// 退回按 account_id 找。线性扫描可接受：详情是单条人工操作，
+		// 号池规模在千级以内。
+		if byID, idResolved := s.findByAccountIDLocked(trimmed); byID != nil {
+			account = byID
+			resolved = idResolved
+		}
+	}
 	if account == nil {
 		s.mu.RUnlock()
 		return nil
@@ -76,4 +89,15 @@ func (s *AccountService) Detail(token string) map[string]any {
 	}
 
 	return out
+}
+
+// findByAccountIDLocked 按 account_id 查找账号，返回账号与它的 access_token。
+// 调用方必须已持有 s.mu 的读锁。
+func (s *AccountService) findByAccountIDLocked(accountID string) (Account, string) {
+	for token, account := range s.accounts {
+		if strings.TrimSpace(stringValue(account["account_id"])) == accountID {
+			return account, token
+		}
+	}
+	return nil, ""
 }

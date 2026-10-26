@@ -65,12 +65,13 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			writeErr(c, err)
 			return
 		}
-		accessToken := strings.TrimSpace(c.Query("access_token"))
-		if accessToken == "" {
-			writeErr(c, Errorf(http.StatusBadRequest, "access_token is required"))
+		lookup, ok := resolveAccountLookup(c)
+		if !ok {
+			writeErr(c, Errorf(http.StatusBadRequest,
+				"access_token 或 account_id 必填一个"))
 			return
 		}
-		detail := d.Accts.Detail(accessToken)
+		detail := d.Accts.Detail(lookup)
 		if detail == nil {
 			writeErr(c, Errorf(http.StatusNotFound, "account not found"))
 			return
@@ -376,4 +377,21 @@ func wantsRefresh(c *gin.Context) bool {
 		return true
 	}
 	return false
+}
+
+// resolveAccountLookup 从查询参数里取出要查的账号标识。
+//
+// 按优先级取 access_token → account_id → id（`id` 是 account_id 的简写）。
+// access_token 优先是为了兼容既有前端调用；它同时也是所有上游请求需要的键。
+//
+// 为什么还要支持 account_id：access_token 会被轮换（RT 换 AT、密码重登），
+// 轮换后旧 token 查不到账号（aliases 只在内存里，重启即失效）。
+// account_id 终身不变，外部系统应当用它做引用。
+func resolveAccountLookup(c *gin.Context) (string, bool) {
+	for _, key := range []string{"access_token", "account_id", "id"} {
+		if value := strings.TrimSpace(c.Query(key)); value != "" {
+			return value, true
+		}
+	}
+	return "", false
 }

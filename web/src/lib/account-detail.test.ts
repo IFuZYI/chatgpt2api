@@ -7,6 +7,7 @@ import {
   describeTokenExpiry,
   maskSecret,
   proxySourceLabel,
+  accountRowKey,
   type DetailRow,
 } from "./account-detail.ts";
 
@@ -238,4 +239,46 @@ test("buildDetailRows shows a dash when diagnostic fields are absent", () => {
     assert.ok(row, `缺少「${label}」`);
     assert.equal(row.value, "—", `「${label}」空值应显示占位符`);
   }
+});
+
+// ── 稳定引用键 ────────────────────────────────────────────
+//
+// React key 与选中态此前用 access_token。token 会被轮换（RT 换 AT、密码重登），
+// 轮换后 React 认为这是新行 —— 选中态、展开态全部丢失；而用户明明没动过。
+//
+// account_id 终身不变，是唯一合适的引用键。
+
+test("accountRowKey prefers account_id over access_token", () => {
+  assert.equal(
+    accountRowKey({ account_id: "acc-1", access_token: "at-1" }),
+    "acc-1",
+  );
+});
+
+test("accountRowKey falls back to access_token for legacy rows", () => {
+  // 老数据可能还没有 account_id（后端会在下次保存时回填）
+  assert.equal(accountRowKey({ access_token: "at-legacy" }), "at-legacy");
+});
+
+test("selection survives a token rotation", () => {
+  // 同一个账号，轮换前后 token 不同但 account_id 相同
+  const before = { account_id: "acc-1", access_token: "at-OLD" };
+  const after = { account_id: "acc-1", access_token: "at-NEW" };
+
+  assert.equal(accountRowKey(before), accountRowKey(after));
+
+  const selected = new Set([accountRowKey(before)]);
+  assert.ok(selected.has(accountRowKey(after)), "轮换后选中态不应丢失");
+});
+
+test("buildDetailRows exposes account_id for external references", () => {
+  const groups = buildDetailRows({ access_token: "at-1", account_id: "acc-9" });
+  const flat = new Map<string, DetailRow>();
+  for (const g of groups) {
+    for (const r of g.rows) flat.set(r.label, r);
+  }
+  const row = flat.get("账号 ID");
+  assert.ok(row, "详情里应显示 account_id，供外部系统引用");
+  assert.equal(row.value, "acc-9");
+  assert.equal(row.copyable, true, "account_id 应可复制");
 });

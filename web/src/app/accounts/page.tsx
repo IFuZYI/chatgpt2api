@@ -63,6 +63,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 import { AccountDetailDialog } from "./components/account-detail-dialog";
+import { accountRowKey } from "@/lib/account-detail";
 import { AccountImportDialog } from "./components/account-import-dialog";
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
@@ -267,7 +268,7 @@ function AccountsPageContent() {
   const startIndex = (safePage - 1) * Number(pageSize);
   const currentRows = filteredAccounts.slice(startIndex, startIndex + Number(pageSize));
   const allCurrentSelected =
-    currentRows.length > 0 && currentRows.every((row) => selectedIds.includes(row.access_token));
+    currentRows.length > 0 && currentRows.every((row) => selectedIds.includes(accountRowKey(row)));
 
   const summary = useMemo(() => {
     const total = accounts.length;
@@ -288,9 +289,16 @@ function AccountsPageContent() {
     [accounts],
   );
 
+  // selectedIds 存的是 accountRowKey（稳定），但批量操作（刷新/删除/导出）
+  // 都按 access_token 工作 —— 所以这里映射回 token。
+  //
+  // 为什么 selection 不直接存 token：token 会轮换，轮换后选中态会「神秘消失」
+  // （React 认为那是新行）。存稳定键就没这个问题。
   const selectedTokens = useMemo(() => {
     const selectedSet = new Set(selectedIds);
-    return accounts.filter((item) => selectedSet.has(item.access_token)).map((item) => item.access_token);
+    return accounts
+      .filter((item) => selectedSet.has(accountRowKey(item)))
+      .map((item) => item.access_token);
   }, [accounts, selectedIds]);
 
   const abnormalTokens = useMemo(() => {
@@ -1071,17 +1079,18 @@ function AccountsPageContent() {
 
                     return (
                       <tr
-                        key={account.access_token}
+                        key={accountRowKey(account)}
                         className="border-b border-stone-100/80 text-sm text-stone-600 transition-colors hover:bg-stone-50/70"
                       >
                         <td className="px-4 py-3">
                           <Checkbox
-                            checked={selectedIds.includes(account.access_token)}
+                            checked={selectedIds.includes(accountRowKey(account))}
                             onCheckedChange={(checked) => {
+                              const rowKey = accountRowKey(account);
                               setSelectedIds((prev) =>
                                 checked
-                                  ? Array.from(new Set([...prev, account.access_token]))
-                                  : prev.filter((item) => item !== account.access_token),
+                                  ? Array.from(new Set([...prev, rowKey]))
+                                  : prev.filter((item) => item !== rowKey),
                               );
                             }}
                           />
@@ -1180,7 +1189,7 @@ function AccountsPageContent() {
                             <button
                               type="button"
                               className="rounded-lg p-2 transition hover:bg-stone-100 hover:text-stone-700"
-                              onClick={() => setDetailToken(account.access_token)}
+                              onClick={() => setDetailToken(accountRowKey(account))}
                               title="查看账号详情（含密码、2FA、令牌有效期）"
                             >
                               <Eye className="size-4" />

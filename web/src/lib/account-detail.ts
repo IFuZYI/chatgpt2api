@@ -101,6 +101,25 @@ export function accountDetailPath(accessToken: string): string {
   return `/api/accounts/detail?access_token=${encodeURIComponent(accessToken)}`;
 }
 
+/**
+ * 账号行的稳定引用键。
+ *
+ * 用于 React key 与选中态。**不能用 access_token**：它会轮换
+ * （RT 换 AT、密码重登），轮换后 React 认为这是新行 ——
+ * 选中态与展开态全部丢失，而用户明明没动过。
+ *
+ * account_id 终身不变。老数据可能还没有它（后端会在下次保存时回填），
+ * 所以保留 token 作为兜底。
+ */
+export function accountRowKey(account: { account_id?: unknown; access_token?: unknown }): string {
+  const id = typeof account.account_id === "string" ? account.account_id.trim() : "";
+  if (id !== "") {
+    return id;
+  }
+  const token = typeof account.access_token === "string" ? account.access_token.trim() : "";
+  return token;
+}
+
 export function proxySourceLabel(source: string): string {
   switch (source) {
     case "account":
@@ -147,6 +166,11 @@ export function buildDetailRows(item: Record<string, unknown>): DetailGroup[] {
     {
       title: "基本信息",
       rows: [
+        {
+          label: "账号 ID",
+          value: text(item.account_id),
+          copyable: Boolean(item.account_id),
+        },
         { label: "邮箱", value: text(item.email), copyable: Boolean(item.email) },
         { label: "套餐类型", value: text(item.type) },
         { label: "来源", value: text(item.source_type) },

@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.3.0 - 2026-10-26
+
+账号引入稳定标识 `account_id`，并修掉由此暴露的前端选中态丢失问题。
+
+### 新增
+
++ **`account_id`：UUID 形态的稳定标识，终身不变。**
+  此前账号没有稳定标识，唯一可用的引用键是 `access_token` —— 而它会变：
+  RT 换 AT（keepalive，每 3 天一次）与密码重登都会换掉它。
+
+  后果（实测）：
+  - 前端 React key 用 token，轮换后该行 DOM 被重建，选中态与展开态丢失
+  - SQL 后端把旧行 `DELETE`、新行 `INSERT`，自增 `id` 从 1 变成 3
+  - 外部系统记下的 token 引用在轮换后失效（`aliases` 只在内存，重启即丢）
+
+  生成规则：新账号用 UUIDv5 确定性派生；已有 `account_id` 原样保留；
+  历史账号按 `user_id > email > access_token` 的种子确定性回填 ——
+  **不是随机生成**，否则每次重启都会换一批 ID。
+
++ **详情接口可按 `account_id` 查询**，不必再用 token：
+  `GET /api/accounts/detail?account_id=...`。
+  三个参数名都接受，优先级 `access_token` → `account_id` → `id`。
+
+### 修复
+
++ **前端选中态在 token 轮换后丢失。** React key 与 `selectedIds` 此前存
+  `access_token`，轮换后 React 认为是新行 —— 用户明明没动过，勾选却没了。
+  改为存 `account_id`（批量操作时再映射回 token，因为刷新/删除接口按 token 工作）。
+
+### 迁移
+
++ 已有账号在首次加载时自动回填 `account_id`，无需人工操作。
+  实测 260 个账号全部回填成功，且重启前后 ID 完全一致。
++ JSON 与 SQL 后端都会持久化该字段（SQL 的 `data` 列存整个对象，无需改表）。
+
+### 文档
+
++ 格式参考新增 [2.6 `account_id`](docs/account-api-reference.md#26-account_id稳定标识)：
+  为什么需要、生成规则、用于别处、场景对照表。
++ 操作文档注明「把返回的 `account_id` 存进你自己的库」。
+
 ## 2.2.1 - 2026-10-26
 
 补 2FA 文档与接口缺口。
