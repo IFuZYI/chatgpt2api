@@ -64,7 +64,7 @@ import { cn } from "@/lib/utils";
 
 import { AccountDetailDialog } from "./components/account-detail-dialog";
 import { accountRowKey, pruneSelection, selectAllKeys } from "@/lib/account-detail";
-import { METRIC_GRID_CLASS, rowAccentClass } from "@/lib/account-columns";
+import { METRIC_GRID_CLASS, resolveStatusMeta, rowAccentClass } from "@/lib/account-columns";
 import { AccountImportDialog } from "./components/account-import-dialog";
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
@@ -386,7 +386,21 @@ function AccountsPageContent() {
 
       // 轮询进度到完成
       const data = await new Promise<AccountRefreshResponse>((resolve, reject) => {
+        const pollStartedAt = Date.now();
         const pollTimer = setInterval(async () => {
+          // 卸载守卫 + 超时：原实现只靠 done/error 退出，
+          // 离开页面或进度接口异常时 interval 会永久跑下去。
+          if (unmountedRef.current) {
+            // 组件已卸载：清掉定时器即可，不 resolve/reject
+            // （调用方已经不在了，任何后续 setState 都是无效操作）。
+            clearInterval(pollTimer);
+            return;
+          }
+          if (Date.now() - pollStartedAt > 30 * 60 * 1000) {
+            clearInterval(pollTimer);
+            reject(new Error("等待进度超时（30 分钟未完成），请稍后刷新列表查看结果"));
+            return;
+          }
           try {
             const p = await fetchRefreshProgress(progress_id);
             if (p.done) {
@@ -520,23 +534,48 @@ function AccountsPageContent() {
     onUpdate: (p: RefreshProgressResponse) => void,
   ): Promise<void> => {
     return new Promise<void>((resolve, reject) => {
+      // 加超时上限：进度接口异常（一直 done=false）时不能永久轮询 ——
+      // 那会让定时器在组件卸载后继续跑，且用户永远看不到结束。
+      const startedAt = Date.now();
+      const MAX_POLL_MS = 30 * 60 * 1000;
       const timer = setInterval(async () => {
+        // 卸载后停止：否则 interval 会在页面离开后继续 setState。
+        if (unmountedRef.current) {
+          clearInterval(timer);
+          resolve();
+          return;
+        }
+        if (Date.now() - startedAt > MAX_POLL_MS) {
+          clearInterval(timer);
+          reject(new Error("刷新超时（30 分钟未完成），请稍后在号池里查看结果"));
+          return;
+        }
         try {
           const p = await fetchRefreshProgress(progressId);
-          if (p.done) {
-            clearInterval(timer);
-            if (p.error) {
-              reject(new Error(p.error));
-            } else {
-              onUpdate(p);
-              resolve();
-            }
+          if (!p.done) {
+            return;
+          }
+          clearInterval(timer);
+          if (p.error) {
+            reject(new Error(p.error));
+            return;
+          }
+          // onUpdate 必须单独 try：它里面会 setAccounts / setSelectedIds，
+          // 若抛错（例如 result.items 结构异常）而没接住，Promise 既不
+          // resolve 也不 reject —— 调用方的 finally 不执行，界面卡在
+          // 「正在刷新」。这也是整页崩溃的常见来源。
+          try {
+            onUpdate(p);
+            resolve();
+          } catch (updateErr) {
+            reject(updateErr);
           }
         } catch (err) {
           clearInterval(timer);
           reject(err);
         }
       }, 500);
+      progressRef.current = timer;
     });
   };
 
@@ -580,7 +619,21 @@ function AccountsPageContent() {
 
       // 轮询进度到完成
       await new Promise<void>((resolve, reject) => {
+        const pollStartedAt = Date.now();
         const pollTimer = setInterval(async () => {
+          // 卸载守卫 + 超时：原实现只靠 done/error 退出，
+          // 离开页面或进度接口异常时 interval 会永久跑下去。
+          if (unmountedRef.current) {
+            // 组件已卸载：清掉定时器即可，不 resolve/reject
+            // （调用方已经不在了，任何后续 setState 都是无效操作）。
+            clearInterval(pollTimer);
+            return;
+          }
+          if (Date.now() - pollStartedAt > 30 * 60 * 1000) {
+            clearInterval(pollTimer);
+            reject(new Error("等待进度超时（30 分钟未完成），请稍后刷新列表查看结果"));
+            return;
+          }
           try {
             const p = await fetchReLoginProgress(progress_id);
             if (p.done) {
@@ -735,6 +788,7 @@ function AccountsPageContent() {
  *
  * token / 来源 / 创建时间已移到详情弹窗 —— 它们占宽且不属于「扫一眼」的范畴。
  */
+
 function AccountIdentity({ account }: { account: Account }) {
   const email = account.email?.trim() || "";
   const id = (account.account_id ?? "").trim();
@@ -1130,7 +1184,10 @@ function AccountIdentity({ account }: { account: Account }) {
                 </thead>
                 <tbody>
                   {currentRows.map((account) => {
-                    const status = statusMeta[account.status];
+                    // 必须兜底：statusMeta 只覆盖 4 个已知状态，上游返回
+                    // 任何其他值（带空格/空串/新增状态）时索引是 undefined，
+                    // 读 .icon 就抛 TypeError → 整页崩溃。刷新时最容易触发。
+                    const status = resolveStatusMeta(statusMeta, account.status, statusMeta.禁用);
                     const StatusIcon = status.icon;
 
                     return (

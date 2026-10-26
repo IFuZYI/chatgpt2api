@@ -12,7 +12,13 @@ export type ImageStorageSettings = {
   mode: ImageStorageMode;
   webdav_url: string;
   webdav_username: string;
+  /**
+   * 后端 GET 不返回原文（脱敏），只有用户新填时才在保存 payload 里出现。
+   * 回显时通常为空串 —— 判断「有没有设过密码」要看 has_webdav_password。
+   */
   webdav_password: string;
+  /** true = 后端已有密码。密码框留空保存时必须回传它，否则会被当成清空。 */
+  has_webdav_password?: boolean;
   webdav_root_path: string;
   public_base_url: string;
 };

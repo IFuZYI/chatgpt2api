@@ -1,5 +1,57 @@
 # Changelog
 
+## 2.2.1 - 2026-10-27
+
+两个用户报告的故障修复。
+
+### 修复
+
++ **[高危] 刷新时整页崩溃，显示「This page couldn't load」。**
+  项目**没有 `error.tsx` / `global-error.tsx`** —— 任何渲染期异常都会让
+  Next.js 用默认错误页替换整页，用户只能刷新，操作全丢。
+
+  具体触发点：账号行渲染用
+  `const status = statusMeta[account.status]; const StatusIcon = status.icon;`，
+  而 `statusMeta` 只有 4 个键（正常/限流/异常/禁用）。上游返回任何其他值
+  （带空格、空串、新增枚举）时索引是 `undefined`，紧接着读 `.icon` 抛
+  TypeError —— 刷新后数据来自上游，最容易命中。
+
+  修复三层：
+  1. 新增 `error.tsx`（页面级）与 `global-error.tsx`（根布局级兜底，
+     自带 `<html>`/`<body>`），把整页崩溃换成「局部报错 + 重试」，
+     并显示错误摘要便于反馈
+  2. 新增 `resolveStatusMeta()`：未知状态兜底为「禁用」样式，
+     并把原始值展示出来（让人能看出是哪个状态没识别）
+  3. 加固两处进度轮询 `setInterval`：加卸载守卫与 30 分钟超时；
+     `onUpdate` 抛错不再让 Promise 悬挂（原来会让界面永远卡在
+     「正在刷新」）
+
++ **[高危] 设置保存误报「启用 WebDAV 图片存储后必须填写 WebDAV 密码」。**
+  这是 v2.2.0 引入的回归：脱敏把 `webdav_password` 从
+  `GET /api/settings` 换成 `has_webdav_password`，但**只改了后端，没改
+  前端回传**。前端拿到空密码 → 保存时原样回传空串 → 后端校验失败。
+  用户明明早就配好了密码，只改了个无关设置也被拦。
+
+  修复两端：
+  - 后端：收到空 `webdav_password` 且 `has_webdav_password: true` 时，
+    沿用磁盘上的旧密码（语义与 `proxy_runtime` 的 `_existing_cf_cookies`
+    一致）
+  - 前端：新增 `buildWebdavPayload()`，仅在密码框留空时回传 `has_*`
+  - 密码框加提示：「已设置，留空表示不修改」—— 避免用户看到空框
+    以为密码丢了
+
+### 说明
+
++ WebDAV 启用状态下**无法清空密码**（会返回 400）。这是有意的：
+  WebDAV 必须有密码。要停用请关闭 `enabled` 或切换 `mode`。
+
+### 验证
+
+- 真实浏览器（Playwright + Chromium）：6 个页面全部正常，零 pageerror
+- 刷新中途离开页面 × 3 次：无崩溃
+- 设置页点「保存」：不再误报
+- 后端 8 包 + 67 项 compose 契约 + 43 前端测试全绿
+
 ## 2.2.0 - 2026-10-26
 
 全量审计版本。**含 6 个安全修复 + 1 个数据丢失修复**，建议升级。

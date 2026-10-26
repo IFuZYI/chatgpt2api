@@ -416,9 +416,15 @@ export function ConfigCard() {
                   type="password"
                   value={String(config?.image_storage?.webdav_password || "")}
                   onChange={(event) => setImageStorageField("webdav_password", event.target.value)}
+                  placeholder={config?.image_storage?.has_webdav_password ? "已设置，留空表示不修改" : ""}
                   className="h-10 rounded-xl border-stone-200 bg-white"
                   disabled={!config?.image_storage?.enabled}
                 />
+                {config?.image_storage?.has_webdav_password && !config?.image_storage?.webdav_password ? (
+                  <p className="text-xs text-stone-500">
+                    已保存密码（出于安全不回显）。留空保存 = 保持不变；填新值 = 覆盖。
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <label className="text-sm text-stone-700">远端目录</label>

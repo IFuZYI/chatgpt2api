@@ -450,7 +450,29 @@ func (s *Store) Update(patch map[string]any) (map[string]any, error) {
 		next["backup"] = normalizeBackupSettings(next["backup"])
 	}
 	if _, ok := next["image_storage"]; ok {
-		normalized := normalizeImageStorageSettings(next["image_storage"])
+		incoming := next["image_storage"]
+		// 保留已存的 WebDAV 密码。
+		//
+		// 为什么必须做：GET /api/settings 返回的是**脱敏**配置
+		// （webdav_password → has_webdav_password）。前端拿不到原文，
+		// 回传时该字段是空串 —— 若直接校验，用户「只改了个无关设置」
+		// 也会被拦下报「必须填写 WebDAV 密码」，而他早就配好了。
+		//
+		// 语义与 proxy_runtime 的 _existing_cf_cookies 完全一致：
+		// 显式传 has_X=true 且值为空 → 视为「不修改」，沿用磁盘上的值。
+		if incomingMap, isMap := incoming.(map[string]any); isMap {
+			copied := deepCopyMap(incomingMap)
+			if password, _ := copied["webdav_password"].(string); strings.TrimSpace(password) == "" {
+				if boolOr(copied["has_webdav_password"], false) {
+					if existing := s.imageStoragePasswordLocked(); existing != "" {
+						copied["webdav_password"] = existing
+					}
+				}
+			}
+			delete(copied, "has_webdav_password")
+			incoming = copied
+		}
+		normalized := normalizeImageStorageSettings(incoming)
 		if err := validateImageStorageSettings(normalized); err != nil {
 			s.mu.Unlock()
 			return nil, err
@@ -507,6 +529,18 @@ func (s *Store) proxyRuntimeClearanceLocked() (map[string]any, bool) {
 		return map[string]any{}, false
 	}
 	return clearance, true
+}
+
+// imageStoragePasswordLocked 取磁盘上已存的 WebDAV 密码。调用方必须持 s.mu。
+//
+// 不能调 raw()：它自己加 RLock，在写锁内调用会死锁（见 LRN-20261027-001）。
+func (s *Store) imageStoragePasswordLocked() string {
+	settings, ok := s.data["image_storage"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	password, _ := settings["webdav_password"].(string)
+	return strings.TrimSpace(password)
 }
 
 func validateImageStorageSettings(settings map[string]any) error {

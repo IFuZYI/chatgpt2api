@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { buildWebdavPayload } from "@/lib/account-columns";
 import { defaultUpstreamModelName } from "@/lib/account-detail";
 import { toast } from "sonner";
 
@@ -110,10 +111,11 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     ? config.image_storage as ImageStorageSettings
     : {
       enabled: false,
-      mode: "local",
+      mode: "local" as ImageStorageMode,
       webdav_url: "",
       webdav_username: "",
       webdav_password: "",
+      has_webdav_password: false,
       webdav_root_path: "chatgpt2api/images",
       public_base_url: "",
     };
@@ -182,6 +184,9 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
       webdav_url: String(imageStorage.webdav_url || ""),
       webdav_username: String(imageStorage.webdav_username || ""),
       webdav_password: String(imageStorage.webdav_password || ""),
+      // 后端返回的是脱敏配置：密码原文不在响应里，只有这个标记。
+      // 必须留在 state 里，保存时才能告诉后端「别覆盖旧密码」。
+      has_webdav_password: Boolean(imageStorage.has_webdav_password),
       webdav_root_path: String(imageStorage.webdav_root_path || "chatgpt2api/images"),
       public_base_url: String(imageStorage.public_base_url || ""),
     },
@@ -426,15 +431,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           model: String(config.ai_review?.model || "").trim(),
           prompt: String(config.ai_review?.prompt || "").trim(),
         },
-        image_storage: {
-          enabled: Boolean(config.image_storage?.enabled),
+        image_storage: buildWebdavPayload({
+          enabled: config.image_storage?.enabled,
           mode: config.image_storage?.enabled && ["webdav", "both"].includes(String(config.image_storage?.mode)) ? config.image_storage.mode : "local",
-          webdav_url: String(config.image_storage?.webdav_url || "").trim(),
-          webdav_username: String(config.image_storage?.webdav_username || "").trim(),
-          webdav_password: String(config.image_storage?.webdav_password || "").trim(),
-          webdav_root_path: String(config.image_storage?.webdav_root_path || "chatgpt2api/images").trim(),
-          public_base_url: String(config.image_storage?.public_base_url || "").trim(),
-        },
+          webdav_url: config.image_storage?.webdav_url,
+          webdav_username: config.image_storage?.webdav_username,
+          webdav_password: config.image_storage?.webdav_password,
+          has_webdav_password: config.image_storage?.has_webdav_password,
+          webdav_root_path: config.image_storage?.webdav_root_path,
+          public_base_url: config.image_storage?.public_base_url,
+        }) as ImageStorageSettings,
         proxy_runtime: {
           ...normalizeProxyRuntime(config.proxy_runtime),
           proxy_url: String(config.proxy_runtime?.proxy_url || "").trim(),

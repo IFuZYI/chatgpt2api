@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ACCOUNT_COLUMNS, DEFAULT_PAGE_SIZE, FIRST_COLUMN_KEY, METRIC_GRID_CLASS, PAGE_SIZE_OPTIONS, rowAccentClass, sameAccountRow, SEARCH_DEBOUNCE_MS, normalizeQuery, sameQuery, shouldCollapseModels, MOBILE_BREAKPOINT_PX } from "./account-columns.ts";
+import { ACCOUNT_COLUMNS, DEFAULT_PAGE_SIZE, FIRST_COLUMN_KEY, METRIC_GRID_CLASS, PAGE_SIZE_OPTIONS, rowAccentClass, sameAccountRow, resolveStatusMeta, normalizeStatusLabel, buildWebdavPayload, SEARCH_DEBOUNCE_MS, normalizeQuery, sameQuery, shouldCollapseModels, MOBILE_BREAKPOINT_PX } from "./account-columns.ts";
 
 // 账号首页：账号信息放第一列。
 //
@@ -118,4 +118,98 @@ test("models block collapses on mobile by default", () => {
 
 test("mobile breakpoint matches tailwind sm", () => {
   assert.equal(MOBILE_BREAKPOINT_PX, 640);
+});
+
+// 未知状态必须兜底，不能返回 undefined（否则 .icon 抛错整页崩溃）。
+//
+// 实测触发路径：刷新后 accounts 来自上游，status 可能是带空格、
+// 空串或未枚举的新值。原实现直接 statusMeta[status] 索引。
+test("resolveStatusMeta falls back for unknown status", () => {
+  const meta = { 正常: { icon: "ok" }, 异常: { icon: "bad" } };
+  const fallback = { icon: "unknown" };
+
+  assert.deepEqual(resolveStatusMeta(meta, "正常", fallback), { icon: "ok" });
+  assert.deepEqual(resolveStatusMeta(meta, "  异常  ", fallback), { icon: "bad" }, "应 trim");
+  assert.deepEqual(resolveStatusMeta(meta, "已过期", fallback), fallback, "未知状态用兜底");
+  assert.deepEqual(resolveStatusMeta(meta, "", fallback), fallback, "空串用兜底");
+  assert.deepEqual(resolveStatusMeta(meta, undefined, fallback), fallback);
+  assert.deepEqual(resolveStatusMeta(meta, null, fallback), fallback);
+  assert.deepEqual(resolveStatusMeta(meta, 123, fallback), fallback);
+});
+
+// 原型链上的键不能被当成有效状态（防 __proto__ 之类的意外命中）。
+test("resolveStatusMeta ignores inherited keys", () => {
+  const meta = { 正常: { icon: "ok" } };
+  const fallback = { icon: "unknown" };
+  assert.deepEqual(resolveStatusMeta(meta, "toString", fallback), fallback);
+  assert.deepEqual(resolveStatusMeta(meta, "__proto__", fallback), fallback);
+});
+
+test("normalizeStatusLabel handles empty and non-string", () => {
+  assert.equal(normalizeStatusLabel("正常"), "正常");
+  assert.equal(normalizeStatusLabel("  异常 "), "异常");
+  assert.equal(normalizeStatusLabel(""), "未知");
+  assert.equal(normalizeStatusLabel(null), "未知");
+  assert.equal(normalizeStatusLabel(42), "未知");
+});
+
+// ── WebDAV 密码「留空 = 不修改」 ──────────────────────────
+//
+// 后端 GET /api/settings 返回脱敏配置（webdav_password 换成
+// has_webdav_password）。前端回传时必须带上这个标记，否则后端认为
+// 「用户要清空密码」→ 校验失败 → 报「必须填写 WebDAV 密码」。
+test("buildWebdavPayload carries has_webdav_password when password left blank", () => {
+  const stored = {
+    enabled: true,
+    mode: "webdav",
+    webdav_url: "https://dav.example.com",
+    webdav_username: "u",
+    webdav_password: "",
+    has_webdav_password: true,
+    webdav_root_path: "chatgpt2api/images",
+    public_base_url: "",
+  };
+  const payload = buildWebdavPayload(stored);
+  assert.equal(payload.has_webdav_password, true, "必须告诉后端「已有密码，别覆盖」");
+  assert.equal(payload.webdav_password, "");
+});
+
+test("buildWebdavPayload omits the flag when user types a new password", () => {
+  const stored = {
+    enabled: true,
+    mode: "webdav",
+    webdav_url: "https://dav.example.com",
+    webdav_username: "u",
+    webdav_password: "NEW-PASS",
+    has_webdav_password: true,
+  };
+  const payload = buildWebdavPayload(stored);
+  assert.equal(payload.webdav_password, "NEW-PASS");
+  assert.equal(payload.has_webdav_password, undefined, "填了新密码就不该再发 has_*");
+});
+
+test("buildWebdavPayload keeps the flag false when there was never a password", () => {
+  const payload = buildWebdavPayload({
+    enabled: true,
+    mode: "webdav",
+    webdav_url: "https://dav.example.com",
+    webdav_password: "",
+    has_webdav_password: false,
+  });
+  assert.equal(payload.has_webdav_password, false);
+});
+
+// 用户想清空密码：has_ 为 false 且密码框留空，但 WebDAV 仍启用。
+// 后端会拒绝（WebDAV 必须有密码）—— 前端不该静默失败，
+// 而应把 has_ 保持为 true，让用户明白「密码还在，只是没显示」。
+test("clearing password while webdav enabled keeps the has flag true", () => {
+  const payload = buildWebdavPayload({
+    enabled: true,
+    mode: "webdav",
+    webdav_url: "https://dav.example.com",
+    webdav_password: "",
+    has_webdav_password: true,
+  });
+  // 留空时必须带 true —— 否则后端会把「留空」当成「要清空」并报错
+  assert.equal(payload.has_webdav_password, true);
 });
