@@ -141,7 +141,7 @@ jobs:
           name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
           files: |
             dist/*
           body: |

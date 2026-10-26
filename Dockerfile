@@ -1,4 +1,4 @@
-# chatgpt2api 2.0 — Go + Gin 单二进制
+# chatgpt2api — Go + Gin 单二进制
 #
 # 三阶段构建：
 #   web-build  Next.js 静态导出（产物进 internal/web/web_dist）

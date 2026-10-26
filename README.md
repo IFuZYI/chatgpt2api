@@ -16,7 +16,7 @@
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-576%20passing-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-687%20passing-brightgreen">
 </p>
 
 ---
@@ -88,7 +88,7 @@
         └───────────┘        └────────────┘
 ```
 
-**规模**：31,350 行非测试 Go 代码 + 20,079 行测试，576 个测试全绿。
+**规模**：33,994 行非测试 Go 代码 + 23,771 行测试，687 个测试全绿。
 
 ---
 
@@ -207,6 +207,9 @@ CHATGPT2API_WEB_DIST=$PWD/web/out CHATGPT2API_AUTH_KEY=dev ./chatgpt2api --addr 
 
 ```bash
 cp .env.example .env
+# config.json 必须先存在：app 的挂载用 create_host_path: false，
+# 文件缺失时 compose 会在创建容器阶段直接报错（不会自动生成）。
+cp config.example.json config.json
 docker compose -f docker-compose.warp.yml up -d --build
 ```
 
@@ -543,8 +546,8 @@ curl "http://localhost:3000/v1/editable-file-tasks?ids=my-task-1" \
 
 ### 管理面
 
-共 **77 条路由**（GET 30 / POST 42 / DELETE 5）。完整清单以
-[`internal/api/`](./internal/api/) 下的 `*_routes.go` 为准。常用几组：
+共 **79 条路由**（GET 31 / POST 43 / DELETE 5）。完整清单以
+[`internal/api/`](./internal/api/) 下的路由注册文件为准。常用几组：
 
 | 组 | 端点前缀 |
 |:--|:--|
@@ -564,7 +567,7 @@ curl "http://localhost:3000/v1/editable-file-tasks?ids=my-task-1" \
 ### 测试
 
 ```bash
-go test ./...                                 # 576 个
+go test ./...                                 # 687 个
 go test -race ./...                           # 竞态检测
 go test -tags live ./internal/upstream/ -v    # 真实上游握手（需外网）
 ```

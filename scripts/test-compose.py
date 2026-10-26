@@ -135,6 +135,45 @@ for path in COMPOSE_FILES:
             f"{path}: /app/data 被挂成只读（{src}:{tgt}:{mode}），无法写入",
         )
 
+# ── 4b. 所有 bind mount 的宿主源必须存在 ────────────────────────────
+#
+# 真实缺陷：warp compose 挂了 ./scripts/privoxy-warp.conf，而那个文件
+# 随 Python 归档被删了。docker 会在该路径创建一个**目录**然后报
+# "not a directory"，privoxy 永远起不来，app 的 depends_on 永不满足。
+# 这条检查当时不存在，所以 43 项全过而故障仍在。
+import os as _os
+
+for path in COMPOSE_FILES:
+    cfg = load(path)
+    for name, svc in (cfg.get("services") or {}).items():
+        for src, tgt, _mode in mounts_of(svc):
+            # 跳过命名卷（不以 . 或 / 开头）与只读系统路径
+            if not (src.startswith(".") or src.startswith("/")):
+                continue
+            if src.startswith("/"):
+                continue  # 容器内绝对路径，宿主上不存在是正常的
+            check(
+                _os.path.exists(src),
+                f"{path}: 服务 {name} 挂载的宿主路径 {src} 不存在"
+                f"（docker 会创建一个同名目录然后挂载失败）",
+            )
+
+# ── 4c. 第三方服务的加固必须与实际需求一致 ──────────────────────────
+#
+# 真实缺陷：把 app 的 user/cap_drop/security_opt 复制到了 warp-proxy
+# （caomingjun/warp），而它需要 root + NET_ADMIN —— 容器起不来。
+# 判据：cap_drop: [ALL] 与 cap_add 同时存在 = 自相矛盾。
+for path in COMPOSE_FILES:
+    cfg = load(path)
+    for name, svc in (cfg.get("services") or {}).items():
+        caps_dropped = {str(c).upper() for c in (svc.get("cap_drop") or [])}
+        caps_added = {str(c).upper() for c in (svc.get("cap_add") or [])}
+        check(
+            not ("ALL" in caps_dropped and caps_added),
+            f"{path}: 服务 {name} 同时 cap_drop:[ALL] 与 cap_add:{sorted(caps_added)}"
+            " —— 自相矛盾，容器会起不来",
+        )
+
 # ── 5. .dockerignore 必须挡住秘密与无关大文件 ────────────────────────
 ignore = open(".dockerignore", encoding="utf-8").read().splitlines()
 patterns = {line.strip() for line in ignore if line.strip() and not line.startswith("#")}

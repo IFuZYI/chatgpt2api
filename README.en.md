@@ -15,7 +15,7 @@
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-576%20passing-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-687%20passing-brightgreen">
 </p>
 
 ---
@@ -94,7 +94,7 @@ It provides three things:
         └───────────┘        └────────────┘
 ```
 
-**Scale**: 31,350 lines of non-test Go, 20,079 lines of tests, 576 tests passing.
+**Scale**: 33,994 lines of non-test Go, 23,771 lines of tests, 687 tests passing.
 
 ---
 
@@ -578,7 +578,7 @@ from the same owner reuses the task.
 
 ### Admin surface
 
-**77 routes** total (GET 30 / POST 42 / DELETE 5). The authoritative list is the
+**79 routes** total (GET 31 / POST 43 / DELETE 5). The authoritative list is the
 `*_routes.go` files under [`internal/api/`](./internal/api/). Common groups:
 
 | Group | Prefix |
@@ -599,7 +599,7 @@ from the same owner reuses the task.
 ### Tests
 
 ```bash
-go test ./...                                 # 576 tests
+go test ./...                                 # 687 tests
 go test -race ./...                           # race detector
 go test -tags live ./internal/upstream/ -v    # real upstream handshake (needs network)
 ```
@@ -623,7 +623,7 @@ PostgreSQL backend tests require `TEST_POSTGRES_URL`; they are skipped otherwise
 Pushing a tag triggers two independent pipelines:
 
 ```bash
-git tag v2.0.2 && git push origin v2.0.2
+V=$(cat VERSION) && git tag "v$V" && git push origin "v$V"
 ```
 
 | Workflow | Purpose |

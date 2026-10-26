@@ -40,6 +40,9 @@
 | 存储后端 | `STORAGE_BACKEND` | |
 | 数据库连接 | `DATABASE_URL` | |
 | git 后端 | `GIT_REPO_URL`、`GIT_TOKEN`、`GIT_BRANCH`、`GIT_FILE_PATH`、`GIT_AUTH_KEYS_FILE_PATH` | |
+| 配置文件路径 | `CHATGPT2API_CONFIG_FILE` | 默认 `<base-dir>/config.json` |
+| 图片像素上限 | `CHATGPT2API_MAX_IMAGE_PIXELS` | 默认 2000 万；**仅环境变量可设** |
+| 同时合成数 | `CHATGPT2API_MAX_CONCURRENT_COMPOSITES` | 默认 1，与内存预算联动；**仅环境变量可设** |
 
 ### 不支持环境变量的键
 

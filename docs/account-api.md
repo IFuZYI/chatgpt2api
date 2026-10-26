@@ -288,6 +288,31 @@ curl -sS -X POST "$BASE/api/accounts/proxy" \
 | `POST /api/accounts/re-login` | 密码重登（救失效账号） |
 | `GET /api/accounts/re-login/progress/:progress_id` | 查重登进度 |
 | `DELETE /api/accounts` | 删除账号 |
+| `POST /api/accounts/export` | 导出账号（**含凭据原文**，用于备份/迁移） |
+| `POST /api/accounts/oauth/start` | 走浏览器 OAuth 登录拿 token，返回 `session_id` 与 `authorize_url` |
+| `POST /api/accounts/oauth/finish` | 用 OAuth 回调结果落库，返回新增账号（已脱敏） |
+| `GET /version` | 当前版本号（无需鉴权） |
+
+### 6.1 OAuth 登录（替代手工抓 token）
+
+不用自己去浏览器 DevTools 复制 token，让服务代跑一遍：
+
+```bash
+# 1) 起一个会话，拿到授权链接
+curl -sS -X POST http://127.0.0.1:3000/api/accounts/oauth/start \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"email_hint":"you@example.com"}'
+# → {"session_id":"...","authorize_url":"https://auth.openai.com/..."}
+
+# 2) 浏览器打开 authorize_url 完成登录，复制回调 URL
+
+# 3) 把回调交回服务
+curl -sS -X POST http://127.0.0.1:3000/api/accounts/oauth/finish \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"session_id":"...","callback":"http://localhost:1455/auth/callback?code=..."}'
+```
+
+`finish` 的响应里 `items` 是**脱敏**的（与 `GET /api/accounts` 一致）。
 
 ---
 

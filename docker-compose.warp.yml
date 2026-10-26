@@ -6,6 +6,14 @@ services:
     image: alpine:3.20
     container_name: chatgpt2api-warp-init-data
     user: "0:0"
+    # 必须在 init-config **之后**跑。
+    #
+    # init-config 以 root 重写 config.json，落盘权限是 0600 且属主 root；
+    # 若两个 init 并行，app（uid 65532）可能拿到刚被 root 写过的文件，
+    # 读不了 → 崩溃重启。这里让 chown 成为最后一步。
+    depends_on:
+      init-config:
+        condition: service_completed_successfully
     command:
       - sh
       - -c
@@ -16,8 +24,14 @@ services:
         fi
     volumes:
       - ./data:/data
-      # 单文件挂载 config.json 才能 chown 它（否则设置页保存 permission denied）
-      - ./config.json:/config/config.json
+      # 用长语法 + create_host_path: false —— 短语法在源文件不存在时会
+      # **创建一个同名目录**，之后 `cp config.example.json config.json`
+      # 会把文件拷进那个目录，app 报「config 是目录」并退出。
+      - type: bind
+        source: ./config.json
+        target: /config/config.json
+        bind:
+          create_host_path: false
     restart: "no"
 
   init-config:
@@ -80,20 +94,19 @@ services:
     container_name: chatgpt2api-warp-proxy
     restart: unless-stopped
 
-    # ---- 安全加固 ----
-    # 显式声明非 root：镜像默认已是 nonroot（Dockerfile USER nonroot），
-    # 但 compose 里写明才能防「有人改了镜像基础层」这类回归。
-    user: "65532:65532"
-    # 进程不需要任何 capability：单二进制、非 root、不绑特权端口。
-    cap_drop:
-      - ALL
-    # 禁止通过 setuid/setgid 提权。
-    security_opt:
-      - no-new-privileges:true
-
-    # ---- 日志 ----
-    # 不限制的话 docker 默认无限增长，单机跑几个月会写满磁盘
-    # （这个服务每 5 分钟刷一次账号，日志量不小）。
+    # ---- 这里**不能**套 app 的加固块 ----
+    #
+    # warp-proxy 是第三方镜像 caomingjun/warp，它的入口用 sudo 起 wgcf 并
+    # 需要 NET_ADMIN 改路由。实测三种写法都会让容器起不来：
+    #   user: 65532 + no-new-privileges → sudo: The "no new privileges" flag
+    #                                     is set, which prevents sudo...
+    #   只 cap_drop: [ALL]              → sudo: unable to change to root gid
+    #   只 user: 65532                  → sudo: you do not exist in the
+    #                                     passwd database
+    # 去掉这三项后 Up (healthy)。
+    #
+    # 它的攻击面由 cap_add 白名单 + 仅监听 127.0.0.1 控制，不是靠 nonroot。
+    # 日志仍然限制（那是纯运维收益，与启动无关）。
     logging:
       driver: json-file
       options:
@@ -188,9 +201,13 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    # 关闭预算 = server.Shutdown(10s) + image tasks Close(30s) = 40s。
-    # Docker 默认只给 10s 就 SIGKILL，会让「等在途任务写完 image_tasks.json」被截断。
-    stop_grace_period: 45s
+    # 关闭预算 = server.Shutdown(10s) + image tasks Close(30s)
+    #            + editable tasks Close(20s) + pending uploads Close(20s)
+    #            = 最坏 80s（四个 Close 各有独立 ctx，不共享预算）。
+    # Docker 默认只给 10s 就 SIGKILL，会截断「等在途任务写完
+    # image_tasks.json / editable_file_tasks.json」和 JSON 后端的原子写。
+    # 取 90s：80s 预算 + 10s 余量。
+    stop_grace_period: 90s
     depends_on:
       init-data:
         condition: service_completed_successfully

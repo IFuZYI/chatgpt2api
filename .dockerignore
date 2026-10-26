@@ -54,7 +54,8 @@ config.json
 testdata
 
 # ---------- 文档 ----------
-# README 与 docs/ 不参与构建。
+# README 与 docs
+dogfood-output/ 不参与构建。
 # CHANGELOG.md 例外：web/next.config.ts 在构建期读它生成版本发布记录
 # （try/catch 兜底，缺了就静默变成空列表），排除掉功能会退化但不报错。
 README.md

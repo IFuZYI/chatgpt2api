@@ -16,8 +16,14 @@ services:
         fi
     volumes:
       - ./data:/data
-      # 单文件挂载 config.json 才能 chown 它（否则设置页保存 permission denied）
-      - ./config.json:/config/config.json
+      # 用长语法 + create_host_path: false —— 短语法在源文件不存在时会
+      # **创建一个同名目录**，之后 `cp config.example.json config.json`
+      # 会把文件拷进那个目录，app 报「config 是目录」并退出。
+      - type: bind
+        source: ./config.json
+        target: /config/config.json
+        bind:
+          create_host_path: false
     restart: "no"
 
   app:
@@ -48,9 +54,13 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # 关闭预算 ≈ 40s（Shutdown 10s + watcher/cleanup + tasks Close 30s）。
-    # Docker 默认 10s 就 SIGKILL，会截断在途任务的落盘。
-    stop_grace_period: 45s
+    # 关闭预算 = server.Shutdown(10s) + image tasks Close(30s)
+    #            + editable tasks Close(20s) + pending uploads Close(20s)
+    #            = 最坏 80s（四个 Close 各有独立 ctx，不共享预算）。
+    # Docker 默认只给 10s 就 SIGKILL，会截断「等在途任务写完
+    # image_tasks.json / editable_file_tasks.json」和 JSON 后端的原子写。
+    # 取 90s：80s 预算 + 10s 余量。
+    stop_grace_period: 90s
     depends_on:
       init-data:
         condition: service_completed_successfully

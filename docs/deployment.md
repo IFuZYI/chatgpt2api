@@ -65,7 +65,7 @@
 >
 > ```bash
 > sudo chown -R 65532:65532 data config.json
-> docker compose restart chatgpt2api
+> docker compose restart app
 > ```
 >
 > 诊断方法：容器内以 65532 运行，`config.json` 以**单文件 bind mount**
@@ -282,17 +282,28 @@ sudo systemctl enable --now chatgpt2api
 
 上游请求经常遇到 Cloudflare 拦截时启用。这套组合会额外启动：
 
-| 容器 | 作用 | 监听 |
-|:--|:--|:--|
-| `warp` | Cloudflare WARP 出口 | 内部 |
-| `privoxy` | 把 WARP 的 SOCKS5 转成 HTTP 代理 | `127.0.0.1` |
-| `flaresolverr` | 自动处理 Cloudflare 挑战 | `127.0.0.1` |
-| `init-data` | 一次性容器，把 `./data` 属主改成 uid 65532 | — |
-| `init-config` | 一次性容器，跑 `--init-proxy-config` 把 proxy_runtime 默认值写进 `config.json` | — |
+| compose 服务 | 实际容器名 | 作用 | 监听 |
+|:--|:--|:--|:--|
+| `warp-proxy` | `chatgpt2api-warp-proxy` | Cloudflare WARP 出口 | 内部 |
+| `privoxy` | `chatgpt2api-privoxy` | 把 WARP 的 SOCKS5 转成 HTTP 代理 | `127.0.0.1` |
+| `flaresolverr` | `chatgpt2api-flaresolverr` | 自动处理 Cloudflare 挑战 | `127.0.0.1` |
+| `init-data` | `chatgpt2api-warp-init-data` | 一次性：把 `./data` 与 `config.json` 属主改成 uid 65532 | — |
+| `init-config` | `chatgpt2api-warp-init` | 一次性：跑 `--init-proxy-config` 写 proxy_runtime 默认值 | — |
+| `app` | `chatgpt2api-warp` | 主服务 | `CHATGPT2API_PORT` |
+
+> 上表是 **warp compose**。默认 compose 的容器名分别是 `chatgpt2api` 与
+> `chatgpt2api-init-data`；local compose 是 `chatgpt2api-local` 与
+> `chatgpt2api-local-init-data`。
+>
+> `docker exec` 用**容器名**，`docker compose` 子命令用**服务名** ——
+> 两者不同，写错会报 `no such service`。
 
 ```bash
 cp .env.example .env
 $EDITOR .env                   # 按需改端口与 WARP_LICENSE_KEY
+# config.json 必须先存在：app 的挂载用 create_host_path: false，
+# 缺失时 compose 在创建容器阶段就报错，init-config 根本没机会跑。
+cp config.example.json config.json
 docker compose -f docker-compose.warp.yml up -d --build
 ```
 
@@ -371,7 +382,7 @@ CHATGPT2API_WEB_DIST=$PWD/web/out CHATGPT2API_AUTH_KEY=dev ./chatgpt2api --addr 
 ### 跑测试
 
 ```bash
-go test ./...                                 # 561 个：单元 + golden + 路由对齐
+go test ./...                                 # 687 个：单元 + golden + 路由对齐
 go test -race ./...                           # 竞态检测
 go test -tags live ./internal/upstream/ -v    # 真实上游握手（需外网）
 ```
@@ -564,9 +575,19 @@ environment:
 
 ### 图片保留
 
-`image_retention_days`（代码默认 **30** 天；但 `config.example.json` 里写的是 **15**，
-照模板部署会得到 15 天 —— 想用 30 就改这一项或删掉它）控制本地图片与任务记录的清理，
-由内置清理调度器执行。
+`image_retention_days` 控制本地图片与任务记录的清理，由内置清理调度器执行。
+
+> **模板会覆盖代码默认值**。`config.example.json` 里有几项与代码默认不同，
+> 照模板部署得到的是模板值，不是代码值：
+>
+> | 键 | 代码默认 | 模板值 |
+> |:--|:--|:--|
+> | `image_retention_days` | 30 | **15** |
+> | `auto_remove_invalid_accounts` | false | **true** |
+> | `image_remove_conversation_after_result` | false | **true** |
+> | `backup.interval_minutes` | 360 | **1440** |
+>
+> 想用代码默认就删掉对应行，或直接改成你要的值。
 
 ### 图片也能存到 Cloudflare R2 吗
 
@@ -650,7 +671,8 @@ systemctl start chatgpt2api
 
 ```bash
 docker compose down
-docker compose up -d --force-recreate <指定旧镜像 tag>
+# 先把 compose 里的 image: 固定到旧 tag，再重建
+docker compose up -d --force-recreate app
 ```
 
 或源码方式回到旧 tag 重新编译：
@@ -681,7 +703,7 @@ git fetch --tags && git checkout v2.0.0 && go build -o chatgpt2api ./cmd/server
    chmod 600 /path/to/chatgpt2api/config.json
    ```
 
-   > 服务在保存设置时会以 `0644` 重写 `config.json`，把操作者设的更严权限覆盖掉。
+   > 服务在保存设置时会以 `0600` 重写 `config.json`（与凭据文件一致）。
    > 所以更可靠的做法是收紧**父目录**权限（上面的 `chmod 700`）。
 
 3. **管理面不要直接暴露公网。** 至少加一层反代 + IP 白名单 / Basic Auth，
@@ -740,10 +762,26 @@ cp config.example.json config.json && $EDITOR config.json
 init-data:
   image: alpine:3.20
   user: "0:0"
-  command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+  command:
+    - sh
+    - -c
+    - |
+      mkdir -p /data && chown -R 65532:65532 /data
+      if [ -f /config/config.json ]; then
+        chown 65532:65532 /config/config.json && chmod u+rw /config/config.json
+      fi
   volumes:
     - ./data:/data
+    - type: bind
+      source: ./config.json
+      target: /config/config.json
+      bind:
+        create_host_path: false
 ```
+
+> 两个路径都要 chown：`data/` 是数据目录，`config.json` 是**设置页保存**
+> 的目标（只 chown `data/` 的话，改设置会报 `open /app/config.json:
+> permission denied`）。完整写法见 `docker-compose.yml` 的 `init-data`。
 
 > **为什么必须这么做**：镜像以 distroless `nonroot`（uid 65532）运行，而
 > `./data` 由 Docker 首次 `up` 时创建为 `root:root 755`。此时服务能启动、
