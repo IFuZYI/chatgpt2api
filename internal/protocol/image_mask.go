@@ -7,6 +7,9 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"os"
+	"strconv"
+	"strings"
 
 	"golang.org/x/image/draw"
 )
@@ -41,7 +44,33 @@ const pngSignature = "\x89PNG\r\n\x1a\n"
 //
 // 基线代码从不对用户字节做完整解码（只用 DecodeConfig 读头），mask 合成是
 // 第一个完整解码用户图片的路径，所以这个上限必须加在这里。
-const maxImagePixels = 178_956_970
+// maxImagePixels 是单张图片允许的最大像素数。
+//
+// 原值 178_956_970 逐字对齐 Pillow 的硬错误阈值（2 × MAX_IMAGE_PIXELS），
+// 但那个阈值是**库的**阈值，不是**本进程能承受的**预算：
+// 178_956_970 像素 × 4 字节（NRGBA）= 683 MB，而 compositeOneMask 同时持有
+// decoded（原始图）+ composited（NRGBA）+ alpha（Gray）+ PNG 编码缓冲，
+// 峰值远超 683 MB。容器内存限制通常 512 MB–2 GB，单张图就能打穿。
+//
+// 这里改成由进程预算反推：默认 2000 万像素。
+// 取这个值的理由：4096×4096 = 16,777,216 是常见的大图上限，必须放行；
+// 2000 万给它留了余量，同时把峰值内存压在 ~80 MB NRGBA（4 字节/像素），
+// 而不是原来的 683 MB。仍比 Pillow 的硬错误阈值小约 9 倍。
+//
+// 可用环境变量 CHATGPT2API_MAX_IMAGE_PIXELS 覆盖，便于大内存部署放宽。
+const maxImagePixelsDefault = 20_000_000
+
+// maxImagePixels 在 init 时由环境变量决定。
+var maxImagePixels = resolveMaxImagePixels()
+
+func resolveMaxImagePixels() int64 {
+	if raw := strings.TrimSpace(os.Getenv("CHATGPT2API_MAX_IMAGE_PIXELS")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return maxImagePixelsDefault
+}
 
 // maskScaler 是 alpha 缩放用的插值器。
 //

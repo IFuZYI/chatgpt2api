@@ -556,20 +556,23 @@ func TestCompositeMaskPixelLimitBoundary(t *testing.T) {
 			reason:       "16.7M 像素，常见上限，必须放行",
 		},
 		{
+			// 有意偏离 Python：Pillow 对 144M 像素只警告不拒绝，但本进程
+			// 解码 144M 像素要分配 ~549 MB NRGBA（实测 RSS +459 MB），
+			// 容器内存限制下足以 OOM。安全优先于逐字兼容。
 			name: "12000x12000", width: 12000, height: 12000,
-			wantRejected: false,
-			reason:       "144M 像素，介于 Pillow 的 warning 与 error 阈值之间；Python 只警告不拒绝，Go 也必须放行",
+			wantRejected: true,
+			reason:       "144M 像素超出进程像素预算（默认 16M），必须拒绝以防 OOM",
 		},
 		{
 			name: "14000x14000", width: 14000, height: 14000,
 			wantRejected: true,
-			reason:       "196M 像素，超过 178_956_970，与 Pillow 的 DecompressionBombError 一致",
+			reason:       "196M 像素，远超预算",
 		},
 	}
 
 	// 先确认边界值本身没被写错。
-	if maxImagePixels != 178_956_970 {
-		t.Fatalf("maxImagePixels = %d, want 178_956_970 (2 * Pillow MAX_IMAGE_PIXELS)", maxImagePixels)
+	if maxImagePixels != maxImagePixelsDefault {
+		t.Fatalf("maxImagePixels = %d, want %d", maxImagePixels, maxImagePixelsDefault)
 	}
 
 	for _, tc := range cases {
@@ -595,9 +598,14 @@ func TestCompositeMaskPixelLimitBoundary(t *testing.T) {
 
 // mask 侧与图片侧共用同一个上限，这里确认走 mask 标签时也按同一阈值判定。
 func TestCompositeMaskPixelLimitAppliesToMask(t *testing.T) {
-	atLimit := buildOversizedPNG(t, 12000, 12000)
+	// 用预算内的尺寸（4096²=16.7M）验证 mask 侧走同一阈值且放行。
+	atLimit := buildOversizedPNG(t, 4096, 4096)
 	if err := checkImageDimensions(atLimit, "mask image"); err != nil {
-		t.Errorf("12000x12000 mask should pass the size check, got: %v", err)
+		t.Errorf("4096x4096 mask 在预算内，应放行，got: %v", err)
+	}
+	overBudget := buildOversizedPNG(t, 12000, 12000)
+	if err := checkImageDimensions(overBudget, "mask image"); err == nil {
+		t.Error("12000x12000 mask 超出预算，应被拒")
 	}
 
 	overLimit := buildOversizedPNG(t, 14000, 14000)

@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -225,10 +227,55 @@ func (d *Deps) proxyRuntimeStatus() map[string]any {
 	return d.Proxy.RuntimeStatus()
 }
 
+// 入站请求体上限。
+//
+// 为什么必须有：decodeJSONBody 原来用 c.GetRawData() 无限制读入，而
+// /v1/images/edits 会把 base64 图片解出来做 mask 合成 —— 解码放大实测
+// 约 325 倍（1.5 MB 请求体 → RSS +459 MB）。一次 52 秒的请求就能把
+// 单实例推到 461 MB；几个并发即 OOM。
+//
+// 取值依据：
+//   - 控制面 JSON（设置、账号、日志）实际最大也就几百 KB，
+//     1 MiB 留足余量（导出一个号池的 JSON 也在其内）。
+//   - 图片编辑走 base64，4 MB 请求体 ≈ 3 MB 原始图，足够常规编辑；
+//     真正的边界是 maxImagePixels（解码后像素数），不是这里的字节数。
+const (
+	maxJSONBodyBytes  = 1 << 20 // 1 MiB
+	maxImageBodyBytes = 8 << 20 // 8 MiB（base64 图片）
+)
+
+// imageBodyPaths 是需要更大额度的端点（base64 图片上传）。
+func isImageBodyPath(path string) bool {
+	switch path {
+	case "/v1/images/edits", "/v1/images/generations",
+		"/v1/chat/completions", "/v1/responses",
+		"/api/image-tasks/edits", "/api/image-tasks/generations":
+		return true
+	}
+	return false
+}
+
+// bodyLimitFor 返回该请求的 body 上限。
+func bodyLimitFor(c *gin.Context) int64 {
+	if isImageBodyPath(c.FullPath()) {
+		return maxImageBodyBytes
+	}
+	return maxJSONBodyBytes
+}
+
 // decodeJSONBody 读原始 body 成 map，保持 Python 的宽松解析（不校验多余字段）。
+//
+// 读之前先用 http.MaxBytesReader 套上上限：超限时 GetRawData 返回错误，
+// 这里映射成 413。必须在**读之前**设，读完再检查等于已经分配过内存了。
 func decodeJSONBody(c *gin.Context) (map[string]any, *HTTPError) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, bodyLimitFor(c))
 	payload, err := c.GetRawData()
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return nil, Errorf(http.StatusRequestEntityTooLarge,
+				"request body too large: limit is "+strconv.FormatInt(bodyLimitFor(c), 10)+" bytes")
+		}
 		return nil, Errorf(http.StatusBadRequest, "invalid request body")
 	}
 	if len(strings.TrimSpace(string(payload))) == 0 {

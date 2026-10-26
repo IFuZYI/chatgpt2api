@@ -1,0 +1,58 @@
+package api
+
+import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+// 入站请求体必须有上限。
+//
+// 回归点：decodeJSONBody 用 c.GetRawData() 无限制读入，全仓库
+// MaxBytesReader 使用为 0。实测 1.5 MB 的 /v1/images/edits 请求体让
+// RSS 从 1.8 MB 涨到 461 MB（+459 MB）、耗时 52 秒 —— 而它最终返回 429
+// （号池空），即**图片解码发生在配额检查之前**，也不受并发槽位约束。
+// 几个并发请求即可把单实例打 OOM。
+func TestDecodeJSONBodyRejectsOversizedBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	huge := `{"prompt":"` + strings.Repeat("A", 64<<20) + `"}`
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader([]byte(huge)))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = int64(len(huge))
+	c.Request = req
+
+	_, httpErr := decodeJSONBody(c)
+	if httpErr == nil {
+		t.Fatal("64 MB 请求体被接受 —— 无上限，会全部读入内存")
+	}
+	if httpErr.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("状态码 %d，应为 413", httpErr.Status)
+	}
+	t.Logf("64 MB 请求体被拒: %d %s", httpErr.Status, httpErr.Error())
+}
+
+// 正常大小的请求体不能受影响。
+func TestDecodeJSONBodyAcceptsNormalBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payload := `{"image_retention_days":7,"auth-key":"test"}`
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = int64(len(payload))
+	c.Request = req
+
+	body, httpErr := decodeJSONBody(c)
+	if httpErr != nil {
+		t.Fatalf("正常请求体被拒: %d %s", httpErr.Status, httpErr.Error())
+	}
+	if body["image_retention_days"] != float64(7) {
+		t.Errorf("解析结果错误: %v", body["image_retention_days"])
+	}
+}
