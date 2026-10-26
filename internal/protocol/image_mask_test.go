@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/image/draw"
 )
@@ -603,4 +604,55 @@ func TestCompositeMaskPixelLimitAppliesToMask(t *testing.T) {
 	if err := checkImageDimensions(overLimit, "mask image"); err == nil {
 		t.Error("14000x14000 mask should be rejected by the size check")
 	}
+}
+
+// mask 合成必须有并发闸门。
+//
+// 回归点：合成发生在号池配额与槽位准入**之前**，不受任何已有并发限制约束。
+// 没有闸门时 N 个并发请求就是 N × 271 MiB 的瞬时分配 —— 评审实测 3 个并发
+// 把 512 MiB 的 cgroup 钉在 MemoryMax 上，两个半小时一个都没完成。
+func TestCompositeGateLimitsConcurrency(t *testing.T) {
+	if maxConcurrentComposites < 1 {
+		t.Fatalf("闸门容量 %d，必须 >= 1", maxConcurrentComposites)
+	}
+	if cap(compositeGate) != maxConcurrentComposites {
+		t.Fatalf("闸门容量 %d 与配置 %d 不一致", cap(compositeGate), maxConcurrentComposites)
+	}
+
+	// 取满全部许可后，下一次获取必须阻塞 —— 证明闸门真的在限流。
+	releases := make([]func(), 0, maxConcurrentComposites)
+	for i := 0; i < maxConcurrentComposites; i++ {
+		releases = append(releases, acquireComposite())
+	}
+
+	blocked := make(chan struct{})
+	go func() {
+		rel := acquireComposite()
+		close(blocked)
+		rel()
+	}()
+
+	select {
+	case <-blocked:
+		t.Fatal("闸门已满却仍放行 —— 并发限制未生效")
+	case <-time.After(60 * time.Millisecond):
+		// 正确：闸门满了，第三次获取在等待
+	}
+
+	// 释放一个后应立刻放行
+	releases[0]()
+	select {
+	case <-blocked:
+		// 正确
+	case <-time.After(time.Second):
+		t.Fatal("释放许可后仍未放行")
+	}
+	for _, rel := range releases[1:] {
+		rel()
+	}
+
+	// 闸门必须回到可用状态（否则第一次用过就永久堵死）
+	rel := acquireComposite()
+	rel()
+	t.Logf("闸门容量 %d，限流与释放均正常", maxConcurrentComposites)
 }

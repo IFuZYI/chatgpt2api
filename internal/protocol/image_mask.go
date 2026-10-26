@@ -52,7 +52,7 @@ const pngSignature = "\x89PNG\r\n\x1a\n"
 // decoded（原始图）+ composited（NRGBA）+ alpha（Gray）+ PNG 编码缓冲，
 // 峰值远超 683 MB。容器内存限制通常 512 MB–2 GB，单张图就能打穿。
 //
-// 这里改成由进程预算反推：默认 800 万像素（约 2828×2828）。
+// 这里改成由进程预算反推：默认 2000 万像素（约 4472×4472）。
 //
 // 取值依据是**实测的分配系数**，不是猜的：CompositeMask 在 4472×4472
 // （19,998,784 像素）上实测 TotalAlloc 271.5 MiB，即 **14.2 字节/像素**
@@ -61,28 +61,36 @@ const pngSignature = "\x89PNG\r\n\x1a\n"
 //	decoded（原始图，NRGBA 4）+ composited（NRGBA 4）
 //	+ scaled mask dst（NRGBA 4）+ mask（Gray 1）+ alpha（Gray 1）
 //
-// 所以 800 万像素约 **144 MB** 峰值（本机实测 RSS +147,524 kB @ 2828×2828，
-// 即 7,997,584 像素，约 18 字节/像素 —— 含 base64 字符串、PNG 编码缓冲与
-// GC 尚未回收的中间对象，比裸缓冲的 14.2 更多）。原来的 2000 万实测 271 MiB，
-// 三个并发即把 512 MiB 的容器打满。
+// 2000 万的用意是放行 4096×4096（1678 万，常见大图上限），代价是单请求
+// 峰值 ~271 MiB。**这个预算与下面的并发闸门必须联动**：271 MiB × 2 并发
+// 已经超过 512 MiB 容器，所以默认闸门只有 1（见下）。
 //
-// 800 万仍高于 OpenAI 图片编辑的常见输入（2048×2048 = 420 万），
-// 4096×4096（1678 万）会被拒 —— 这是有意的：它在这个进程里要 300+ MB。
-// 大内存部署用环境变量放宽。
-const maxImagePixelsDefault = 8_000_000
+// 可用环境变量 CHATGPT2API_MAX_IMAGE_PIXELS 覆盖。
+const maxImagePixelsDefault = 20_000_000
 
 // composite 并发闸门：限制同时进行 mask 合成的请求数。
 //
 // 为什么必须有它而不只靠像素预算：合成发生在号池配额与槽位准入**之前**
 // （serveImageRequest 里 CompositeMask 在 pool.Acquire 之前），所以它
-// 不受任何已有的并发限制约束。没有闸门时 N 个并发请求就是 N × 108 MiB
-// 的瞬时分配 —— 实测 3 个并发把 512 MiB 的 cgroup 钉在 MemoryMax 上，
+// 不受任何已有的并发限制约束。没有闸门时 N 个并发请求就是 N × 271 MiB
+// 的瞬时分配 —— 评审实测 3 个并发把 512 MiB 的 cgroup 钉在 MemoryMax 上，
 // memory.events max 持续增长，两个半小时内一个都没完成。
 //
-// 2 个并发 × ~144 MB ≈ 288 MB 峰值，给 512 MiB 容器留出运行余量。
-// 实测 4 个并发（闸门放行 2 个）峰值 RSS 仅 +168 MB，且按时序成对完成；
-// 无闸门时 3 × 271 MiB 会直接把容器钉在 MemoryMax 上。
-const maxConcurrentComposites = 2
+// 默认 1：2000 万像素预算下单请求峰值 ~271 MiB，两个并发就超过 512 MiB 容器。
+// 闸门与预算是联动的 —— 放宽预算必须同时放宽容器内存或收紧闸门。
+// 大内存部署用环境变量放宽（例如 2 GB 容器可设 4）。
+const maxConcurrentCompositesDefault = 1
+
+var maxConcurrentComposites = resolveMaxConcurrentComposites()
+
+func resolveMaxConcurrentComposites() int {
+	if raw := strings.TrimSpace(os.Getenv("CHATGPT2API_MAX_CONCURRENT_COMPOSITES")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return maxConcurrentCompositesDefault
+}
 
 var compositeGate = make(chan struct{}, maxConcurrentComposites)
 

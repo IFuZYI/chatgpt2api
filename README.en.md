@@ -292,7 +292,8 @@ service starts.
 | `CHATGPT2API_BASE_DIR` | Data root | binary's directory |
 | `CHATGPT2API_DEBUG` | `1` emits `[image]` diagnostics | off |
 | `CHATGPT2API_WEB_DIST` | Frontend static dir (dev, overrides embed) | empty |
-| `CHATGPT2API_MAX_IMAGE_PIXELS` | Max decoded pixels per image (OOM guard) | `8000000` |
+| `CHATGPT2API_MAX_IMAGE_PIXELS` | Max decoded pixels per image (OOM guard) | `20000000` |
+| `CHATGPT2API_MAX_CONCURRENT_COMPOSITES` | Concurrent mask composites (coupled to the budget) | `1` |
 | `STORAGE_BACKEND` | `json` / `sqlite` / `postgres` / `git` | `json` |
 | `DATABASE_URL` | File path for sqlite, DSN for postgres | empty |
 
@@ -455,23 +456,32 @@ to OOM the instance.
 
 ### Image decode pixel budget
 
-Decoded pixels per image default to **8 million** (about 2828×2828).
+Decoded pixels per image default to **20 million** (about 4472×4472; a
+4096×4096 image is accepted).
 
 Why this is not aligned with Pillow: Pillow's hard-error threshold is 179M pixels,
 but that is the **library's** threshold, not the **process's** budget. Measured
 allocation is **14.2 bytes/pixel** (not the 4 bytes of a single NRGBA) — the
 compositing path holds the decoded image, the composited result, the scaled mask,
-the mask grayscale and the alpha channel at once. 8M pixels peaks at about
-**144 MB** RSS.
+the mask grayscale and the alpha channel at once. 20M pixels peaks at about
+**271 MB** RSS.
 
-Mask compositing also has a **concurrency gate** (default 2): it runs before the
-account-pool quota and concurrency admission gates, so without one N concurrent
-requests cost N × 144 MB. Measured: 4 concurrent requests peaked at +168 MB.
-
-Raise it on large-memory deployments:
+**The budget and the concurrency gate are coupled.** Mask compositing runs before
+the account-pool quota and concurrency admission gates, so without a gate N
+concurrent requests cost N × 271 MB — three concurrent requests pin a 512 MB
+container at its memory limit. The default gate is **1**; raise it on larger
+containers (e.g. 2 GB):
 
 ```bash
-CHATGPT2API_MAX_IMAGE_PIXELS=30000000 ./chatgpt2api --addr :8080
+# 20M pixels x 4 concurrent ~ 1084 MB, needs a >=1.5 GB container
+CHATGPT2API_MAX_CONCURRENT_COMPOSITES=4 ./chatgpt2api --addr :8080
+```
+
+On a memory-constrained box, lower the pixel budget rather than the gate — it
+rejects only the requests that genuinely need that much memory:
+
+```bash
+CHATGPT2API_MAX_IMAGE_PIXELS=8000000 CHATGPT2API_MAX_CONCURRENT_COMPOSITES=2 ./chatgpt2api --addr :8080
 ```
 
 ### Difference from OpenAI's own limits

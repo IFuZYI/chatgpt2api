@@ -283,7 +283,8 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
 | `CHATGPT2API_BASE_DIR` | 数据根目录 | 二进制所在目录 |
 | `CHATGPT2API_DEBUG` | 置 `1` 输出 `[image]` 诊断日志 | 关 |
 | `CHATGPT2API_WEB_DIST` | 前端静态目录（开发用，覆盖 embed） | 空 |
-| `CHATGPT2API_MAX_IMAGE_PIXELS` | 单张图片解码像素上限（防 OOM） | `8000000` |
+| `CHATGPT2API_MAX_IMAGE_PIXELS` | 单张图片解码像素上限（防 OOM） | `20000000` |
+| `CHATGPT2API_MAX_CONCURRENT_COMPOSITES` | mask 合成并发数（与预算联动） | `1` |
 | `STORAGE_BACKEND` | `json` / `sqlite` / `postgres` / `git` | `json` |
 | `DATABASE_URL` | sqlite 用文件路径，postgres 用连接串 | 空 |
 
@@ -435,27 +436,32 @@ environment:
 
 ### 图片解码像素预算
 
-单张图片解码后的像素数上限默认 **800 万**（约 2828×2828）。
+单张图片解码后的像素数上限默认 **2000 万**（约 4472×4472，可放行 4096×4096）。
 
 为什么不是对齐 Pillow：Pillow 的硬错误阈值是 1.79 亿像素，但那是**库**的阈值，
 不是**进程能承受**的预算。实测分配系数是 **14.2 字节/像素**（不是单份 NRGBA
 的 4 字节）—— 合成路径同时持有原始图、合成结果、缩放后的 mask、mask 灰度图
-与 alpha 通道五份缓冲。800 万像素实测峰值 RSS 约 **144 MB**。
+与 alpha 通道五份缓冲。2000 万像素实测峰值 RSS 约 **271 MB**。
 
-同时 `mask` 合成有**并发闸门**（默认 2 个）：它发生在号池配额与并发槽位
-准入之前，不设闸门时 N 个并发就是 N × 144 MB。实测 4 个并发峰值仅 +168 MB。
-
-大内存部署可放宽：
+**预算与并发闸门必须联动。** `mask` 合成发生在号池配额与并发槽位准入之前，
+不设闸门时 N 个并发就是 N × 271 MB —— 3 个并发即可把 512 MB 容器钉在内存上限。
+默认闸门为 **1**；容器内存更大时（如 2 GB）可放宽：
 
 ```bash
-CHATGPT2API_MAX_IMAGE_PIXELS=30000000 ./chatgpt2api --addr :8080
+# 2000 万像素 + 4 并发 ≈ 1084 MB，需要 >=1.5 GB 容器
+CHATGPT2API_MAX_CONCURRENT_COMPOSITES=4 ./chatgpt2api --addr :8080
+```
+
+内存不足时优先调小像素预算（比调小并发更能省内存，因为拒的是真需要那么多内存的请求）：
+
+```bash
+CHATGPT2API_MAX_IMAGE_PIXELS=8000000 CHATGPT2API_MAX_CONCURRENT_COMPOSITES=2 ./chatgpt2api --addr :8080
 ```
 
 ### 与 OpenAI 官方限额的差异
 
 上游 `/v1/images/edits` 的请求体上限约 50 MB，本服务为 16 MiB。
-超过 16 MiB 的 base64 上传会被 413 —— 这是有意的取舍：单实例内存有限，
-且解码后的像素预算（800 万）通常先成为实际约束。
+超过 16 MiB 的 base64 上传会被 413 —— 这是有意的取舍：单实例内存有限。
 
 ### 部署建议
 
