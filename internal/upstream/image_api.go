@@ -374,8 +374,14 @@ func retryAfterFromBody(body []byte) *int {
 
 // FetchAccountInfo 拉取账号信息（邮箱、套餐、额度、恢复时间）。
 //
-// 复刻 get_user_info：并发查 me / conversation/init / accounts/check，
-// 然后按 image_gen 的剩余额度与恢复时间组装。
+// FetchAccountInfo 拉取账号信息。
+//
+// 注意：这里是**串行**三次请求（me → conversation/init → accounts/check），
+// 不是并发。原注释写「并发查」与实现不符 —— 串行意味着单账号耗时是三者之和，
+// 批量刷新 N 个账号的时间线性叠加（这也是上传接口默认不刷新、
+// 把刷新交给后台 watcher 的原因之一）。
+//
+// 按 image_gen 的剩余额度与恢复时间组装返回值。
 func (c *Client) FetchAccountInfo(ctx context.Context) (map[string]any, error) {
 	if c.accessToken == "" {
 		return nil, fmt.Errorf("access_token is required")

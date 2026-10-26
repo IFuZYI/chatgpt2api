@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.2.0 - 2026-10-26
+
+账号接口面向注册机场景的整理。**含一处行为变更**（上传默认不再同步刷新）。
+
+### 新增
+
++ **账号级代理真正生效。** 账号记录里的 `proxy` 此前只被显示层读取
+  （`GetProfile` → `RuntimeStatus` → `/health`），7 处上游客户端全部只用
+  `config.json` 的全局 `proxy` —— 给每个账号配不同出口 IP 在数据上成立、
+  在行为上无效。
+
+  现在优先级为：**账号 `proxy` → 全局 `proxy` → 直连**。覆盖账号信息刷新、
+  文本对话、图片生成/编辑、搜索、PPT/PSD、模型目录拉取。
+  密码重登仍走全局（登录时只有邮箱密码，无法反查账号代理）。
+
++ `POST /api/accounts/proxy` —— 批量设置代理。支持统一代理
+  （`access_tokens` + `proxy`）与逐个映射（`proxies` 对象，空串=清空回退全局）。
+
++ [账号接口](./docs/account-api.md) 与 [账号接口格式参考](./docs/account-api-reference.md)
+  两份文档：操作流程 + 字段级格式（完整账号对象、枚举、错误码、上限）。
+
+### 变更
+
++ **上传账号默认不再同步刷新。** 原来 `POST /api/accounts` 会给每个账号
+  打 3 次上游请求（me → conversation/init → accounts/check，**串行**）。
+  500 个账号要串行等数分钟，上游还会看到 500 个新会话。
+
+  现在立即返回，刷新交给后台 watcher。需要上传前验证 token 的调用方传
+  `?refresh=1` 恢复旧行为。
+
+  返回体新增 `refresh_deferred`（交给后台刷新的数量）。
+
+### 修复
+
++ 上传时同一 token 在 `tokens` 与 `accounts` 里各计一次，导致
+  `refresh_deferred` 翻倍（实测上传 1 个账号报 2）。已去重。
++ `FetchAccountInfo` 注释写「并发查 me / conversation/init / accounts/check」，
+  实际是**串行**三次请求。已按实现修正注释。
+
 ## 2.1.0 - 2026-10-26
 
 一次安全审计 + 两轮外部代码审计后的修复版本。**含 2 个安全修复，建议所有部署升级。**
