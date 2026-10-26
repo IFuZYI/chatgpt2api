@@ -6,9 +6,18 @@ services:
     image: alpine:3.20
     container_name: chatgpt2api-local-init-data
     user: "0:0"
-    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data && chown -R 65532:65532 /data
+        if [ -f /config/config.json ]; then
+          chown 65532:65532 /config/config.json && chmod u+rw /config/config.json
+        fi
     volumes:
       - ./data:/data
+      # 单文件挂载 config.json 才能 chown 它（否则设置页保存 permission denied）
+      - ./config.json:/config/config.json
     restart: "no"
 
   app:
@@ -18,6 +27,26 @@ services:
     image: chatgpt2api:local
     container_name: chatgpt2api-local
     restart: unless-stopped
+
+    # ---- 安全加固 ----
+    # 显式声明非 root：镜像默认已是 nonroot（Dockerfile USER nonroot），
+    # 但 compose 里写明才能防「有人改了镜像基础层」这类回归。
+    user: "65532:65532"
+    # 进程不需要任何 capability：单二进制、非 root、不绑特权端口。
+    cap_drop:
+      - ALL
+    # 禁止通过 setuid/setgid 提权。
+    security_opt:
+      - no-new-privileges:true
+
+    # ---- 日志 ----
+    # 不限制的话 docker 默认无限增长，单机跑几个月会写满磁盘
+    # （这个服务每 5 分钟刷一次账号，日志量不小）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     # 关闭预算 ≈ 40s（Shutdown 10s + watcher/cleanup + tasks Close 30s）。
     # Docker 默认 10s 就 SIGKILL，会截断在途任务的落盘。

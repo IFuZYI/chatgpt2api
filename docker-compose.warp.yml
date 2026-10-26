@@ -6,9 +6,18 @@ services:
     image: alpine:3.20
     container_name: chatgpt2api-warp-init-data
     user: "0:0"
-    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data && chown -R 65532:65532 /data
+        if [ -f /config/config.json ]; then
+          chown 65532:65532 /config/config.json && chmod u+rw /config/config.json
+        fi
     volumes:
       - ./data:/data
+      # 单文件挂载 config.json 才能 chown 它（否则设置页保存 permission denied）
+      - ./config.json:/config/config.json
     restart: "no"
 
   init-config:
@@ -70,6 +79,26 @@ services:
     image: caomingjun/warp:latest
     container_name: chatgpt2api-warp-proxy
     restart: unless-stopped
+
+    # ---- 安全加固 ----
+    # 显式声明非 root：镜像默认已是 nonroot（Dockerfile USER nonroot），
+    # 但 compose 里写明才能防「有人改了镜像基础层」这类回归。
+    user: "65532:65532"
+    # 进程不需要任何 capability：单二进制、非 root、不绑特权端口。
+    cap_drop:
+      - ALL
+    # 禁止通过 setuid/setgid 提权。
+    security_opt:
+      - no-new-privileges:true
+
+    # ---- 日志 ----
+    # 不限制的话 docker 默认无限增长，单机跑几个月会写满磁盘
+    # （这个服务每 5 分钟刷一次账号，日志量不小）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       WARP_SLEEP: "2"
       # 可选：填写 Cloudflare WARP+ License Key
@@ -100,6 +129,11 @@ services:
       - ./scripts/privoxy-warp.conf:/etc/privoxy/config:ro
     ports:
       - "127.0.0.1:${PRIVOXY_PORT:-40080}:8118"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 8118 || exit 1"]
       interval: 30s
@@ -116,6 +150,11 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "127.0.0.1:${FLARESOLVERR_PORT:-8191}:8191"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8191/ >/dev/null"]
       interval: 30s
@@ -130,6 +169,25 @@ services:
     image: chatgpt2api:warp
     container_name: chatgpt2api-warp
     restart: unless-stopped
+
+    # ---- 安全加固 ----
+    # 显式声明非 root：镜像默认已是 nonroot（Dockerfile USER nonroot），
+    # 但 compose 里写明才能防「有人改了镜像基础层」这类回归。
+    user: "65532:65532"
+    # 进程不需要任何 capability：单二进制、非 root、不绑特权端口。
+    cap_drop:
+      - ALL
+    # 禁止通过 setuid/setgid 提权。
+    security_opt:
+      - no-new-privileges:true
+
+    # ---- 日志 ----
+    # 不限制的话 docker 默认无限增长，单机跑几个月会写满磁盘。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # 关闭预算 = server.Shutdown(10s) + image tasks Close(30s) = 40s。
     # Docker 默认只给 10s 就 SIGKILL，会让「等在途任务写完 image_tasks.json」被截断。
     stop_grace_period: 45s

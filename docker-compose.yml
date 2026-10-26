@@ -43,6 +43,26 @@ services:
     container_name: chatgpt2api
     restart: unless-stopped
 
+    # ---- 安全加固 ----
+    # 显式声明非 root：镜像默认已是 nonroot（Dockerfile USER nonroot），
+    # 但 compose 里写明才能防「有人改了镜像基础层」这类回归。
+    user: "65532:65532"
+    # 进程不需要任何 capability：单二进制、非 root、不绑特权端口。
+    cap_drop:
+      - ALL
+    # 禁止通过 setuid/setgid 提权。
+    security_opt:
+      - no-new-privileges:true
+
+    # ---- 日志 ----
+    # 不限制的话 docker 默认无限增长，单机跑几个月会写满磁盘
+    # （这个服务每 5 分钟刷一次账号，日志量不小）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     # 关闭预算 = server.Shutdown(10s) + watcher.Stop + cleanup.Stop
     #            + image tasks Close(30s) ≈ 40s，再留余量。
     # Docker 默认只给 10s 就 SIGKILL，会把「等在途任务写完 image_tasks.json」

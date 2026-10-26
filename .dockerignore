@@ -49,6 +49,8 @@ internal/web/web_dist
 data
 config.json
 .env
+# Go 测试文件不参与构建（1 MB，且含测试夹具常量）
+*_test.go
 testdata
 
 # ---------- 文档 ----------
@@ -60,3 +62,6 @@ docs
 GLOSSARY.md
 repro_outputs
 LICENSE
+
+# 本地 agent 日志（self-improving-agent 用）
+.learnings
