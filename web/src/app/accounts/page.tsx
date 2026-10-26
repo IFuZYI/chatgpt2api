@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 
 import { AccountDetailDialog } from "./components/account-detail-dialog";
 import { accountRowKey, pruneSelection, selectAllKeys } from "@/lib/account-detail";
+import { METRIC_GRID_CLASS, rowAccentClass } from "@/lib/account-columns";
 import { AccountImportDialog } from "./components/account-import-dialog";
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
@@ -136,12 +137,6 @@ function formatQuotaSummary(accounts: Account[]) {
   return formatCompact(availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota), 0));
 }
 
-function maskToken(token?: string) {
-  if (!token) return "—";
-  if (token.length <= 18) return token;
-  return `${token.slice(0, 16)}...${token.slice(-8)}`;
-}
-
 function downloadTokens(accounts: Account[]) {
   const content = `${accounts.map((account) => account.access_token).join("\n")}\n`;
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -155,17 +150,6 @@ function downloadTokens(accounts: Account[]) {
 
 function displayAccountType(account: Account) {
   return account.type || "Free";
-}
-
-function displayAccountSource(account: Account) {
-  const source = String(account.source_type || "").trim().toLowerCase();
-  if (!source) {
-    return "web";
-  }
-  if (source === "web") {
-    return "web";
-  }
-  return source;
 }
 
 function AccountsPageContent() {
@@ -720,6 +704,52 @@ function AccountsPageContent() {
     setSelectedIds((prev) => prev.filter((key) => !pageKeys.has(key)));
   };
 
+
+/**
+ * 账号信息列：列表里唯一需要「扫一眼识别这是哪个号」的地方。
+ *
+ * 展示策略：
+ *  - 主行：邮箱（可读性最好的标识）
+ *  - 副行：account_id 前 8 位 + 复制按钮（稳定引用键，详情里有完整值）
+ *  - 悬停显示完整 account_id 与 token 掩码（低频信息不占宽度）
+ *
+ * token / 来源 / 创建时间已移到详情弹窗 —— 它们占宽且不属于「扫一眼」的范畴。
+ */
+function AccountIdentity({ account }: { account: Account }) {
+  const email = account.email?.trim() || "";
+  const id = (account.account_id ?? "").trim();
+  const shortId = id ? id.slice(0, 8) : "";
+
+  return (
+    <div className="min-w-0 space-y-1">
+      <div className="truncate font-medium tracking-tight text-stone-800" title={email || undefined}>
+        {email || <span className="text-stone-400">未获取邮箱</span>}
+      </div>
+      {id ? (
+        <div className="flex items-center gap-1">
+          <code
+            className="truncate rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] text-stone-500"
+            title={id}
+          >
+            {shortId}
+          </code>
+          <button
+            type="button"
+            className="rounded p-0.5 text-stone-300 transition hover:bg-stone-100 hover:text-stone-600"
+            title="复制完整账号 ID"
+            onClick={() => {
+              void navigator.clipboard.writeText(id);
+              toast.success("账号 ID 已复制");
+            }}
+          >
+            <Copy className="size-3" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
   return (
     <>
       <section className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -863,7 +893,7 @@ function AccountsPageContent() {
       </Dialog>
 
       <section className="space-y-3">
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className={METRIC_GRID_CLASS}>
           {metricCards.map((item) => {
             const Icon = item.icon;
             const value = (refreshSummary ?? summary)[item.key];
@@ -1061,12 +1091,9 @@ function AccountsPageContent() {
                         onCheckedChange={(checked) => toggleSelectAll(Boolean(checked))}
                       />
                     </th>
-                    <th className="w-56 px-4 py-3">token</th>
+                    <th className="w-64 px-4 py-3">账号信息</th>
                     <th className="w-28 px-4 py-3">类型</th>
-                    <th className="w-24 px-4 py-3">来源</th>
                     <th className="w-24 px-4 py-3">状态</th>
-                    <th className="w-56 px-4 py-3">账号信息</th>
-                    <th className="w-32 px-4 py-3">创建时间</th>
                     <th className="w-24 px-4 py-3">额度</th>
                     <th className="w-40 px-4 py-3">恢复时间</th>
                     <th className="w-18 px-4 py-3">在途</th>
@@ -1083,7 +1110,10 @@ function AccountsPageContent() {
                     return (
                       <tr
                         key={accountRowKey(account)}
-                        className="border-b border-stone-100/80 text-sm text-stone-600 transition-colors hover:bg-stone-50/70"
+                        className={cn(
+                          "border-b border-stone-100/80 border-l-2 text-sm text-stone-600 transition-colors hover:bg-stone-50/70",
+                          rowAccentClass(account.status),
+                        )}
                       >
                         <td className="px-4 py-3">
                           <Checkbox
@@ -1099,30 +1129,11 @@ function AccountsPageContent() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium tracking-tight text-stone-700">
-                              {maskToken(account.access_token)}
-                            </span>
-                            <button
-                              type="button"
-                              className="rounded-lg p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(account.access_token);
-                                toast.success("token 已复制");
-                              }}
-                            >
-                              <Copy className="size-4" />
-                            </button>
-                          </div>
+                          <AccountIdentity account={account} />
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant="secondary" className="rounded-md bg-stone-100 text-stone-700">
                             {displayAccountType(account)}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge variant="outline" className="rounded-md border-stone-200 text-stone-600">
-                            {displayAccountSource(account)}
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
@@ -1133,20 +1144,6 @@ function AccountsPageContent() {
                             <StatusIcon className="size-3.5" />
                             {account.status}
                           </Badge>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-xs leading-5 text-stone-500">{account.email ?? "—"}</div>
-                        </td>
-                        <td className="px-4 py-3 text-xs leading-5 text-stone-500">
-                          {(() => {
-                            const raw = (account as any).created_at;
-                            if (!raw) return "—";
-                            try {
-                              const d = new Date(raw + "Z");
-                              if (isNaN(d.getTime())) return String(raw).slice(0, 10);
-                              return d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-                            } catch { return String(raw).slice(0, 10); }
-                          })()}
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant="info" className="rounded-md">

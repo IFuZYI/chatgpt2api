@@ -19,6 +19,8 @@ export type ImageStorageSettings = {
 
 export type Account = {
   access_token: string;
+  /** 稳定标识，终身不变（token 会轮换，用它做引用键） */
+  account_id?: string | null;
   type: AccountType;
   source_type?: string | null;
   status: AccountStatus;
