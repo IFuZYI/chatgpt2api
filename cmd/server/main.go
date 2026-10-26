@@ -79,6 +79,17 @@ func main() {
 	auth := service.NewAuthService(backend, cfg.AuthKey)
 	accounts := service.NewAccountService(backend, cfg, logs)
 
+	// 进度条目的过期清理。
+	//
+	// 为什么需要：刷新/重登进度存在 sync.Map 里，GetRefreshProgress 只在
+	// 「客户端读到 done」时删除。客户端拿完结果就关页面、或请求中途
+	// panic 没走 Finish 路径时，条目永久残留 —— 每个 Progress 带
+	// Results 切片（每账号一条），261 个账号刷 200 次就是 5 万条常驻。
+	//
+	// 6 小时上限：远超任何真实刷新的时长（261 账号约 1-2 分钟），
+	// 又能在半天内回收所有遗漏条目。
+	stopProgressSweeper := accounts.StartProgressSweeper(6 * time.Hour)
+
 	deps := &api.Deps{
 		Config:  cfg,
 		Storage: backend,
@@ -252,6 +263,7 @@ func main() {
 
 	// 先停调度器再退出，避免关闭过程中还在写 data/。
 	watcher.Stop()
+	stopProgressSweeper()
 	cleanupScheduler.Stop()
 	backupScheduler.Stop()
 

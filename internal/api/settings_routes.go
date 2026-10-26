@@ -17,7 +17,10 @@ func (d *Deps) RegisterSettingsRoutes(r *gin.Engine) {
 			writeErr(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"config": d.Config.Get()})
+		// 脱敏：配置里含 R2 密钥、备份口令、WebDAV 密码、AI 审核 key。
+		// 前端靠 has_* 标记显示「已设置」，回写时保留旧值。
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, gin.H{"config": maskConfigSecrets(d.Config.Get())})
 	})
 
 	r.POST("/api/settings", func(c *gin.Context) {

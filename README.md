@@ -588,7 +588,8 @@ PostgreSQL 后端测试需要 `TEST_POSTGRES_URL`，未设置时跳过。
 打 tag 触发两条独立流水线：
 
 ```bash
-git tag v2.0.2 && git push origin v2.0.2
+# 版本号取自 VERSION 文件，tag 必须与它一致
+V=$(cat VERSION) && git tag "v$V" && git push origin "v$V"
 ```
 
 | 工作流 | 作用 |

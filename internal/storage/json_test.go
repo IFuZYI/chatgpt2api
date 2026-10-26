@@ -86,7 +86,11 @@ func TestSaveJSONValueCreatesParentDir(t *testing.T) {
 	}
 }
 
-// 文件权限保持 0644（CreateTemp 默认 0600，必须显式改回来）。
+// 凭据文件必须是 0600。
+//
+// 历史：这里原本断言 0644，理由是「CreateTemp 默认 0600，必须显式改回来」——
+// 但那等于把 accounts.json（含 access_token/refresh_token/password/
+// totp_secret）设成同机任何用户可读。改为 0600 并锁住。
 func TestSaveJSONValueKeepsFileMode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "accounts.json")
@@ -97,7 +101,7 @@ func TestSaveJSONValueKeepsFileMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o644 {
+	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Errorf("mode = %o, want 644", mode)
 	}
 }

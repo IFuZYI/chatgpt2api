@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 新账号必须拿到 account_id，且同一个输入重复归一化得到同一个值。
@@ -417,5 +418,84 @@ func TestDuplicateIDsRepairedThenStable(t *testing.T) {
 				t.Fatalf("id=%s 解析漂移：期望 %s，第 %d 次得到 %s", id, want, i, token)
 			}
 		}
+	}
+}
+
+// 已完成的进度必须能被清理，否则 sync.Map 无界增长。
+//
+// 回归点：GetRefreshProgress 在返回 done=true 时删除条目，但只有
+// **客户端再次轮询** 才会触发。若客户端拿到结果后直接关页面、
+// 或请求中途失败没走 Finish 路径，条目永久残留 —— Progress 里带
+// Results 切片（每个账号一条），管理员刷 N 次就留 N 份快照。
+//
+// 这条测试锁住「存在一个不依赖客户端轮询的清理入口」。
+func TestRefreshProgressCanBeSwept(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-1", "email": "sweep@x.test", "type": "free", "status": StatusNormal},
+	})
+
+	id := "sweep-test-id"
+	svc.InitRefreshProgress(id, 1)
+	svc.FinishRefreshProgress(id, map[string]any{"refreshed": 1}, "")
+
+	// 模拟「客户端再也没来读」：直接调清理，应能移除
+	svc.CleanRefreshProgress(id)
+	if got := svc.GetRefreshProgress(id); got != nil {
+		t.Errorf("清理后仍能读到进度，条目未释放")
+	}
+}
+
+// 清理一个不存在的 id 不能 panic。
+func TestCleanRefreshProgressUnknownIDIsSafe(t *testing.T) {
+	svc, _ := newTestAccountService(t, nil)
+	svc.CleanRefreshProgress("does-not-exist")
+	svc.CleanRefreshProgress("")
+}
+
+// 进度条目必须有「按时间过期」的兜底清理 —— 不能只依赖客户端轮询。
+//
+// 真实泄漏路径：
+//  1. 客户端拿到 done=true 后关页面（GetRefreshProgress 的删除只在
+//     读到 done 时才执行，之后再没人读）
+//  2. 刷新请求 panic / 提前 return，没走 FinishRefreshProgress
+//  3. 服务端重启前积累的条目（进程退出才释放，但长跑服务不会退）
+//
+// Progress 里带 Results 切片，每个账号一条 —— 261 个账号刷一次就是
+// 261 条记录常驻。刷 200 次 = 5 万条。
+func TestProgressEntriesExpireByAge(t *testing.T) {
+	svc, _ := newTestAccountService(t, nil)
+
+	// 造 3 个「陈旧」条目
+	for i, id := range []string{"old-1", "old-2", "old-3"} {
+		svc.InitRefreshProgress(id, 1)
+		svc.FinishRefreshProgress(id, map[string]any{"refreshed": i}, "")
+	}
+
+	// 把它们的时间戳改成很久以前
+	svc.backdateProgressForTest("refresh", []string{"old-1", "old-2", "old-3"}, 48*time.Hour)
+
+	// 清理超过 1 小时的条目
+	removed := svc.SweepStaleProgress(1 * time.Hour)
+	if removed != 3 {
+		t.Errorf("清理了 %d 条，应为 3 条", removed)
+	}
+	for _, id := range []string{"old-1", "old-2", "old-3"} {
+		if got := svc.GetRefreshProgress(id); got != nil {
+			t.Errorf("%s 未被清理", id)
+		}
+	}
+}
+
+// 新鲜的条目不能被误删。
+func TestSweepStaleProgressKeepsFresh(t *testing.T) {
+	svc, _ := newTestAccountService(t, nil)
+	svc.InitRefreshProgress("fresh-1", 1)
+	svc.FinishRefreshProgress("fresh-1", map[string]any{"refreshed": 1}, "")
+
+	if removed := svc.SweepStaleProgress(1 * time.Hour); removed != 0 {
+		t.Errorf("误删了 %d 条新鲜条目", removed)
+	}
+	if got := svc.GetRefreshProgress("fresh-1"); got == nil {
+		t.Error("新鲜条目被误删")
 	}
 }

@@ -315,10 +315,11 @@ func (s *AccountService) InitRefreshProgress(id string, total int) {
 		id = uuid.NewString()
 	}
 	s.refreshProgress.Store(id, &Progress{
-		ID:      id,
-		Total:   total,
-		Status:  "running",
-		Started: time.Now(),
+		ID:        id,
+		UpdatedAt: time.Now(),
+		Total:     total,
+		Status:    "running",
+		Started:   time.Now(),
 		StatusCounts: map[string]int{
 			StatusNormal: 0, StatusLimited: 0, StatusAbnormal: 0, StatusDisabled: 0,
 		},
@@ -349,6 +350,8 @@ func (s *AccountService) UpdateRefreshProgress(id, token string) {
 
 	progress.mu.Lock()
 	progress.Processed++
+	// 刷新时间戳：长任务处理到一半时不能被 sweeper 误判为陈旧。
+	progress.UpdatedAt = time.Now()
 	if progress.StatusCounts == nil {
 		progress.StatusCounts = map[string]int{}
 	}
@@ -396,6 +399,86 @@ func (s *AccountService) GetRefreshProgress(id string) map[string]any {
 	return snapshot
 }
 
+// SweepStaleProgress 清理超过 maxAge 的进度条目，返回清理数量。
+//
+// 为什么必须存在：GetRefreshProgress 只在「读到 done」时删除条目，
+// 而客户端完全可能拿到结果后就不再轮询 —— 条目永久留在 sync.Map 里。
+// Progress 携带 Results 切片（每账号一条），261 个账号刷 200 次
+// 就是 5 万条常驻记录。
+//
+// 由后台 ticker 定期调用（见 StartProgressSweeper）。
+func (s *AccountService) SweepStaleProgress(maxAge time.Duration) int {
+	cutoff := time.Now().Add(-maxAge)
+	removed := 0
+	for _, entry := range []struct {
+		name  string
+		store *sync.Map
+	}{
+		{"refresh", &s.refreshProgress},
+		{"relogin", &s.reloginProgress},
+	} {
+		_ = entry.name
+		entry.store.Range(func(key, value any) bool {
+			progress, ok := value.(*Progress)
+			if !ok {
+				return true
+			}
+			progress.mu.Lock()
+			stale := !progress.UpdatedAt.IsZero() && progress.UpdatedAt.Before(cutoff)
+			progress.mu.Unlock()
+			if stale {
+				entry.store.Delete(key)
+				removed++
+			}
+			return true
+		})
+	}
+	return removed
+}
+
+// StartProgressSweeper 启动后台清理。返回的函数停止它。
+//
+// 间隔取 maxAge/4：既不会让陈旧条目堆积太久，也不会频繁遍历 map。
+func (s *AccountService) StartProgressSweeper(maxAge time.Duration) func() {
+	interval := maxAge / 4
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				s.SweepStaleProgress(maxAge)
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// backdateProgressForTest 把指定条目的时间戳往前拨 —— 仅供测试构造
+// 「陈旧」状态，生产代码不应调用。
+func (s *AccountService) backdateProgressForTest(which string, ids []string, age time.Duration) {
+	store := &s.refreshProgress
+	if which == "relogin" {
+		store = &s.reloginProgress
+	}
+	target := time.Now().Add(-age)
+	for _, id := range ids {
+		if value, ok := store.Load(id); ok {
+			if progress, ok := value.(*Progress); ok {
+				progress.mu.Lock()
+				progress.UpdatedAt = target
+				progress.mu.Unlock()
+			}
+		}
+	}
+}
+
 func (s *AccountService) CleanRefreshProgress(id string) {
 	s.refreshProgress.Delete(id)
 }
@@ -405,10 +488,11 @@ func (s *AccountService) InitReloginProgress(id string, total int) {
 		id = uuid.NewString()
 	}
 	s.reloginProgress.Store(id, &Progress{
-		ID:      id,
-		Total:   total,
-		Status:  "running",
-		Started: time.Now(),
+		ID:        id,
+		UpdatedAt: time.Now(),
+		Total:     total,
+		Status:    "running",
+		Started:   time.Now(),
 	})
 }
 
@@ -527,9 +611,11 @@ func (s *AccountService) RefreshAccounts(
 	}()
 	if len(unique) == 0 {
 		result := map[string]any{
+			// 不放 items：进度结果会被 FinishRefreshProgress 存进
+			// Progress.Result，而 GET /api/accounts/refresh/progress/:id
+			// 原样返回 —— 等于泄漏全池凭据。与下方非空分支保持一致。
 			"refreshed": 0,
 			"errors":    []any{},
-			"items":     s.ListAccounts(),
 			"relogined": 0,
 		}
 		if progressID != "" {

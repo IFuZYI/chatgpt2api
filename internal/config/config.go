@@ -309,9 +309,13 @@ func (s *Store) SensitiveWords() []string {
 	return out
 }
 
+// AIReview 返回 ai_review 配置的**副本**。
+//
+// 必须复制：s.raw 返回的是 s.data 里的活 map，直接给出去后调用方
+// 改它就会绕过 mu 修改内部状态，与并发读者竞争。
 func (s *Store) AIReview() map[string]any {
 	if value, ok := s.raw("ai_review").(map[string]any); ok {
-		return value
+		return deepCopyMap(value)
 	}
 	return map[string]any{}
 }
@@ -469,7 +473,11 @@ func (s *Store) Update(patch map[string]any) (map[string]any, error) {
 	}
 	delete(next, "backup_state")
 
-	s.data = next
+	// 先序列化 + 落盘，成功后才更新内存。
+	//
+	// 回归点：早期写法是 `s.data = next` 在写盘之前。写盘失败时调用方
+	// 收到错误，但内存里已经是新值 —— 用户被告知「保存失败」，而后续
+	// 任何一次成功写入会把这个值悄悄持久化。
 	payload, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		s.mu.Unlock()
@@ -477,10 +485,15 @@ func (s *Store) Update(patch map[string]any) (map[string]any, error) {
 	}
 	payload = append(payload, '\n')
 	writeErr := writeFileAtomic(s.path, payload)
-	s.mu.Unlock()
 	if writeErr != nil {
+		// 落盘失败：内存保持旧值，调用方看到的错误与状态一致。
+		s.mu.Unlock()
 		return nil, explainConfigWriteError(s.path, writeErr)
 	}
+	// 只有写盘成功才更新内存 —— 否则「保存失败」后内存里已是新值，
+	// 后续任何一次成功写入会把它悄悄持久化。
+	s.data = next
+	s.mu.Unlock()
 	return s.Get(), nil
 }
 
@@ -562,13 +575,13 @@ func isPermissionError(err error) bool {
 
 func writeFileAtomic(path string, payload []byte) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
+	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
 		// Docker 单文件 bind mount 会拒绝 rename（EBUSY），退回就地写。
-		return os.WriteFile(path, payload, 0o644)
+		return os.WriteFile(path, payload, 0o600)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		return os.WriteFile(path, payload, 0o644)
+		return os.WriteFile(path, payload, 0o600)
 	}
 	return nil
 }
@@ -669,11 +682,7 @@ func maxFloat(value, floor float64) float64 {
 func deepCopyMap(source map[string]any) map[string]any {
 	out := make(map[string]any, len(source))
 	for key, value := range source {
-		if nested, ok := value.(map[string]any); ok {
-			out[key] = deepCopyMap(nested)
-			continue
-		}
-		out[key] = value
+		out[key] = deepCopyJSONValue(value)
 	}
 	return out
 }

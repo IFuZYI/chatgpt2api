@@ -412,3 +412,49 @@ func maskItems(value any) []map[string]any {
 	}
 	return nil
 }
+
+// maskConfigSecrets 把配置响应里的第三方密钥替换成 has_* 标记。
+//
+// 为什么要做：GET /api/settings 返回 Config.Get()，其中含
+// backup.secret_access_key、backup.passphrase、image_storage.webdav_password、
+// ai_review.api_key —— 全部明文。同仓库对账号凭据（5 个字段）和
+// clearance cookie（has_cf_cookies）都做了脱敏，唯独配置里的密钥漏了。
+// 每次打开设置页都把这些密钥送进浏览器内存与代理日志。
+//
+// 语义与 normalizeProxyRuntime 的 has_cf_cookies 完全一致：
+// 用 has_X: true 告诉前端「有值」，回写时若只传 has_X 则保留旧值。
+//
+// 不改写入参 —— 就地 delete 会删掉 store 内存里的真实密钥。
+func maskConfigSecrets(config map[string]any) map[string]any {
+	if config == nil {
+		return nil
+	}
+	out := make(map[string]any, len(config))
+	for key, value := range config {
+		out[key] = value
+	}
+
+	maskNested := func(key string, fields []string) {
+		nested, ok := config[key].(map[string]any)
+		if !ok {
+			return
+		}
+		copied := make(map[string]any, len(nested))
+		for field, value := range nested {
+			copied[field] = value
+		}
+		for _, field := range fields {
+			if raw, present := copied[field]; present {
+				text, _ := raw.(string)
+				delete(copied, field)
+				copied["has_"+field] = strings.TrimSpace(text) != ""
+			}
+		}
+		out[key] = copied
+	}
+
+	maskNested("backup", []string{"secret_access_key", "passphrase"})
+	maskNested("image_storage", []string{"webdav_password"})
+	maskNested("ai_review", []string{"api_key"})
+	return out
+}

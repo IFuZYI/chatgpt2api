@@ -43,10 +43,10 @@ func (d *Deps) registerAccountRefresh(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusServiceUnavailable, "server is shutting down"))
 			return
 		}
-		go func() {
+		goSafe(d.Logs, "刷新账号", func() {
 			defer finishRefresh()
 			d.Accts.RefreshAccounts(refreshCtx, tokens, progressID, d.refreshVerifier())
-		}()
+		})
 		c.JSON(http.StatusOK, gin.H{"progress_id": progressID})
 	})
 
@@ -89,10 +89,10 @@ func (d *Deps) registerAccountRefresh(r *gin.Engine) {
 		tokens = service.DedupeReloginTokens(tokens)
 		progressID := newUUIDString()
 		d.Accts.InitReloginProgress(progressID, len(tokens))
-		go func() {
+		goSafe(d.Logs, "重登账号", func() {
 			defer finishRelogin()
 			d.runRelogin(reloginCtx, tokens, progressID)
-		}()
+		})
 		c.JSON(http.StatusOK, gin.H{"progress_id": progressID})
 	})
 

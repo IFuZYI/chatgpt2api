@@ -188,7 +188,10 @@ function AccountsPageContent() {
     message: "",
     email: "",
   });
+  // progressRef 之前从未被赋值，cleanup 是死代码 —— 刷新中途离开页面时
+  // 轮询 interval 会一直跑。unmountedRef 让循环自行退出。
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const unmountedRef = useRef(false);
   const [refreshSummary, setRefreshSummary] = useState<Record<string, number | string> | null>(null);
 
   const loadAccounts = async (silent = false) => {
@@ -232,6 +235,7 @@ function AccountsPageContent() {
 
     // 清理进度条定时器
     return () => {
+      unmountedRef.current = true;
       if (progressRef.current) clearInterval(progressRef.current);
     };
   }, []);
@@ -330,6 +334,8 @@ function AccountsPageContent() {
     }
 
     if (accessTokens.length === 1) {
+      // 键是 token：这批 token 正在刷新。轮换发生在刷新**成功之后**，
+      // 那时 refreshingTokens 已被 finally 清空 —— 不存在「键失配」窗口。
       setRefreshingTokens((prev) => new Set([...prev, accessTokens[0]]));
       try {
         const { progress_id } = await refreshAccounts(accessTokens);
@@ -448,6 +454,11 @@ function AccountsPageContent() {
         let reCount = 0;
         await new Promise<void>((resolve) => {
           const timer = setInterval(() => {
+            if (unmountedRef.current) {
+              clearInterval(timer);
+              resolve();
+              return;
+            }
             reCount += 1;
             if (reCount >= relogined) {
               clearInterval(timer);
@@ -464,7 +475,16 @@ function AccountsPageContent() {
               setProgress((prev) => ({ ...prev, current: reCount }));
             }
           }, 150);
-          setTimeout(resolve, 2000);
+          progressRef.current = timer;
+          // 2s 兜底：必须同时清掉 interval。
+          //
+          // 回归点：早期写法只 resolve 不 clearInterval —— 150ms × relogined，
+          // 当 relogined >= 14 时 2s 内跑不完，interval 会永久每 150ms
+          // 调一次 setProgress。
+          setTimeout(() => {
+            clearInterval(timer);
+            resolve();
+          }, 2000);
         });
       } else {
         setProgress({

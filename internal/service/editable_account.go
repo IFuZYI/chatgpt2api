@@ -35,7 +35,9 @@ func (s *AccountService) EditableFileAccessToken() (string, error) {
 		if !accountMatchesAnyPlanType(account, EditableFilePlanTypes) {
 			continue
 		}
-		candidates = append(candidates, account)
+		// copyMap：解锁后还要读 last_used_at/access_token 做排序，
+		// 不能持有号池里的活 map（写方 disambiguateAccountIDs 在写锁下就地改）。
+		candidates = append(candidates, copyMap(account))
 	}
 	s.mu.RUnlock()
 

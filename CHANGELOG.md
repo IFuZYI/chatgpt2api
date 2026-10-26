@@ -1,360 +1,139 @@
 # Changelog
 
-## 2.3.4 - 2026-10-26
+## 2.2.0 - 2026-10-26
 
-dogfood（真实浏览器探索测试）发现的性能与响应式问题。
-
-### 修复
-
-+ **[high] 搜索击键导致明显输入延迟。**
-  261 个账号，每次击键都重算 `filteredAccounts` 并重建整个 `tbody`
-  元素树。实测**击键 75–271ms**（中位数约 160ms），超过人眼感知
-  「即时」的 100ms 阈值。
-
-  修复：搜索输入加 150ms 延迟（`SEARCH_DEBOUNCE_MS`），打字停顿后才
-  重算；空白查询与空串等价，避免按空格白跑一次全量过滤。
-
-  修复后 **36–185ms**（中位数 56ms）。
-
-+ **[high] 移动端「系统可用模型」占满整屏，账号列表要滚 3 屏。**
-  390×844 实测：15 个模型标签换行 5 行占满一屏，加 6 张统计卡片后
-  「账户列表」标题在第 3 屏才出现 —— 而列表才是这页主体。
-
-  修复：模型标签容器移动端限高 `max-h-[4.5rem]` + 可滚动，桌面端不限。
-  纯 CSS，不引入 JS 状态（避免 hydration 抖动）。
-
-  修复后页高 2221px → 2063px，标题进入首屏。
-
-+ **[medium] 移动端统计卡片单列堆叠。**
-  改为 `grid-cols-2`（移动）→ `md:3` → `xl:6`，高度从 3 屏降到约 1 屏。
-
-+ **[medium] `Account` 类型缺 `account_id`。**
-  详情功能新增了该字段但前端类型未跟上，`tsc --noEmit` 报错。
-
-+ **[low] 删除两个已无调用者的函数**（`maskToken` / `displayAccountSource`）——
-  移除 token / 来源列后不再被引用。
-
-### 新增
-
-+ `src/lib/account-columns.ts` 补齐可测的纯函数：列定义、状态色条、
-  响应式网格、行比对（`sameAccountRow`）、搜索延迟（`SEARCH_DEBOUNCE_MS`
-  / `normalizeQuery` / `sameQuery`）、移动端折叠判定。
-  新增 9 个前端测试（共 36）。
-
-+ `dogfood-output/report.md` —— 运行时探索报告（5 个发现，含复现命令、
-  预期/实际、证据路径、覆盖完成情况与残留风险）。
-
-### 验证
-
-Playwright + Chromium 真实浏览器：
-- 性能：击键/翻页独立测量（每次操作间隔 300ms，避免相互干扰）
-- 响应式：1440 / 1280 / 768 / 390 / 320 五个视口，零横向溢出，
-  卡片列数 6→6→3→2→2 正确降级
-- 控制台 0 错误；11 个 `ERR_ABORTED` 均为 Next.js 路由预取取消（正常）
-
-## 2.3.3 - 2026-10-26
-
-账号列表信息层级重排 + 移动端布局修复。
-
-### 变更
-
-+ **账号信息移到第一列，移除 token / 来源 / 创建时间三列。**
-  之前 token 占第一列（2000+ 字符的 JWT，占宽且无法快速识别），
-  账号信息在第 6 列 —— 用户要扫一眼看「这是哪个号」，却先看到一串 token。
-
-  现在第一列是**账号信息**：邮箱为主行、`account_id` 前 8 位为副行
-  （可复制完整值）。token / 来源 / 创建时间移入详情弹窗 ——
-  它们占宽且不属于「扫一眼」的范畴。
-
-  列数从 11 降到 8，横向滚动需求明显下降。
-
-+ **行左侧加状态色条。**
-  正常=绿、限流=琥珀、异常=玫红、禁用=灰。
-  58 个异常账号在一屏里能直接按颜色分组，不用逐行读状态徽章。
-
-### 修复
-
-+ **移动端统计卡片单列堆叠，占满整屏。**
-  dogfood（390×844 视口）实测：6 张卡片单列堆叠，账号列表要滚 3 屏
-  才出现 —— 而列表才是这页主体。
-
-  改为 `grid-cols-2`（移动）→ `md:grid-cols-3` → `xl:grid-cols-6`。
-  实测高度从 3 屏降到约 1 屏。
-
-+ `Account` 类型缺 `account_id`（详情功能加了这个字段但类型没跟上）。
-
-+ 删除两个已无调用者的函数（`maskToken` / `displayAccountSource`）。
-
-### 新增
-
-+ `src/lib/account-columns.ts` —— 列定义与响应式网格抽成纯数据，
-  用 `node --test` 断言「账号信息必须在第一列」「列表不该有 token 列」
-  「移动端必须多列」这类需求。肉眼看 JSX 容易漏。
-
-### 验证
-
-真实浏览器截图（Playwright + Chromium）：
-桌面 1440×900 与移动 390×844 两个视口，确认列顺序、状态色条、
-卡片网格全部生效。
-
-## 2.3.2 - 2026-10-26
-
-Docker 部署全面优化。
-
-### 修复
-
-+ **`docker-compose.local.yml` 与 `docker-compose.warp.yml` 的
-  `config.json` 同样会 `permission denied`。**
-  2.3.1 只修了主 compose 的 `init-data`，而另外两个也挂 `config.json`
-  却只 chown 了 `data/`。修复：三个 compose 全部处理。
-
-+ **三个 compose 都没有安全加固。**
-  补齐 `user: "65532:65532"`、`cap_drop: [ALL]`、
-  `security_opt: no-new-privileges:true`。
-
-+ **容器日志无大小限制。**
-  docker 默认无限增长；本服务每 5 分钟刷一次账号，日志量不小，
-  单机跑几个月会写满磁盘。补齐 `json-file` + `max-size: 10m` +
-  `max-file: 3`（含 warp 的 privoxy / flaresolverr）。
-
-+ **`.dockerignore` 未排除测试文件与本地日志。**
-  `*_test.go`（1 MB，含测试夹具常量）与 `.learnings/` 会进构建上下文。
-
-### 新增
-
-+ **`scripts/test-compose.py`** —— Docker 部署的契约测试，43 项检查，
-  每个用例对应一个真实部署缺陷（不是最佳实践清单）：
-
-  1. 每个 compose 的 `init-data` 必须 chown `config.json`，且真的挂载它
-  2. `app` 必须显式非 root + `cap_drop ALL` + `no-new-privileges`
-  3. 每个长期运行的服务必须有日志大小限制
-  4. `/app/data` 必须可写（唯一需要持久化的目录）
-  5. `.dockerignore` 必须挡住 `data` / `config.json` / `.learnings` / `*_test.go`
-  6. Dockerfile 最终层只能 COPY 二进制与 VERSION，且切到 nonroot
-
-  改动前 19 项失败 → 改动后 43 项全过。
-
-### 文档
-
-+ `docs/deployment.md` 补「容器安全基线」章节与 `config.json` 权限的
-  完整诊断说明（为什么只改目录权限不够，必须改文件属主）。
-
-### 验证
-
-真实容器端到端：`config.json` 属主 `root:root` → `65532:65532`；
-容器 `healthy`；设置保存 `200` 且配置真的落盘；加固后 5 个关键端点全 200；
-`docker inspect` 确认 User / CapDrop / SecurityOpt / LogConfig 全部生效。
-
-## 2.3.1 - 2026-10-26
-
-code review 后的修复版。**含 2 个安全修复**，建议升级。
+全量审计版本。**含 6 个安全修复 + 1 个数据丢失修复**，建议升级。
 
 ### 安全
 
-+ **[高危] 刷新进度接口泄漏全池凭据。**
-  `GET /api/accounts/refresh/progress/:id` 返回的 `result` 里带
-  `"items": ListAccounts()` —— 刷新**一个**账号会泄漏**全池**的
-  `password` / `totp_secret` / `refresh_token` 原文，**包括这次根本没被
-  刷新的账号**（实测确认）。
++ **[高危] 配置类密钥明文回显。**
+  `GET /api/settings` 返回 `Config.Get()`，其中含
+  `backup.secret_access_key`、`backup.passphrase`、
+  `image_storage.webdav_password`、`ai_review.api_key` —— 全部明文。
+  同仓库对账号凭据（5 个字段）与 clearance cookie（`has_cf_cookies`）
+  都做了脱敏，唯独配置里的密钥漏了：每次打开设置页都把这些密钥送进
+  浏览器内存与代理日志。
 
-  修复：进度结果不再包含 `items`（进度契约只需计数与错误）。
-  重登进度同样处理。
+  `GET /api/backups` 更严重 —— 这是被前端轮询的**列表**接口，
+  同样回显 R2 密钥与备份口令。
 
-+ **[中危] `POST /api/accounts/oauth/finish` 未脱敏。**
-  `AddAccountItems` 返回号池原始记录，该端点直接透传。
+  修复：新增 `maskConfigSecrets`，4 个字段替换为 `has_*` 布尔标记
+  （与 `has_cf_cookies` 同构）。不修改入参，避免删掉内存里的真实密钥。
 
-  修复：抽出 `maskItems` helper（同时处理 `[]map[string]any` 与 `[]any`
-  两种形态），四个端点统一使用 —— 之前每个端点各写一遍类型断言，
-  正是这样漏掉了两个。
++ **[高危] 凭据文件权限 0644 → 0600。**
+  `accounts.json`（含 access_token / refresh_token / password /
+  totp_secret / session_token）与 `config.json`（含 auth-key = admin
+  bearer、R2 密钥、备份口令、WebDAV 密码）都被写成 **0644** ——
+  同机任何用户可读。`auth_keys.json` 更是直接拿到 admin bearer。
+
+  更糟的是既有测试断言了 0644，把泄漏固化成了「预期行为」。
+
+  修复：全部改为 0600，并更新那条测试。
+
++ **[高危] 刷新进度提前返回分支泄漏全池凭据。**
+  `RefreshAccounts` 在 `len(unique)==0` 时构造的 result 里带
+  `"items": ListAccounts()`，而进度接口原样返回。同函数末尾的非空
+  分支此前已修，这个 early-return 漏了。
+
++ **[中危] `AIReview()` 返回共享 map。**
+  调用方改返回值即绕过锁修改内部状态，与并发读者竞争。
+  修复：返回 `deepCopyMap` 副本；`deepCopyMap` 同时补上 `[]any` 处理。
 
 ### 修复
 
-+ **`config.json: permission denied` —— Docker 设置页无法保存。**
-  `config.json` 以 `root:root 644` 单文件 bind mount 挂进容器，而容器以
-  uid 65532 运行。两个写入点都失败：创建 `.tmp` 失败（`/app` 目录不可写）
-  + 回退就地写失败（文件属主不是 65532）。
++ **[高危] 账号池文件损坏导致全池数据丢失。**
+  `accounts.json` 被截断/手改错一个字符时，`LoadAccounts` 返回
+  `([], nil)` ——「损坏」与「空」不可区分。service 层再把错误当空池，
+  下一次 `saveAccountsLocked()` 写入空数组，**全池 token 永久丢失且无备份**。
 
   修复两层：
-  1. compose 的 `init-data` 现在也 chown `config.json`（单文件挂载即可，
-     实测可行且会改到宿主文件）
-  2. 错误信息带上可操作指引（哪个文件、宿主侧 `chown` 命令、替代方案），
-     而不是只报 `permission denied`
+  - storage：区分「文件不存在」（空，正常）与「解析失败」（返回错误）
+  - service：加载失败时置 `loadFailed`，保存路径拒绝写入
 
-  实测：修复前 `400 permission denied`，修复后 `200` 且配置真的落盘。
+  实测验证：撤销守卫后，48 字节的损坏文件被覆盖成 633 字节。
 
-+ **设置页默认模型文案仍写 `gpt-5-5`。**
-  后端回退值早已改为 `auto`（`gpt-5-5` 已从上游模型列表消失），但前端
-  placeholder、说明文案、以及 store 的两处回退值仍是旧值。后果：用户以为
-  当前值就是 `gpt-5-5`，保存时把它写回 `config.json` 覆盖掉 `auto`。
++ **[高危] `doGet` / `doPostJSON` 的 timeout 参数被完全忽略。**
+  两个函数接收 `timeout` 却从不使用，而客户端级超时被显式设为 0。
+  于是 `QueryTasks(5s)`、`GetConversation(60s)`、`/me(30s)`、
+  `ListModels(30s)` 全部退化为**永不超时**。上游挂住一个连接时
+  `generateWithRetry` 的 `defer release()` 永不执行，**账号槽位永久
+  inflight**，号池逐步被蚕食。
 
-  修复：抽出 `defaultUpstreamModelName()`，四处统一到 `auto`。
+  同时修 `DownloadImage`（无 deadline，body 中途停住即永久阻塞）与
+  `UploadImage`（三次请求都用 `context.Background()`）。
 
-+ **前端全选是空操作、每次刷新列表清空选中。**
-  2.3.0 把行 key 与表头判定改成 `accountRowKey`，但 `toggleSelectAll` 与
-  6 处 reload 剪枝仍按 `access_token`。修复：抽出 `selectAllKeys` /
-  `pruneSelection`，7 处全部迁移。
++ **[高危] 5 处数据竞争（锁外读号池活 map）。**
+  `ProxyFor`、`Stats`、`EditableFileAccessToken` 在 `RUnlock` 之后读
+  号池里的**活对象**，而 `disambiguateAccountIDs` 在写锁下就地写同一个
+  map —— Go 的 `fatal error: concurrent map read and map write` 不可
+  recover，直接终止进程。`ProxyFor` 在每条上游请求上都会被调用。
 
-+ **磁盘上已重复的 `account_id` 修不掉。**
-  `disambiguateAccountIDs` 第一轮对重复 id 的第二个账号没占位，第二轮又
-  误判「已占位」而跳过 —— 永远不重新派生。修复：用 keeper 映射记录谁真的
-  占位成功。
+  另修 `ModelCatalog.refresh` 的无锁字段读、`ImageTaskService.SetRunners`
+  的无锁写。
 
-+ **`Detail()` 在锁释放后读号池活对象**（真实数据竞争）。
-  改为读副本。
++ **[中危] 合成闸门按请求限流而非按图，单请求可占 N×271 MiB。**
+  `acquireComposite()` 在 `for` 循环**之外**只取一次，而循环内每张图
+  各自最多 20M 像素（≈271 MiB），`images` 数量在 API 层无上限。
+  改为循环内取闸门，并用闭包 + `defer` 保证错误路径也释放
+  （原写法错误分支 `return nil, err` 会泄漏许可）。
 
-+ 详情接口加 `Cache-Control: no-store`（含凭据原文）。
++ **[中危] 进度条目无 TTL，只靠客户端轮询删除。**
+  `refreshProgress` / `reloginProgress` 是 `sync.Map`，
+  `GetRefreshProgress` 只在「读到 done」时删除。客户端拿完结果就关
+  页面、或请求中途 panic 没走 Finish 路径时，条目永久残留 ——
+  每个 `Progress` 带 Results 切片（每账号一条），261 个账号刷 200 次
+  就是 5 万条常驻。
+
+  修复：`Progress` 加 `UpdatedAt`，新增 `SweepStaleProgress` 与
+  `StartProgressSweeper`（6 小时上限，接进 main 的启动/关闭链）。
+
++ **[中危] `Update` 先改内存后落盘。**
+  写盘失败时调用方收到错误，但内存里已是新值 —— 用户被告知「保存
+  失败」，后续任何一次成功写入却把它悄悄持久化。改为落盘成功后才
+  更新内存。
+
++ **[中危] 前端定时器泄漏。**
+  - 重登进度模拟的 2s 兜底分支不清 `setInterval`：`relogined >= 14` 时
+    interval 永久每 150ms 调一次 `setProgress`
+  - `progressRef` 从未赋值，卸载时的 cleanup 是死代码 —— 刷新中途
+    离开页面，轮询会一直跑并 `setState`
+
+  修复：兜底分支同时 `clearInterval`；新增 `unmountedRef` 让所有
+  轮询循环在卸载后自行退出。
+
++ **[中危] 前端模块级无界缓存。**
+  `b64BlobUrlCache` 与 `base64SizeCache` 以**整段多 MB base64** 为键，
+  且 `URL.createObjectURL` 产生的 blob 从不 revoke —— 内存随浏览会话
+  单调增长。改为 LRU（上限 32）并在淘汰时 revoke。
+
++ **[低危] 9 处后台 goroutine 无 recover。**
+  `gin.Recovery()` 只兜 handler goroutine。刷新、重登、CPA 导入、
+  sub2api 导入、图片任务等 `go func()` 在 handler 返回后继续跑，
+  其中任何一个 panic 都会**终止整个进程**。新增 `goSafe` 统一包装。
+
++ **[低危] 其他**
+  - `.dockerignore` 补 `*_test.go` 与 `.learnings`
+  - 详情接口之外，设置与备份响应补 `Cache-Control: no-store`
 
 ### 文档
 
-+ 修正两处漂移：样例标注（详情给原文、列表给脱敏）、400 错误信息措辞、
-  `account-api.md` 重复的编号。
-
-## 2.3.0 - 2026-10-26
-
-账号稳定标识 + 详情弹窗。**含 1 个安全修复**，建议升级。
-
-### 安全
-
-+ **[中危] 4 个账号端点的响应泄漏凭据原文。**
-  脱敏函数 `maskAccountCredentials` 原本只在 `GET /api/accounts` 一个 handler
-  里调用，而 `POST /api/accounts`、`/api/accounts/update`、
-  `/api/accounts/proxy`、`DELETE /api/accounts` 都直接返回
-  `ListAccounts()` —— 实测响应含 `password` / `totp_secret` /
-  `refresh_token` / `id_token` 原文（DELETE 一次返回 260 个账号全部凭据）。
-
-  虽然都要 admin 权限，但列表接口刻意脱敏说明设计意图就是「不在批量读里
-  给原文」；且前端 update 后会把 items 存进状态，等于把密码送进浏览器内存。
-
-  修复：四个端点全部走脱敏；脱敏范围从 2 个字段扩到 **5 个**
-  （补 `refresh_token` / `id_token` / `session_token`）；
-  并改为**复制后处理**（原实现就地 `delete` 会改写入参 ——
-  若该 map 与号池内存共享，密码被删后重登会失败）。
-
-  新增**端点级集成测试**：经真实 router 逐个打 5 个返回账号列表的端点。
-  这比只测脱敏函数有价值 —— 后者测不出「handler 忘了调用它」。
-
-### 新增
-
-+ **账号详情弹窗。** 号池管理每个账号行新增眼睛按钮，点开显示 5 组信息：
-  基本信息 / 凭据（密码、2FA）/ 令牌与有效期 / 运行状态 / 诊断。
-  凭据默认遮罩，点「显示」展开，可复制。
-
-  派生字段：`access_token_expires_in`（**-1 = 非 JWT，无法判断**，
-  与「已过期」严格区分）、`access_token_expires_at`、`proxy_source`
-  （account/global/direct）、`proxy_effective`、`has_*` 布尔值。
-
-  诊断组展示 `invalid_count` / `last_invalid_at` / `last_refresh_error` /
-  `last_token_refresh_*` / `default_model_slug` —— 这些后端一直在返回但 UI
-  此前完全不展示，而它们正是「这个号为什么失效」的答案。
-
-+ **`GET /api/accounts/detail`** —— 单账号详情，返回凭据原文（与列表接口
-  刻意不同）。同时接受 `access_token` 与 `account_id` 两个参数名。
-
-+ **`account_id`：UUID 形态的稳定标识，终身不变。**
-  此前唯一可用的引用键是 `access_token`，而它会变：RT 换 AT（keepalive，
-  每 3 天一次）与密码重登都会换掉它。
-
-  后果（实测）：
-  - 前端 React key 用 token，轮换后 DOM 被重建，**选中态与展开态丢失**
-  - SQL 后端把旧行 DELETE、新行 INSERT，自增 id 从 1 变成 3
-  - 外部系统记下的 token 引用在轮换后失效（`aliases` 只在内存，重启即丢）
-
-  生成规则：新账号 UUIDv5 确定性派生；已有 `account_id` 原样保留；
-  历史账号按种子确定性回填。**确定性是关键** —— 随机生成会让每次重启
-  换一批 ID，等于没有稳定标识（实测 260 个账号重启前后 ID 完全一致）。
-
-  唯一性由 `disambiguateAccountIDs` 在**插入点**保证，并优先保留已持久化
-  的 id（可能已被外部引用）。
-
-### 修复
-
-+ **`account_id` 同种子碰撞导致按 ID 查询解析到不确定的账号。**
-  派生只用「第一个非空字段」做种子，两个账号共享 `user_id`/`email` 时
-  会派生出**完全相同**的 id；而 `findByAccountIDLocked` 返回 map 迭代中的
-  第一个匹配 —— Go 的 map 顺序随机。实测：连续两次查询分别得到 `at-1`
-  与 `at-2`。
-
-  修复时踩了三个坑（记录在 `AGENTS.md`）：把 token 纳入种子会破坏轮换
-  稳定性；`persisted` 用「id 非空」判断会把刚派生的也当成已持久化；
-  最终在插入循环**之前**快照 pre-existing 账号才通过。
-
-+ 前端选中态在 token 轮换后丢失。`React key` 与 `selectedIds` 从
-  `access_token` 改为 `account_id`（批量操作时再映射回 token）。
-
-+ `POST /api/accounts/update` 无法补 `totp_secret` / `password` / `email`
-  —— 白名单原本只有 4 个字段，漏了 TOTP 的账号只能重新上传整个对象。
++ `AGENTS.md`：项目作业规范（5 条硬规则 + 操作要点，每条附实测来源）
++ `docs/deployment.md`：补「容器安全基线」与 `config.json` 权限的
+  完整诊断（为什么只改目录权限不够，必须改文件属主）
++ `docs/account-api.md` / `docs/account-api-reference.md`：补 2FA 章节
+  （只支持 TOTP）、`account_id` 章节、详情接口字段
 
 ### 迁移
 
++ **配置字段变更**：`backup.secret_access_key`、`backup.passphrase`、
+`image_storage.webdav_password`、`ai_review.api_key` 在 GET 响应里
+  变成 `has_*` 布尔标记。回写时若不传该字段则保留旧值。
+  `testdata/golden/admin_settings.json` 已记录这处**有意偏离** Python
+  契约的说明。
+
 + 已有账号在首次加载时自动回填 `account_id`，无需人工操作。
-  实测 260 个账号全部回填成功，重启前后 ID 完全一致，唯一性 260/260。
-+ JSON 与 SQL 后端都会持久化该字段（SQL 的 `data` 列存整个对象，无需改表）。
-  SQL 首次升级走 UPDATE 而非 DELETE+INSERT，自增 id 保持不变。
-
-### 文档
-
-+ `AGENTS.md`：项目作业规范（5 条硬规则，每条附实测来源）
-+ [账号接口](docs/account-api.md) 与 [格式参考](docs/account-api-reference.md)：
-  补 2FA 章节（只支持 TOTP）、`account_id` 章节、详情接口。
-
-## 2.2.1 - 2026-10-26
-
-补 2FA 文档与接口缺口。
-
-### 修复
-
-+ **`POST /api/accounts/update` 无法补 `totp_secret` / `password` / `email`。**
-  白名单原本只有 `type` / `status` / `quota` / `proxy`。注册机常先传 token、
-  事后才发现账号开了 2FA —— 此时只能重新上传整个账号对象，既笨拙又容易
-  把已有字段覆盖成空。三个字段已加入白名单（只改传了的，没传的保持不变）。
-
-### 文档
-
-+ 新增 [2FA / TOTP 章节](./docs/account-api-reference.md#65-两步验证2fa--totp)：
-  - 支持与不支持的 2FA 类型（**只支持 TOTP**，邮箱/短信/硬件密钥不行）
-  - `totp_secret` 的格式与解析容错（大小写/空格/连字符/`=` 填充实测等价）
-  - 从哪些地方取值（认证器 App、`otpauth://` 二维码的 `secret=` 参数）
-  - 漏了 `totp_secret` 的后果：导入不报错，但 AT 失效后**无法自动恢复**
-+ 操作文档补「2FA 要点」速查表。
-
-## 2.2.0 - 2026-10-26
-
-账号接口面向注册机场景的整理。**含一处行为变更**（上传默认不再同步刷新）。
-
-### 新增
-
-+ **账号级代理真正生效。** 账号记录里的 `proxy` 此前只被显示层读取
-  （`GetProfile` → `RuntimeStatus` → `/health`），7 处上游客户端全部只用
-  `config.json` 的全局 `proxy` —— 给每个账号配不同出口 IP 在数据上成立、
-  在行为上无效。
-
-  现在优先级为：**账号 `proxy` → 全局 `proxy` → 直连**。覆盖账号信息刷新、
-  文本对话、图片生成/编辑、搜索、PPT/PSD、模型目录拉取。
-  密码重登仍走全局（登录时只有邮箱密码，无法反查账号代理）。
-
-+ `POST /api/accounts/proxy` —— 批量设置代理。支持统一代理
-  （`access_tokens` + `proxy`）与逐个映射（`proxies` 对象，空串=清空回退全局）。
-
-+ [账号接口](./docs/account-api.md) 与 [账号接口格式参考](./docs/account-api-reference.md)
-  两份文档：操作流程 + 字段级格式（完整账号对象、枚举、错误码、上限）。
-
-### 变更
-
-+ **上传账号默认不再同步刷新。** 原来 `POST /api/accounts` 会给每个账号
-  打 3 次上游请求（me → conversation/init → accounts/check，**串行**）。
-  500 个账号要串行等数分钟，上游还会看到 500 个新会话。
-
-  现在立即返回，刷新交给后台 watcher。需要上传前验证 token 的调用方传
-  `?refresh=1` 恢复旧行为。
-
-  返回体新增 `refresh_deferred`（交给后台刷新的数量）。
-
-### 修复
-
-+ 上传时同一 token 在 `tokens` 与 `accounts` 里各计一次，导致
-  `refresh_deferred` 翻倍（实测上传 1 个账号报 2）。已去重。
-+ `FetchAccountInfo` 注释写「并发查 me / conversation/init / accounts/check」，
-  实际是**串行**三次请求。已按实现修正注释。
+  JSON 与 SQL 后端都会持久化该字段；SQL 首次升级走 UPDATE 而非
+  DELETE+INSERT，自增 id 保持不变。
 
 ## 2.1.0 - 2026-10-26
 
@@ -468,86 +247,6 @@ code review 后的修复版。**含 2 个安全修复**，建议升级。
 ### 测试
 
 611 个测试，三个时区全绿；`-race` 干净。
-
-## Unreleased
-
-### 变更
-
-+ [变更] `default_upstream_model_name` 的默认值从 `gpt-5-5` 改为 `auto`。
-  该键决定 `gpt-image-2` 这个通用出图入口实际调用哪个上游模型。
-
-  改的原因：`gpt-5-5` 已不在上游 `/backend-api/models` 返回的列表里（实测）。
-  它目前仍被上游接受（搜索链路用它仍能正常返回），但作为**默认值**指向一个
-  已不对外列出的模型是脆弱的 —— 上游随时可能真正下线它，而那时所有用默认值
-  的生图请求会一起失败。`auto` 是上游始终提供的兜底项，语义也更贴合
-  「让上游自己挑」。
-
-  改动位置：
-  - `internal/config/config.go` 的回退值
-  - `internal/upstream/image_chain.go` 的空值兜底
-  - `config.example.json`（模板）
-  - 相关测试断言（`TestDefaultsMatchPythonConfig` 等 3 处）
-
-  注意：这是**有意偏离 Python 默认值**的唯一一项，已在测试注释里写明理由。
-
-  已有部署不会自动改 —— `config.json` 里若显式写着 `gpt-5-5`，它继续生效。
-  想跟随新默认值，在 Web 面板设置页改，或把它从 `config.json` 删掉。
-
-## 2.0.2 - 2026-10-25
-
-修三个部署阻断。2.0.1 的镜像与 compose 文件都无法直接按 README 跑通。
-
-### 修复
-
-+ [修复] **WARP 部署完全跑不起来**：`docker-compose.warp.yml` 的 `init-config`
-  容器原本执行 `python3 /app/scripts/init_proxy_config.py`，但 `scripts/` 已随
-  Python 后端归档到分支 `archive/python-backend-2.0`，`main` 上不再存在。
-  改为跑同一二进制的子命令 `--init-proxy-config`（见下方「新增」）。
-+ [修复] **`init-config` 的 command 被追加到 ENTRYPOINT**：Dockerfile 里是
-  `ENTRYPOINT ["/app/chatgpt2api"]`，若 `command` 再写一遍二进制路径，实际执行
-  变成 `/app/chatgpt2api /app/chatgpt2api --init-proxy-config`。
-  `flag.Parse` 遇到位置参数即停止解析，子命令不生效，程序掉进正常启动流程
-  并报 `auth-key 未设置` —— 报错完全不指向真正原因。
-+ [修复] **默认 compose「能启动但存不了数据」**：镜像以 distroless `nonroot`
-  （uid 65532）运行，而 `./data` 由 Docker 首次创建为 `root:root 755`。
-  结果是 `/health` 返回 200、读接口全部正常，但一写数据就失败：
-
-  ```
-  [account] save accounts failed: open /app/data/accounts.json.tmp: permission denied
-  ```
-
-  三个 compose 都加了 `init-data` 一次性容器，`app` 通过
-  `depends_on: service_completed_successfully` 等它把 `./data` chown 到 65532。
-+ [修复] **`docker-compose.local.yml` 无限重启**：它默认用 sqlite 后端，需要
-  **创建** `data/accounts.db`，在权限问题下直接
-  `storage: unable to open database file (14)` 并反复重启。修完权限后正常。
-  （json 后端因为空号池时延迟写入，反而「看起来能跑」，掩盖了同一个根因。）
-
-### 新增
-
-+ [新增] `chatgpt2api --init-proxy-config` 子命令：从 `CHATGPT2API_PROXY_RUNTIME_*`
-  环境变量推导 WARP/FlareSolverr 的 `proxy_runtime` 默认值，幂等合并进
-  `config.json` 后退出。**不启动服务、不需要 `auth-key`** —— 正是为了能在
-  用户填 key 之前把配置写好。幂等语义：已配置过的只补齐缺失键，不覆盖手改值；
-  `CHATGPT2API_PROXY_RUNTIME_FORCE=true` 强制覆盖。输出一行脱敏摘要
-  （URL 里的密码变 `[REDACTED]`）。13 个测试 / 37 个子测试覆盖。
-  设计取舍见 [ADR-0013](./docs/adr/0013-warp-init-config-as-go-subcommand.md)。
-
-### 文档
-
-+ [文档] README / README.en / `docs/deployment.md` 补上 `--init-proxy-config`
-  的说明与手动用法（此前三份文档零提及，而它是 WARP 部署的必需组件）。
-+ [文档] `.env.example` 补 `CHATGPT2API_CONFIG_FILE` 与
-  `CHATGPT2API_PROXY_RUNTIME_FORCE`，并说明这组变量由子命令消费、主程序不读。
-+ [文档] README 的部署对比表补上 `docker-compose.local.yml`（它一直存在且可用，
-  但此前三份文档都没提）。写明与默认 compose 的三个差异：本地 `build:` vs
-  拉 GHCR、默认端口 8000 vs 3000、默认存储 sqlite vs json。
-+ [文档] `docs/deployment.md` 的排障章节补充：`init-data` 做什么、为什么必须
-  这么做、手动处理方式、如何验证属主正确。
-+ [文档] 明确标注**未验证**的部分：完整 WARP 链路需要真实 WARP 容器与
-  `NET_ADMIN`，当前环境无法端到端跑通；postgres / git 存储后端需要外部服务。
-+ [文档] 新增 [ADR-0013](./docs/adr/0013-warp-init-config-as-go-subcommand.md)，
-  记录「为什么用 Go 子命令而不是恢复 Python 脚本」。
 
 ## 2.0.1 - 2026-10-25
 

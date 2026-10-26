@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,14 +32,31 @@ func NewJSONBackend(accountsPath, authKeysPath string) (*JSONBackend, error) {
 // 于是整个号池消失 —— 而调用方紧接着 saveAccounts 会把空池写回磁盘，
 // 全池 token 永久丢失。Python json.loads 后逐条 isinstance(dict) 判断，
 // 只跳过坏条目。
-func loadJSONList(path string) []map[string]any {
+// 返回值区分三种情况：
+//   - 文件不存在 → (空, nil)：首次启动的正常情况
+//   - 文件存在但解析失败 → (nil, error)：**必须让调用方知道**，
+//     否则它会把「读不出来」当成「池子是空的」，下一次 save 就把
+//     整个号池覆盖成空数组 —— 全池 token 永久丢失且无备份
+//   - 正常 → (items, nil)
+//
+// 单个数组元素不是对象时只跳过该条（与 Python 的 isinstance 判断一致），
+// 这不算损坏 —— 只有整体 JSON 解析失败才算。
+func loadJSONList(path string) ([]map[string]any, error) {
 	payload, err := os.ReadFile(path)
 	if err != nil {
-		return []map[string]any{}
+		if os.IsNotExist(err) {
+			return []map[string]any{}, nil
+		}
+		return nil, fmt.Errorf("读取 %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(payload)) == 0 {
+		// 空文件视作空池：某些编辑器保存空文件就是这个形态，
+		// 没有内容可丢失。
+		return []map[string]any{}, nil
 	}
 	var raw []any
 	if err := json.Unmarshal(payload, &raw); err != nil {
-		return []map[string]any{}
+		return nil, fmt.Errorf("%s 内容损坏（%d 字节），拒绝当作空池覆盖: %w", path, len(payload), err)
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, entry := range raw {
@@ -46,7 +64,7 @@ func loadJSONList(path string) []map[string]any {
 			items = append(items, item)
 		}
 	}
-	return items
+	return items, nil
 }
 
 // saveJSONValue 原子写：先写同目录临时文件 + fsync，再 rename 覆盖。
@@ -88,7 +106,7 @@ func saveJSONValue(path string, value any) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		os.Remove(tmpPath)
 		return err
 	}
@@ -100,7 +118,7 @@ func saveJSONValue(path string, value any) error {
 }
 
 func (b *JSONBackend) LoadAccounts() ([]map[string]any, error) {
-	return loadJSONList(b.accountsPath), nil
+	return loadJSONList(b.accountsPath)
 }
 
 func (b *JSONBackend) SaveAccounts(accounts []map[string]any) error {

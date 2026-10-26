@@ -77,9 +77,17 @@ func (c *Client) UploadImage(payload []byte, filename, mime string) (map[string]
 		return nil, err
 	}
 
+	// 整条上传链（files → PUT upload_url → uploaded）共用一个带超时的 ctx。
+	//
+	// 为什么不能用 context.Background()：客户端级超时是 0，接口签名又不带
+	// ctx，于是任一阶段上游挂住即为永久阻塞 —— 客户端早已断开，上传协程
+	// 仍占着号池槽位（调用点在 Acquire 之后）。
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
 	path := "/backend-api/files"
 	headers := c.headers(path, map[string]string{"Content-Type": "application/json"})
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, BaseURL+path, strings.NewReader(string(requestBody)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, BaseURL+path, strings.NewReader(string(requestBody)))
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +113,7 @@ func (c *Client) UploadImage(payload []byte, filename, mime string) (map[string]
 		return nil, fmt.Errorf("file create: missing file_id or upload_url")
 	}
 
-	putReq, err := http.NewRequestWithContext(context.Background(), http.MethodPut, uploadURL, strings.NewReader(string(payload)))
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, strings.NewReader(string(payload)))
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +135,7 @@ func (c *Client) UploadImage(payload []byte, filename, mime string) (map[string]
 	// 上传完成后要标记为已使用，否则上游会把它当临时文件清掉。
 	finishPath := "/backend-api/files/" + fileID + "/uploaded"
 	finishBody := []byte(`{}`)
-	finishReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, BaseURL+finishPath, strings.NewReader(string(finishBody)))
+	finishReq, err := http.NewRequestWithContext(ctx, http.MethodPost, BaseURL+finishPath, strings.NewReader(string(finishBody)))
 	if err == nil {
 		finishReq.Header = c.headers(finishPath, map[string]string{"Content-Type": "application/json"})
 		if finishResp, finishErr := c.http.Do(finishReq); finishErr == nil {

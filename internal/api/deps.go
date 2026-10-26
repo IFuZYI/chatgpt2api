@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -178,4 +179,28 @@ func writeErr(c *gin.Context, err *HTTPError) {
 func writeAdminErr(c *gin.Context, err *HTTPError) {
 	WriteErrorEnvelope(c, err, EnvelopeAdmin)
 	c.Abort()
+}
+
+// goSafe 在后台 goroutine 里跑 fn，panic 时 recover 并记日志。
+//
+// 为什么需要：gin.Recovery() 只兜 handler goroutine。api 层有多处
+// `go func()`（刷新、重登、CPA 导入、sub2api 导入、图片任务）在 handler
+// 返回后继续跑 —— 其中任何一个 panic 都会终止整个进程，所有在途任务
+// 与刷新一起丢。service 层的 ImageTaskService.runTask 已因同样理由
+// 自己加了 recover 并写了注释，api 层这几处没跟上。
+//
+// logs 为 nil 时只 recover 不记录（测试用）。
+func goSafe(logs *service.LogService, name string, fn func()) {
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if logs != nil {
+					logs.Add(service.LogTypeAccount, name+" 后台任务 panic 已拦截", map[string]any{
+						"panic": fmt.Sprintf("%v", recovered),
+					})
+				}
+			}
+		}()
+		fn()
+	}()
 }

@@ -28,20 +28,45 @@ type ImageResultsProps = {
   formatConversationTime: (value: string) => string;
 };
 
-// Blob URL 缓存：避免 base64 超长字符串在 DOM 中，改用短小的 blob: URL
+// Blob URL 缓存：避免 base64 超长字符串在 DOM 中，改用短小的 blob: URL。
+//
+// 必须有上限并 revoke：早期实现是**无界** Map，键是整段多 MB 的 base64，
+// 且 URL.createObjectURL 产生的 blob 从不释放 —— 内存随浏览会话单调增长，
+// 浏览几十张图后标签页明显变卡。这里改成 LRU（最多 32 条），
+// 淘汰时 revoke，让浏览器回收底层 Blob。
+const B64_BLOB_CACHE_LIMIT = 32;
 const b64BlobUrlCache = new Map<string, string>();
+
+function evictOldestBlobUrl() {
+  const oldest = b64BlobUrlCache.keys().next();
+  if (oldest.done) {
+    return;
+  }
+  const url = b64BlobUrlCache.get(oldest.value);
+  b64BlobUrlCache.delete(oldest.value);
+  if (url) {
+    URL.revokeObjectURL(url);
+  }
+}
 
 function getStoredImageSrc(image: StoredImage) {
   if (image.b64_json) {
     let url = b64BlobUrlCache.get(image.b64_json);
-    if (!url) {
-      const binary = atob(image.b64_json);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: "image/png" });
-      url = URL.createObjectURL(blob);
+    if (url) {
+      // LRU：命中后移到队尾
+      b64BlobUrlCache.delete(image.b64_json);
       b64BlobUrlCache.set(image.b64_json, url);
+      return url;
     }
+    const binary = atob(image.b64_json);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "image/png" });
+    url = URL.createObjectURL(blob);
+    while (b64BlobUrlCache.size >= B64_BLOB_CACHE_LIMIT) {
+      evictOldestBlobUrl();
+    }
+    b64BlobUrlCache.set(image.b64_json, url);
     return url;
   }
   return image.url || "";
@@ -481,10 +506,18 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// 同样必须有上限：键是整段 base64（多 MB），无界 Map 会随浏览单调增长。
+// 32 条足够覆盖当前视图里的图片。
+const BASE64_SIZE_CACHE_LIMIT = 32;
 const base64SizeCache = new Map<string, string>();
 function formatBase64ImageSize(base64: string) {
   let cached = base64SizeCache.get(base64);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    // LRU：命中后移到队尾
+    base64SizeCache.delete(base64);
+    base64SizeCache.set(base64, cached);
+    return cached;
+  }
   const normalized = base64.replace(/\s/g, "");
   const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
   const bytes = Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
@@ -495,6 +528,11 @@ function formatBase64ImageSize(base64: string) {
     cached = `${(bytes / 1024).toFixed(1)} KB`;
   } else {
     cached = `${bytes} B`;
+  }
+  while (base64SizeCache.size >= BASE64_SIZE_CACHE_LIMIT) {
+    const oldest = base64SizeCache.keys().next();
+    if (oldest.done) break;
+    base64SizeCache.delete(oldest.value);
   }
   base64SizeCache.set(base64, cached);
   return cached;

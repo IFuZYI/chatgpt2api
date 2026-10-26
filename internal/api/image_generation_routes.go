@@ -49,8 +49,7 @@ func (d *Deps) removeConversationLater(accessToken, conversationID string, succe
 	if conversationID == "" || d.ImageUpstream == nil || accessToken == "" {
 		return
 	}
-
-	go func() {
+	goSafe(d.Logs, "图片上游", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		upstream, closeFn, err := d.ImageUpstream(ctx, accessToken)
@@ -59,7 +58,7 @@ func (d *Deps) removeConversationLater(accessToken, conversationID string, succe
 		}
 		defer closeFn()
 		_ = upstream.DeleteConversation(ctx, conversationID)
-	}()
+	})
 }
 
 // registerImageGeneration 挂载 /v1/images/generations 与 /v1/images/edits。
@@ -242,14 +241,14 @@ func (d *Deps) serveImageRequest(c *gin.Context, request protocol.ImageRequest, 
 		// 生成结束后把「结果 chunk」也灌进同一条 channel，再关闭。
 		// 顺序必须是：进度 → 结果 → [DONE]。先关 channel 再补写结果
 		// 会把 [DONE] 夹在中间，客户端解析到 [DONE] 就停了。
-		go func() {
+		goSafe(d.Logs, "图片生成", func() {
 			defer close(done)
 			result, runErr = pool.Run(c.Request.Context(), request)
 			for _, output := range result.Outputs {
 				progressChunks <- output.ToChunk()
 			}
 			close(progressChunks)
-		}()
+		})
 
 		// writeSSEFromChannel 只写 chunk，不再自己写 [DONE] —— 顺序必须由这里控制。
 		writeSSEFromChannel(c, progressChunks)

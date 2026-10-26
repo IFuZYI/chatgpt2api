@@ -320,10 +320,10 @@ func (d *Deps) RegisterImageRoutes(r *gin.Engine) {
 		taskID := c.Param("task_id")
 		conversationID := stringValueOf(task["conversation_id"])
 		if release, ok := d.Tasks.TrackBackground(); ok {
-			go func() {
+			goSafe(d.Logs, "恢复轮询", func() {
 				defer release()
 				d.runResumePoll(ownerID, taskID, conversationID, extraTimeout)
-			}()
+			})
 		}
 		c.JSON(http.StatusOK, updated)
 	})

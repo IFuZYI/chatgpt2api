@@ -214,9 +214,12 @@ func (s *ImageTaskService) TrackBackground() (release func(), ok bool) {
 }
 
 // SetRunners 注入生成/编辑执行体。
+// SetRunners 注入执行体。必须加锁：runTask 会在 s.mu 保护下读这两个字段。
 func (s *ImageTaskService) SetRunners(generate, edit TaskRunner) {
+	s.mu.Lock()
 	s.generator = generate
 	s.editor = edit
+	s.mu.Unlock()
 }
 
 func (s *ImageTaskService) loadLocked() map[string]map[string]any {
@@ -555,12 +558,13 @@ func (s *ImageTaskService) runTask(key string, taskCtx TaskContext, release func
 	task["updated_at"] = nowLocal()
 	task["updated_ts"] = float64(time.Now().UnixNano()) / 1e9
 	s.saveLocked()
-	s.mu.Unlock()
-
+	// 在 Unlock 之前取执行体：SetRunners 可能在另一 goroutine 里写
+	// s.generator/s.editor，锁外读是数据竞争。
 	runner := s.generator
 	if taskCtx.Mode == "edit" {
 		runner = s.editor
 	}
+	s.mu.Unlock()
 	if runner == nil {
 		s.finishTask(key, TaskResult{Error: "image task runner is not configured"}, startedAt)
 		return

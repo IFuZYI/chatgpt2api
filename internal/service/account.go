@@ -69,6 +69,10 @@ type AccountService struct {
 	// 只有它变化才自增 version（使用统计变化不算）。
 	structuralSig string
 
+	// loadFailed 表示首次加载账号池时出错（文件损坏/不可读）。
+	// 为 true 时 saveAccountsLocked 拒绝写入 —— 防止用空池覆盖磁盘数据。
+	loadFailed bool
+
 	// slots 每账号一个信号量；惰性创建，删除账号时清理。
 	slotsMu sync.Mutex
 	slots   map[string]chan struct{}
@@ -120,8 +124,11 @@ const (
 // 前端 `if (p.done)` 于是在第一个账号刷完时就判定「已完成」，
 // 停止轮询并报「刷新结果为空」—— 账号页的刷新/恢复功能因此完全不可用。
 type Progress struct {
-	mu        sync.Mutex
-	ID        string
+	mu sync.Mutex
+	ID string
+	// UpdatedAt 用于过期清理。必须记录：仅靠客户端轮询删除会漏
+	// （客户端拿完结果就关页面、或请求中途 panic 没走 Finish 路径）。
+	UpdatedAt time.Time
 	Total     int
 	Processed int
 	Done      bool
@@ -206,8 +213,20 @@ func NewAccountService(backend storage.Backend, cfg *config.Store, logs *LogServ
 func (s *AccountService) loadAccounts() map[string]Account {
 	raw, err := s.storage.LoadAccounts()
 	if err != nil {
+		// 关键：不能静默当成空池。
+		//
+		// 若这里返回空 map 并继续，下一次 saveAccountsLocked() 会把
+		// 空数组写回 accounts.json —— 一个损坏/被占用的文件就让整个号池
+		// 永久消失。记录 loadFailed，让保存路径拒绝覆盖。
+		s.loadFailed = true
+		if s.logs != nil {
+			s.logs.Add(LogTypeAccount, "读取账号池失败，已暂停写入以避免覆盖", map[string]any{
+				"error": err.Error(),
+			})
+		}
 		return map[string]Account{}
 	}
+	s.loadFailed = false
 	out := make(map[string]Account, len(raw))
 	// 记录哪些账号在磁盘上**已经**有 account_id —— 消歧时要优先保留它们，
 	// 因为它们可能已被外部系统引用。
@@ -236,6 +255,14 @@ func (s *AccountService) loadAccounts() map[string]Account {
 // 这里保留接口的成功语义（避免一次写失败把整轮请求打挂），
 // 但把错误写进日志，运维能查到。
 func (s *AccountService) saveAccountsLocked() {
+	// 加载失败时拒绝写入：否则「读不出来」会被当成「池子是空的」，
+	// 把空数组覆盖到磁盘上，全池 token 永久丢失。
+	if s.loadFailed {
+		if s.logs != nil {
+			s.logs.Add(LogTypeAccount, "账号池加载失败过，已跳过本次保存（避免用空池覆盖磁盘数据）", nil)
+		}
+		return
+	}
 	items := make([]map[string]any, 0, len(s.accounts))
 	for _, account := range s.accounts {
 		items = append(items, account)
@@ -662,10 +689,16 @@ func (s *AccountService) GetAccount(token string) Account {
 
 // Stats 复刻 Python 的 get_stats()，字段名是 /health 的契约。
 func (s *AccountService) Stats() map[string]any {
+	// 必须在锁内 copyMap。
+	//
+	// 回归点：早期写法收集的是号池 map 里的**活对象**，解锁后再读
+	// status/quota/success 等字段 —— 而 disambiguateAccountIDs 在写锁下
+	// 就地写同一个 map。锁外读 + 并发写 = Go 的 fatal error:
+	// concurrent map read and map write（不可 recover）。/health 会走到这里。
 	s.mu.RLock()
 	items := make([]Account, 0, len(s.accounts))
 	for _, account := range s.accounts {
-		items = append(items, account)
+		items = append(items, copyMap(account))
 	}
 	s.mu.RUnlock()
 
@@ -791,13 +824,19 @@ func (s *AccountService) ProxyFor(accessToken string) string {
 		return global
 	}
 
+	// 必须在锁内取出 proxy 字符串。
+	//
+	// 回归点：account 是号池 map 里的**活对象**（不是副本），而
+	// disambiguateAccountIDs 会在写锁下就地写同一个 map。锁外读活 map
+	// 与并发写相遇是 Go 的 fatal error: concurrent map read and map write
+	// —— 不可 recover，直接终止进程。ProxyFor 在每条上游请求上都会被调用。
 	s.mu.RLock()
-	account, ok := s.accounts[s.resolveTokenLocked(accessToken)]
-	s.mu.RUnlock()
-	if !ok {
-		return global
+	own := ""
+	if account, ok := s.accounts[s.resolveTokenLocked(accessToken)]; ok {
+		own = strings.TrimSpace(stringValue(account["proxy"]))
 	}
-	if own := strings.TrimSpace(stringValue(account["proxy"])); own != "" {
+	s.mu.RUnlock()
+	if own != "" {
 		return own
 	}
 	return global

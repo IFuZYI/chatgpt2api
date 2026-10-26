@@ -656,6 +656,7 @@ docker compose up -d --force-recreate <指定旧镜像 tag>
 或源码方式回到旧 tag 重新编译：
 
 ```bash
+# 换成你要回滚到的 tag
 git fetch --tags && git checkout v2.0.0 && go build -o chatgpt2api ./cmd/server
 ```
 

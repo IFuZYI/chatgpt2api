@@ -60,9 +60,13 @@ func (d *Deps) registerBackupRoutes(r *gin.Engine) {
 		// 只判空字符串会把占位配置当成真配置去连 R2（实测会拿回 HTML 错误页）。
 		if !settings.Enabled || settings.Bucket == "" || settings.AccessKeyID == "" {
 			c.JSON(http.StatusOK, gin.H{
-				"items":    []any{},
-				"state":    d.backupState(),
-				"settings": d.Config.BackupSettings(),
+				"items": []any{},
+				"state": d.backupState(),
+				// 脱敏：BackupSettings 含 secret_access_key 与 passphrase。
+				// 这是被前端轮询的列表接口，泄漏面比「点开查看」更大。
+				"settings": maskConfigSecrets(map[string]any{
+					"backup": d.Config.BackupSettings(),
+				})["backup"],
 			})
 			return
 		}

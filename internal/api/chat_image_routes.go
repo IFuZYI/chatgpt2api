@@ -128,14 +128,14 @@ func (d *Deps) streamImageChat(c *gin.Context, request protocol.ImageRequest, ou
 		return generator, release, err
 	}
 
-	go func() {
+	goSafe(d.Logs, "对话图片", func() {
 		result, err := pool.Run(c.Request.Context(), request)
 		runErr = err
 		for _, output := range result.Outputs {
 			outputs <- output
 		}
 		close(outputs)
-	}()
+	})
 
 	stream := protocol.NewChatImageChunkStream(request.Model)
 	started := false

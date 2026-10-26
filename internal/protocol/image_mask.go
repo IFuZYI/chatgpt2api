@@ -170,18 +170,31 @@ func CompositeMask(images, masks [][3]string) ([][3]string, error) {
 	if len(masks) == 0 {
 		return images, nil
 	}
-	// 先过并发闸门再解码：解码是唯一的大额分配点，闸门必须在它之前。
-	release := acquireComposite()
-	defer release()
+	// 闸门必须**每张图**取一次，不能每个请求取一次。
+	//
+	// 为什么：循环内每张图各自最多 20M 像素（≈271 MiB 峰值），而 images
+	// 数量在 API 层没有上限（16 MiB body 足以塞进多张「小文件、大 IHDR」
+	// 的 PNG）。若闸门在循环外只取一次，闸门=1 时单请求仍可产生
+	// N×271 MiB —— 「闸门与预算联动」的假设不成立。
+	//
+	// 取在解码之前：解码是唯一的大额分配点。
 	result := make([][3]string, 0, len(images))
 	for index, imageTuple := range images {
-		// mask 索引：有第 i 个用第 i 个，否则回退到最后一个。
-		// Python: masks[i][0] if i < len(masks) else masks[-1][0]
-		maskIndex := index
-		if index >= len(masks) {
-			maskIndex = len(masks) - 1
-		}
-		composited, err := compositeOneMask(imageTuple, masks[maskIndex])
+		// 用闭包包住单张图，确保 release 在**所有**路径上执行 ——
+		// 早期写法是 `release := acquireComposite()` 后直接调用，
+		// 而错误分支 `return nil, err` 会跳过 release，泄漏一个许可；
+		// 泄漏 N 次后闸门永久占满，后续所有合成请求永久阻塞。
+		composited, err := func() ([3]string, error) {
+			release := acquireComposite()
+			defer release()
+			// mask 索引：有第 i 个用第 i 个，否则回退到最后一个。
+			// Python: masks[i][0] if i < len(masks) else masks[-1][0]
+			maskIndex := index
+			if index >= len(masks) {
+				maskIndex = len(masks) - 1
+			}
+			return compositeOneMask(imageTuple, masks[maskIndex])
+		}()
 		if err != nil {
 			return nil, err
 		}

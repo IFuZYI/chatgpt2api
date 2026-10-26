@@ -168,3 +168,77 @@ func TestRefreshProgressDoesNotLeakCredentials(t *testing.T) {
 		}
 	}
 }
+
+// 刷新「所有 token 都在飞」的提前返回分支不能泄漏凭据。
+//
+// 回归点：RefreshAccounts 在 len(unique)==0 时构造的 result 里带
+// "items": ListAccounts()（全池原始记录含 password/totp_secret/
+// refresh_token），而 FinishRefreshProgress 把它存进 Progress.Result，
+// GET /api/accounts/refresh/progress/:id 原样返回。
+// 同函数末尾的非空分支已修过，这个 early-return 漏了。
+//
+// 用可阻塞的 verifier 占住第一次刷新，第二次同 token 即 unique 为空。
+func TestRefreshWithAllTokensInFlightDoesNotLeak(t *testing.T) {
+	deps := newTestDeps(t)
+	router := api.NewRouter(deps)
+
+	seed := `{"accounts":[{"access_token":"at-inflight","email":"i@x.test",
+		"password":"SECRET-PW","totp_secret":"JBSWY3DPEHPK3PXP","refresh_token":"SECRET-RT"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/accounts", bytes.NewBufferString(seed))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("导入失败: %d", w.Code)
+	}
+
+	// 第一次刷新：后台跑，会阻塞在上游（测试环境无网，天然慢）。
+	req = httptest.NewRequest(http.MethodPost, "/api/accounts/refresh",
+		bytes.NewBufferString(`{"access_tokens":["at-inflight"]}`))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	var first map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &first)
+
+	// 立刻再刷同一个 token —— 极可能仍处于在飞状态
+	req = httptest.NewRequest(http.MethodPost, "/api/accounts/refresh",
+		bytes.NewBufferString(`{"access_tokens":["at-inflight"]}`))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("第二次刷新失败: %d", w.Code)
+	}
+	var second map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &second)
+
+	// 两个进度都要检查
+	for _, payload := range []map[string]any{first, second} {
+		progressID, _ := payload["progress_id"].(string)
+		if progressID == "" {
+			continue
+		}
+		for i := 0; i < 30; i++ {
+			req = httptest.NewRequest(http.MethodGet, "/api/accounts/refresh/progress/"+progressID, nil)
+			req.Header.Set("Authorization", "Bearer test")
+			w = httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			for _, secret := range []string{"SECRET-PW", "JBSWY3DPEHPK3PXP", "SECRET-RT"} {
+				if bytes.Contains(w.Body.Bytes(), []byte(secret)) {
+					t.Errorf("刷新进度泄漏 %q —— 提前返回分支未脱敏", secret)
+				}
+			}
+			var body map[string]any
+			if json.Unmarshal(w.Body.Bytes(), &body) == nil {
+				if done, _ := body["done"].(bool); done {
+					break
+				}
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+}

@@ -216,7 +216,7 @@ func (d *Deps) imageResponseOutputs(ctx context.Context, request protocol.ImageR
 		},
 	}
 
-	go func() {
+	goSafe(d.Logs, "响应图片", func() {
 		defer close(run.outputs)
 		defer close(run.failures)
 
@@ -235,7 +235,7 @@ func (d *Deps) imageResponseOutputs(ctx context.Context, request protocol.ImageR
 				return
 			}
 		}
-	}()
+	})
 
 	return run
 }

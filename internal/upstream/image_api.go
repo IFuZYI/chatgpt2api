@@ -151,6 +151,11 @@ func (c *Client) attachmentDownloadURL(ctx context.Context, conversationID, atta
 
 // DownloadImage 下载图片字节。去重在 protocol 层做，这里只负责取。
 func (c *Client) DownloadImage(ctx context.Context, url string) ([]byte, error) {
+	// 必须自带 deadline：上游可能在 body 中途停住（发完 header 不再发数据），
+	// io.ReadAll 会永久阻塞。这个调用发生在 emitResult 内、仍在账号槽位
+	// 持有期，一个卡住的下载 = 一个永久泄漏的槽位。
+	ctx, cancel := applyRequestTimeout(ctx, 120*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -335,6 +340,12 @@ func maxIntValue(a, b int) int {
 
 // doGet 是带指纹的 GET。
 func (c *Client) doGet(ctx context.Context, path string, timeout time.Duration) ([]byte, int, error) {
+	// timeout 必须真正生效：客户端级超时已设为 0（见 NewClient），
+	// 若这里也不加 deadline，上游挂住时这个请求永不返回 ——
+	// generateWithRetry 的 defer release() 不执行，账号槽位永久 inflight。
+	// 与 doFull / doWithRawHeaders 的写法保持一致。
+	ctx, cancel := applyRequestTimeout(ctx, timeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, BaseURL+path, nil)
 	if err != nil {
 		return nil, 0, err
@@ -512,6 +523,9 @@ func nilIfEmptyValue(value string) any {
 
 // doPostJSON 发一个带指纹的 JSON POST。
 func (c *Client) doPostJSON(ctx context.Context, path string, payload []byte, timeout time.Duration) ([]byte, int, error) {
+	// 同 doGet：timeout 必须转成 ctx deadline。
+	ctx, cancel := applyRequestTimeout(ctx, timeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, BaseURL+path, newBytesReader(payload))
 	if err != nil {
 		return nil, 0, err
@@ -599,4 +613,19 @@ func (c *Client) ListModels(ctx context.Context) ([]map[string]any, error) {
 // 还是「限流/网络抖动」，后者不该触发删号。
 func StatusCodeOf(err error) int {
 	return protocol.StatusCodeOf(err)
+}
+
+// applyRequestTimeout 把 timeout 转成 ctx deadline；timeout<=0 时不加。
+//
+// 为什么单独抽出来：客户端级超时被设为 0（见 NewClient），所有超时都靠
+// 每次请求的 ctx。抽成纯函数后可以用单元测试精确断言「timeout 真的
+// 变成了 deadline」——tls_client.HttpClient 接口无法注入 transport，
+// 直接测 doGet 拿不到这个证据。
+//
+// 若父 ctx 已有更早的 deadline，context.WithTimeout 会保留它（更早者胜）。
+func applyRequestTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return ctx, func() {}
 }

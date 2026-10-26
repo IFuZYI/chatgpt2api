@@ -176,7 +176,7 @@ func (d *Deps) startCPAImport(pool map[string]any, names []string) map[string]an
 	if !importOK {
 		return snapshot
 	}
-	go func() {
+	goSafe(d.Logs, "导入账号", func() {
 		defer finishImport()
 		added, failed, processed := 0, 0, 0
 		errorsList := make([]any, 0)
@@ -234,7 +234,7 @@ func (d *Deps) startCPAImport(pool map[string]any, names []string) map[string]an
 			"failed":     failed,
 			"errors":     errorsList,
 		})
-	}()
+	})
 
 	return snapshot
 }
@@ -419,7 +419,7 @@ func (d *Deps) startSub2APIImport(server map[string]any, accountIDs []string) ma
 	if !importOK {
 		return snapshot
 	}
-	go func() {
+	goSafe(d.Logs, "sub2api 导入", func() {
 		defer finishImport()
 		ctx := importCtx
 		tokens, failures, fetchErr := d.Sub2API.FetchAccessTokens(ctx, server, accountIDs)
@@ -455,7 +455,7 @@ func (d *Deps) startSub2APIImport(server map[string]any, accountIDs []string) ma
 			"failed":     len(errorsList),
 			"errors":     errorsList,
 		})
-	}()
+	})
 
 	return snapshot
 }

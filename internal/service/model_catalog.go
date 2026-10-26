@@ -112,7 +112,19 @@ func modelMap(models []map[string]any) map[string]map[string]any {
 
 // refresh 重新拉取上游目录。任何一路失败都保留旧值（与 Python 一致）。
 func (c *ModelCatalog) refresh(ctx context.Context, groups map[string][]string, signature string, version uint64) {
+	// 先在锁内快照，再解锁做网络请求。
+	//
+	// 回归点：ensure() 没有 single-flight，两个并发请求同时过期会同时进入
+	// refresh；一个在 c.mu.Lock() 下写 c.anonymous/c.byAccountType，另一个
+	// 在锁外读同名字段 —— 字段数据竞争（map 本身也是共享的）。
+	c.mu.RLock()
 	anonymous := c.anonymous
+	previousByType := make(map[string]map[string]map[string]any, len(c.byAccountType))
+	for accountType, models := range c.byAccountType {
+		previousByType[accountType] = models
+	}
+	c.mu.RUnlock()
+
 	if c.fetch != nil {
 		if models, err := c.fetch(ctx, ""); err == nil {
 			anonymous = modelMap(models)
@@ -127,7 +139,7 @@ func (c *ModelCatalog) refresh(ctx context.Context, groups map[string][]string, 
 			continue
 		}
 		// 失败时沿用旧值，避免目录在抖动时忽大忽小。
-		if previous, ok := c.byAccountType[accountType]; ok {
+		if previous, ok := previousByType[accountType]; ok {
 			byAccountType[accountType] = previous
 		}
 	}
