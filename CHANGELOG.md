@@ -1,5 +1,69 @@
 # Changelog
 
+## 2.3.1 - 2026-10-26
+
+code review 后的修复版。**含 2 个安全修复**，建议升级。
+
+### 安全
+
++ **[高危] 刷新进度接口泄漏全池凭据。**
+  `GET /api/accounts/refresh/progress/:id` 返回的 `result` 里带
+  `"items": ListAccounts()` —— 刷新**一个**账号会泄漏**全池**的
+  `password` / `totp_secret` / `refresh_token` 原文，**包括这次根本没被
+  刷新的账号**（实测确认）。
+
+  修复：进度结果不再包含 `items`（进度契约只需计数与错误）。
+  重登进度同样处理。
+
++ **[中危] `POST /api/accounts/oauth/finish` 未脱敏。**
+  `AddAccountItems` 返回号池原始记录，该端点直接透传。
+
+  修复：抽出 `maskItems` helper（同时处理 `[]map[string]any` 与 `[]any`
+  两种形态），四个端点统一使用 —— 之前每个端点各写一遍类型断言，
+  正是这样漏掉了两个。
+
+### 修复
+
++ **`config.json: permission denied` —— Docker 设置页无法保存。**
+  `config.json` 以 `root:root 644` 单文件 bind mount 挂进容器，而容器以
+  uid 65532 运行。两个写入点都失败：创建 `.tmp` 失败（`/app` 目录不可写）
+  + 回退就地写失败（文件属主不是 65532）。
+
+  修复两层：
+  1. compose 的 `init-data` 现在也 chown `config.json`（单文件挂载即可，
+     实测可行且会改到宿主文件）
+  2. 错误信息带上可操作指引（哪个文件、宿主侧 `chown` 命令、替代方案），
+     而不是只报 `permission denied`
+
+  实测：修复前 `400 permission denied`，修复后 `200` 且配置真的落盘。
+
++ **设置页默认模型文案仍写 `gpt-5-5`。**
+  后端回退值早已改为 `auto`（`gpt-5-5` 已从上游模型列表消失），但前端
+  placeholder、说明文案、以及 store 的两处回退值仍是旧值。后果：用户以为
+  当前值就是 `gpt-5-5`，保存时把它写回 `config.json` 覆盖掉 `auto`。
+
+  修复：抽出 `defaultUpstreamModelName()`，四处统一到 `auto`。
+
++ **前端全选是空操作、每次刷新列表清空选中。**
+  2.3.0 把行 key 与表头判定改成 `accountRowKey`，但 `toggleSelectAll` 与
+  6 处 reload 剪枝仍按 `access_token`。修复：抽出 `selectAllKeys` /
+  `pruneSelection`，7 处全部迁移。
+
++ **磁盘上已重复的 `account_id` 修不掉。**
+  `disambiguateAccountIDs` 第一轮对重复 id 的第二个账号没占位，第二轮又
+  误判「已占位」而跳过 —— 永远不重新派生。修复：用 keeper 映射记录谁真的
+  占位成功。
+
++ **`Detail()` 在锁释放后读号池活对象**（真实数据竞争）。
+  改为读副本。
+
++ 详情接口加 `Cache-Control: no-store`（含凭据原文）。
+
+### 文档
+
++ 修正两处漂移：样例标注（详情给原文、列表给脱敏）、400 错误信息措辞、
+  `account-api.md` 重复的编号。
+
 ## 2.3.0 - 2026-10-26
 
 账号稳定标识 + 详情弹窗。**含 1 个安全修复**，建议升级。
