@@ -292,6 +292,7 @@ service starts.
 | `CHATGPT2API_BASE_DIR` | Data root | binary's directory |
 | `CHATGPT2API_DEBUG` | `1` emits `[image]` diagnostics | off |
 | `CHATGPT2API_WEB_DIST` | Frontend static dir (dev, overrides embed) | empty |
+| `CHATGPT2API_MAX_IMAGE_PIXELS` | Max decoded pixels per image (OOM guard) | `20000000` |
 | `STORAGE_BACKEND` | `json` / `sqlite` / `postgres` / `git` | `json` |
 | `DATABASE_URL` | File path for sqlite, DSN for postgres | empty |
 
@@ -430,6 +431,57 @@ image is remote while local disk silently fills up. See
 [ADR-0012](./docs/adr/0012-both-mode-async-upload.md).
 
 ---
+
+## Security
+
+### Request body limits
+
+Inbound bodies have hard caps; exceeding them returns `413`:
+
+| Endpoint class | Limit |
+|:--|--:|
+| Control-plane JSON (settings, accounts, logs, …) | 8 MiB |
+| base64 image endpoints (`/v1/images/*`, `/v1/chat/completions`, `/v1/responses`) | 16 MiB |
+
+The control-plane cap is 8 MiB rather than smaller because `POST /api/accounts`
+imports a whole pool as JSON — a measured 260-account export is already 880 KB
+(~3.5 KB/account), so 1 MiB would hold only 302 accounts and a 300+ pool could
+not be re-imported. 8 MiB holds about 2400.
+
+Without a cap, `/v1/images/edits` decodes images for mask compositing **before**
+the account-pool quota and concurrency admission gates — measured: a 1.5 MB body
+cost 459 MB of RSS and 52 seconds of CPU, and a few concurrent requests suffice
+to OOM the instance.
+
+### Image decode pixel budget
+
+Decoded pixels per image default to **20 million** (about 1.2× a 4096×4096 image).
+
+Why this is not aligned with Pillow: Pillow's hard-error threshold is 179M pixels,
+but that is the **library's** threshold, not the **process's** budget — 179M pixels
+× 4 bytes = 683 MB of NRGBA, while the compositing path holds the decoded image,
+the NRGBA copy, the alpha channel and the PNG encode buffer at once.
+
+Raise it on large-memory deployments:
+
+```bash
+CHATGPT2API_MAX_IMAGE_PIXELS=50000000 ./chatgpt2api --addr :8080
+```
+
+### Deployment notes
+
++ **Set `CHATGPT2API_AUTH_KEY`** — the server refuses to start without it. Generate
+  one with `openssl rand -hex 32`.
++ **Never expose `data/` publicly.** `accounts.json` holds the whole pool's
+  credentials and `config.json` holds the egress proxy password. The container runs
+  as uid 65532; restrict the host directory to that uid.
++ **Rotate the previously leaked proxy credential.** `config.example.json` once
+  carried a real SOCKS5 credential (commit `1656ba3`). It was cleared in `e3be6e5`
+  and pushed, but **the value is in git history** — fixing HEAD is not fixing the
+  leak, and anyone who cloned has a copy. Rotation is the only reliable remedy.
++ **Backups are unencrypted by default.** Whatever credentials you tick in
+  `include` travel with the archive to the configured object store — make sure that
+  destination is trusted.
 
 ## API
 

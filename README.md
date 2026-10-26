@@ -283,6 +283,7 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
 | `CHATGPT2API_BASE_DIR` | 数据根目录 | 二进制所在目录 |
 | `CHATGPT2API_DEBUG` | 置 `1` 输出 `[image]` 诊断日志 | 关 |
 | `CHATGPT2API_WEB_DIST` | 前端静态目录（开发用，覆盖 embed） | 空 |
+| `CHATGPT2API_MAX_IMAGE_PIXELS` | 单张图片解码像素上限（防 OOM） | `20000000` |
 | `STORAGE_BACKEND` | `json` / `sqlite` / `postgres` / `git` | `json` |
 | `DATABASE_URL` | sqlite 用文件路径，postgres 用连接串 | 空 |
 
@@ -413,6 +414,49 @@ environment:
 [ADR-0012](./docs/adr/0012-both-mode-async-upload.md)。
 
 ---
+
+## 安全
+
+### 请求体上限
+
+入站请求体有硬上限，超限返回 `413`：
+
+| 端点类别 | 上限 |
+|:--|--:|
+| 控制面 JSON（设置、账号、日志等） | 8 MiB |
+| base64 图片端点（`/v1/images/*`、`/v1/chat/completions`、`/v1/responses`） | 16 MiB |
+
+控制面取 8 MiB 而不是更小：`POST /api/accounts` 导入的是整个号池的 JSON，
+实测 260 个账号的导出文件已有 880 KB（约 3.5 KB/账号）—— 1 MiB 只能装
+302 个账号，一个 300 号以上的池子导出后**无法再导入**。8 MiB 可容纳约 2400 个。
+
+没有上限时，`/v1/images/edits` 的 mask 合成会在**号池配额与并发槽位准入之前**
+解码图片 —— 实测 1.5 MB 请求体消耗 459 MB 内存与 52 秒 CPU，几个并发即可 OOM。
+
+### 图片解码像素预算
+
+单张图片解码后的像素数上限默认 **2000 万**（约 4096×4096 的 1.2 倍）。
+
+为什么不是对齐 Pillow：Pillow 的硬错误阈值是 1.79 亿像素，但那是**库**的阈值，
+不是**进程能承受**的预算 —— 1.79 亿像素 × 4 字节 = 683 MB 的 NRGBA 缓冲，
+而合成路径同时持有原始图、NRGBA、alpha 通道与 PNG 编码缓冲。
+
+大内存部署可放宽：
+
+```bash
+CHATGPT2API_MAX_IMAGE_PIXELS=50000000 ./chatgpt2api --addr :8080
+```
+
+### 部署建议
+
++ **必须设 `CHATGPT2API_AUTH_KEY`** —— 留空拒绝启动。用 `openssl rand -hex 32` 生成。
++ **不要把 `data/` 暴露到公网**。`accounts.json` 含号池全部凭据，`config.json`
+  含出口代理密码。容器内以 uid 65532 运行，建议宿主目录也只给该 uid 可读。
++ **轮换曾泄漏的代理凭据**。`config.example.json` 在 `1656ba3` 曾携带真实 SOCKS5
+  凭据，虽已在 `e3be6e5` 清空并推送，但**该值已进入 git 历史** —— 修复 HEAD
+  不等于修复泄漏，任何 clone 过的人手里都有一份。唯一可靠的处置是轮换密码。
++ **备份默认不加密**。`include` 里勾选的凭据会随归档上传到配置的对象存储，
+  确认目标存储可信。
 
 ## API
 

@@ -235,13 +235,18 @@ func (d *Deps) proxyRuntimeStatus() map[string]any {
 // 单实例推到 461 MB；几个并发即 OOM。
 //
 // 取值依据：
-//   - 控制面 JSON（设置、账号、日志）实际最大也就几百 KB，
-//     1 MiB 留足余量（导出一个号池的 JSON 也在其内）。
-//   - 图片编辑走 base64，4 MB 请求体 ≈ 3 MB 原始图，足够常规编辑；
-//     真正的边界是 maxImagePixels（解码后像素数），不是这里的字节数。
+//
+//   - 控制面 8 MiB。不能取更小：`POST /api/accounts` 导入的是整个号池的
+//     JSON，实测 260 个账号的导出文件已有 880 KB（约 3.5 KB/账号）。
+//     1 MiB 只能装 302 个账号 —— 一个 300 号以上的池子导出后**无法再导入**。
+//     8 MiB 可容纳约 2400 个账号，对单实例号池足够。
+//
+//   - 图片端点 16 MiB。base64 有 4/3 膨胀，16 MiB 请求体 ≈ 12 MB 原始图。
+//     真正的边界是 maxImagePixels（解码后像素数），不是这里的字节数；
+//     字节上限只负责挡住「先把我撑爆再谈像素」这一层。
 const (
-	maxJSONBodyBytes  = 1 << 20 // 1 MiB
-	maxImageBodyBytes = 8 << 20 // 8 MiB（base64 图片）
+	maxJSONBodyBytes  = 8 << 20  // 8 MiB
+	maxImageBodyBytes = 16 << 20 // 16 MiB（base64 图片）
 )
 
 // imageBodyPaths 是需要更大额度的端点（base64 图片上传）。

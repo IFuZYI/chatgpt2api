@@ -1,5 +1,99 @@
 # Changelog
 
+## 2.1.0 - 2026-10-26
+
+一次安全审计 + 两轮外部代码审计后的修复版本。**含 2 个安全修复，建议所有部署升级。**
+
+### 安全
+
++ **[高危] 入站请求体无上限，单个小请求可打 OOM 单实例。**
+  `decodeJSONBody` 用 `c.GetRawData()` 无限制读入，全仓库 `MaxBytesReader`
+  使用为 0。`/v1/images/edits` 会把 base64 图片解出来做 mask 合成，而该解码
+  发生在**号池配额与并发槽位准入之前**。
+
+  实测（`GOMEMLIMIT=600MiB`、号池为空的实例）：1.5 MB 请求体（12000×12000
+  图片）→ RSS 从 1.8 MB 涨到 461 MB（**+459 MB**）、耗时 **51.8 秒**，
+  最终返回 429 —— 一张图都没生成。几个并发请求即可 OOM。
+
+  修复：读之前套 `http.MaxBytesReader`（控制面 JSON 8 MiB、base64 图片
+  端点 16 MiB），超限返回 413。重放同一攻击：**+8.6 MB / 0.069 秒**，
+  内存放大降 53 倍、耗时降 750 倍。
+
+  控制面取 8 MiB 而非更小：`POST /api/accounts` 导入的是整个号池的 JSON，
+  实测 260 个账号的导出已有 880 KB（约 3.5 KB/账号）—— 1 MiB 只能装 302 个，
+  一个 300 号以上的池子导出后无法再导入。
+
++ **[高危] 图片解码像素预算取自库阈值，远超进程可承受量。**
+  `maxImagePixels` 原为 178,956,970 —— 那是 Pillow 的**硬错误阈值**
+  （2 × `MAX_IMAGE_PIXELS`），不是本进程的内存预算。179M 像素 × 4 字节
+  = 683 MB NRGBA，而 `compositeOneMask` 同时持有 `decoded` + `composited`
+  + `alpha` + PNG 编码缓冲，峰值远超 683 MB。
+
+  修复：改为默认 20,000,000 像素（4096×4096 正常放行，峰值 ~80 MB），
+  可用 `CHATGPT2API_MAX_IMAGE_PIXELS` 覆盖。
+
+  **有意偏离 Python**：Pillow 对 144M 像素只警告不拒绝，本版拒绝。
+
++ **[中危] 首次 401 就删除账号。**
+  `shouldDeferInvalidTokenLocked` 在首次失效时 `last_invalid_at` 为空、
+  返回 `false`，直接走删除路径。`auto_remove_invalid_accounts=true` 时
+  一轮上游抖动会清空整个号池。修复：三道防线（新号 10 分钟宽限、
+  `invalid_count <= 1` 一律推迟、30 秒短窗去抖）。
+
++ **[中危] 403 被无条件当作 token 失效。**
+  上游 403 绝大多数是 Cloudflare 挑战而非死 token（`fingerprint.go` 自己
+  就记录了这一点，`reset_session_status_codes` 默认就是 `[403]`）。
+  一次指纹漂移或坏出口 IP 就能把整池健康账号标异常甚至删除。
+  修复：401 一律算失效；403 仅当来自 `/backend-api/me` 才算。
+
++ **[中危] `client_task_id` 任意文件写入。**
+  只做 `TrimSpace` 就进 `filepath.Join`，`../../../../x` 逃出 `data/files`，
+  而 containment 检查在**写入之后**才跑。修复：字符集校验
+  `[A-Za-z0-9_-]{1,128}`。
+
+### 修复
+
++ `keepalive` 把 `access_token` 当作 `refresh_token` 传给回调 —— 续期完全空转。
++ 上游轮换返回的新 `refresh_token` 被丢弃。生产日志实证旧 RT 用几次后
+  上游返回 `refresh_token_reused` 并**永久拒绝**，不保存新 RT 会耗光续期能力。
++ `last_token_refresh_error_at` 从未被写入 → 6 小时错误退避恒定失效。
++ `watcher.tick` 把 `expiring` 从 keepalive 名单剔除，导致可续期的账号
+  被交给「不会续期」的路径杀死。
++ `nowLocal()` 写本地时间、`parseAccountTime` 按 UTC 读 → 所有时间窗口
+  偏 ±7~8 小时（UTC+X 下退避永不过期，UTC-X 下退避立刻失效）。
++ `refresh_token` 被上游拒绝后只记日志，要等 AT 自然过期（最长 10 天）才
+  发现。修复：立即触发密码重登。
++ 重登成功后不重置 keepalive 锚点 → 下一轮立刻又把它拉去换 AT。
++ `异常` 是终态：无 RT 的账号（260 个里 256 个）一旦变异常永不被拾取。
+  修复：纳入重试，按 `invalid_count` 指数退避（5min → 6h 封顶）。
++ `DeleteImages` 对删除失败的条目也移除索引 → 远端对象永久不可删、
+  本地文件被下次扫盘「复活」。
++ `removeEmptyDirs` 与 `SaveImageBytes` 竞争 → 实测 1200 次保存失败 73 次。
++ `image_retention_days` 只删本地文件：webdav 模式完全空转，both 模式留下
+  「已过期但仍可读」的索引条目。且 `endDate` 少 1 天，保留期当天的图被误删。
++ `data/files/` 零保留策略，实测 ~2 MiB/任务永久累积。
++ `image_index.json` 损坏后 webdav 模式整库消失且无修复路径。
+  修复：`.bak` 回退 + 损坏文件留档。
++ `image_tags.json` 非原子写 + 读在锁外（实测 4000 次读有 197 次读到空表）。
++ 流式生图的 error 事件排在 `data: [DONE]` **之后**，标准客户端读到 `[DONE]`
+  就停止解析，看到的仍是干净的空成功。
++ 并行生图 goroutine 无 `recover()` → panic 杀进程；n=1 与串行路径同样裸奔。
++ 关闭时三个 `Close` 共用一个 30s 预算，`Images.Close` 恒为空转。
++ `chatCallOutcome.accountEmail` 数据竞争。
++ `ApplyRotatedTokens` 每次轮换泄漏一个槽位 + 在飞计数。
++ 刷新/重登进度对象永不淘汰。
+
+### 新增
+
++ 时区矩阵 CI（UTC / Asia/Shanghai / America/Los_Angeles）+ `-race` 作业。
+  此前 CI 不跑测试。时区矩阵不是可选优化：撤销时间字段修复后 UTC 下全绿，
+  另两个时区才失败。
++ `CHATGPT2API_MAX_IMAGE_PIXELS` 环境变量。
+
+### 测试
+
+611 个测试，三个时区全绿；`-race` 干净。
+
 ## Unreleased
 
 ### 变更
