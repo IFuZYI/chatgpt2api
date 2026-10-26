@@ -120,6 +120,55 @@ export function accountRowKey(account: { account_id?: unknown; access_token?: un
   return token;
 }
 
+/**
+ * 全选当前页时应该加入 selectedIds 的 key 集合。
+ *
+ * 必须用 accountRowKey 而不是 access_token —— 否则与行的 key 不一致，
+ * 全选后勾选框不会打勾（表头判定用的是 accountRowKey）。
+ */
+export function selectAllKeys(rows: Array<{ account_id?: unknown; access_token?: unknown }>): string[] {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = accountRowKey(row);
+    if (key !== "") {
+      seen.add(key);
+    }
+  }
+  return Array.from(seen);
+}
+
+/**
+ * 列表刷新后剪掉已不存在的选中项。
+ *
+ * 同样必须按 accountRowKey 匹配：token 轮换后 selectedIds 里的 key 仍然有效，
+ * 用 access_token 比对会把它们全部误删 —— 表现是「每次刷新列表选中全丢」。
+ */
+export function pruneSelection(
+  selected: string[],
+  rows: Array<{ account_id?: unknown; access_token?: unknown }>,
+): string[] {
+  const alive = new Set(selectAllKeys(rows));
+  return selected.filter((key) => alive.has(key));
+}
+
+/**
+ * `default_upstream_model_name` 的回退值。
+ *
+ * 必须与后端 `config.DefaultUpstreamModelName()` 一致（都是 `auto`）。
+ * 历史值 `gpt-5-5` 已从上游 `/backend-api/models` 消失，继续用它会让
+ * `gpt-image-2` 这个通用出图入口指向一个不存在的模型。
+ *
+ * 前端不一致的后果：设置页显示旧默认值 → 用户以为当前值就是它 →
+ * 保存时把旧值写回 config.json，覆盖掉后端的 auto。
+ */
+export const DEFAULT_UPSTREAM_MODEL_NAME = "auto";
+
+/** 取有效的上游模型名：空值回退到 auto。 */
+export function defaultUpstreamModelName(value: unknown): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed === "" ? DEFAULT_UPSTREAM_MODEL_NAME : trimmed;
+}
+
 export function proxySourceLabel(source: string): string {
   switch (source) {
     case "account":

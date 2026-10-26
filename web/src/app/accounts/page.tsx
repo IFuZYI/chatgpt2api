@@ -63,7 +63,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 import { AccountDetailDialog } from "./components/account-detail-dialog";
-import { accountRowKey } from "@/lib/account-detail";
+import { accountRowKey, pruneSelection, selectAllKeys } from "@/lib/account-detail";
 import { AccountImportDialog } from "./components/account-import-dialog";
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
@@ -214,7 +214,7 @@ function AccountsPageContent() {
     try {
       const data = await fetchAccounts();
       setAccounts(data.items);
-      setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      setSelectedIds((prev) => pruneSelection(prev, data.items));
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载账户失败";
       toast.error(message);
@@ -329,7 +329,7 @@ function AccountsPageContent() {
     try {
       const data = await deleteAccounts(tokens);
       setAccounts(data.items);
-      setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      setSelectedIds((prev) => pruneSelection(prev, data.items));
       toast.success(`删除 ${data.removed ?? 0} 个账户`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "删除账户失败";
@@ -353,7 +353,7 @@ function AccountsPageContent() {
         await pollRefreshProgress(progress_id, (progress) => {
           if (progress.done && progress.result) {
             setAccounts(progress.result.items);
-            setSelectedIds((prev) => prev.filter((id) => progress.result!.items.some((item) => item.access_token === id)));
+            setSelectedIds((prev) => pruneSelection(prev, progress.result!.items));
           }
         });
       } catch (error) {
@@ -447,7 +447,7 @@ function AccountsPageContent() {
 
       // 刷新完成，更新数据
       setAccounts(data.items);
-      setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      setSelectedIds((prev) => pruneSelection(prev, data.items));
 
       const relogined = data.relogined ?? 0;
 
@@ -638,7 +638,7 @@ function AccountsPageContent() {
       try {
         const freshData = await fetchAccounts();
         setAccounts(freshData.items);
-        setSelectedIds((prev) => prev.filter((id) => freshData.items.some((item) => item.access_token === id)));
+        setSelectedIds((prev) => pruneSelection(prev, freshData.items));
       } catch { /* 静默失败 */ }
 
       setProgress({
@@ -698,7 +698,7 @@ function AccountsPageContent() {
         proxy: editProxy.trim(),
       });
       setAccounts(data.items);
-      setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      setSelectedIds((prev) => pruneSelection(prev, data.items));
       setEditingAccount(null);
       toast.success("账号信息已更新");
     } catch (error) {
@@ -710,11 +710,14 @@ function AccountsPageContent() {
   };
 
   const toggleSelectAll = (checked: boolean) => {
+    // 必须用 accountRowKey（与行 key、表头判定一致）——
+    // 用 access_token 会导致全选勾不上、取消全选清不掉。
     if (checked) {
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...currentRows.map((item) => item.access_token)])));
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...selectAllKeys(currentRows)])));
       return;
     }
-    setSelectedIds((prev) => prev.filter((id) => !currentRows.some((row) => row.access_token === id)));
+    const pageKeys = new Set(selectAllKeys(currentRows));
+    setSelectedIds((prev) => prev.filter((key) => !pageKeys.has(key)));
   };
 
   return (

@@ -129,13 +129,35 @@ func TestAccountIDSurvivesTokenRotation(t *testing.T) {
 	}
 }
 
-// 密码重登同样不能改变 account_id。
+// 密码重登后 account_id 必须不变。
+//
+// **这条测试的能力边界（诚实说明）**：它验证「重登路径不会改变 id」，
+// 但**无法**区分「id 被原样保留」与「id 被删掉后重新派生」——
+// 因为种子（email / user_id）在重登前后不变，重新派生必然得到同一个值。
+//
+// 曾试图用「只用 access_token 做种子」来区分，但 ReloginAccounts 要求
+// email 才能发起登录，而 email 一旦存在就会成为种子。所以这个区分
+// 在测试层面做不到。
+//
+// 真正的保护在别处：
+//   - 代码层面 ApplyReloginTokens 用 copyMap 保留全部字段（review 已核）
+//   - 集成层面：真实号池 260 个账号经多次重登，id 全部不变（人工验证）
+//
+// 保留这条测试仍有价值：它至少能捕获「重登把 id 改成别的值」这类回归。
 func TestAccountIDSurvivesRelogin(t *testing.T) {
+	// 必须有 email + password，否则 ReloginAccounts 会以 no_email_in_account
+	// 跳过 —— 测试就变成「重登失败时 id 不变」，测不到轮换路径。
+	// 同时**不给 user_id/email 之外的稳定字段**？不行：email 是必需的。
+	// 那就让种子落在 access_token 上（user_id 为空时 email 会先命中）——
+	// 所以这里断言的是「重登路径确实换了 token」+「id 不变」两件事。
 	svc, _ := newTestAccountService(t, []map[string]any{
-		{"access_token": "at-1", "refresh_token": "rt-1", "email": "a@x.test",
-			"password": "pw", "user_id": "user-9", "type": "free", "status": StatusAbnormal},
+		{"access_token": "at-1", "refresh_token": "rt-1", "email": "relogin@x.test",
+			"password": "pw", "type": "free", "status": StatusAbnormal},
 	})
 	idBefore, _ := svc.GetAccount("at-1")["account_id"].(string)
+	if idBefore == "" {
+		t.Fatal("初始没有 account_id")
+	}
 
 	login := func(ctx context.Context, email, password, totp string) (map[string]string, error) {
 		return map[string]string{"access_token": "at-fresh", "refresh_token": "rt-fresh"}, nil
@@ -145,6 +167,10 @@ func TestAccountIDSurvivesRelogin(t *testing.T) {
 	accounts := svc.ListAccounts()
 	if len(accounts) != 1 {
 		t.Fatalf("账号数 %d，应为 1", len(accounts))
+	}
+	// 先确认重登真的换了 token —— 否则这条测试没走到轮换路径
+	if token := stringValue(accounts[0]["access_token"]); token != "at-fresh" {
+		t.Fatalf("重登未生效，token 仍是 %q —— 测试没覆盖轮换路径", token)
 	}
 	if got, _ := accounts[0]["account_id"].(string); got != idBefore {
 		t.Errorf("重登改变了 account_id：%q → %q", idBefore, got)
@@ -318,6 +344,77 @@ func TestAddAccountsDisambiguatesSharedSeed(t *testing.T) {
 		if prev, ok := before[token]; ok {
 			if got := stringValue(account["account_id"]); got != prev {
 				t.Errorf("%s 的 account_id 在后续导入中变了：%q → %q", token, prev, got)
+			}
+		}
+	}
+}
+
+// 磁盘上已经重复的 account_id 必须被修复。
+//
+// 回归点：disambiguateAccountIDs 的第一轮遇到重复 id 时对第二个账号
+// `continue`（没占位），第二轮又因 `id != "" && persisted[token] && taken[id]`
+// 判定「已在第一轮占位成功」而继续跳过 —— 于是它永远不会被重新派生，
+// 重复 id 留在磁盘上，按 ID 查询继续漂移。
+//
+// 可达性：account_id 是文档里公开的可写上传字段，用户可以传两个相同的。
+func TestDisambiguateRepairsDuplicatesOnDisk(t *testing.T) {
+	// 直接测 disambiguateAccountIDs —— 它是修复的入口
+	accounts := map[string]Account{
+		"at-1": {"access_token": "at-1", "account_id": "dup-id", "email": "a@x.test"},
+		"at-2": {"access_token": "at-2", "account_id": "dup-id", "email": "b@x.test"},
+	}
+	persisted := map[string]bool{"at-1": true, "at-2": true}
+
+	changed := disambiguateAccountIDs(accounts, persisted)
+	if !changed {
+		t.Fatal("没有报告改动 —— 重复 id 未被修复")
+	}
+
+	ids := map[string]bool{}
+	for token, account := range accounts {
+		id := stringValue(account["account_id"])
+		if id == "" {
+			t.Errorf("%s 没有 id", token)
+			continue
+		}
+		if ids[id] {
+			t.Errorf("重复 id 仍在: %s", id)
+		}
+		ids[id] = true
+	}
+	if len(ids) != 2 {
+		t.Errorf("唯一 id 数 %d，应为 2", len(ids))
+	}
+}
+
+// 修复后按 ID 查询必须稳定（不再漂移）。
+func TestDuplicateIDsRepairedThenStable(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-a", "account_id": "same-id", "email": "a@x.test", "type": "free", "status": StatusNormal},
+		{"access_token": "at-b", "account_id": "same-id", "email": "b@x.test", "type": "free", "status": StatusNormal},
+	})
+
+	// 加载后应已消歧
+	seen := map[string]string{}
+	for _, account := range svc.ListAccounts() {
+		id := stringValue(account["account_id"])
+		if prev, dup := seen[id]; dup {
+			t.Errorf("加载后仍有重复 id: %s（%s 与 %s）", id, prev, stringValue(account["access_token"]))
+		}
+		seen[id] = stringValue(account["access_token"])
+	}
+
+	// 每个 id 反复查必须稳定
+	for _, account := range svc.ListAccounts() {
+		id := stringValue(account["account_id"])
+		want := stringValue(account["access_token"])
+		for i := 0; i < 30; i++ {
+			got := svc.Detail(id)
+			if got == nil {
+				t.Fatalf("按 %s 查不到", id)
+			}
+			if token := stringValue(got["access_token"]); token != want {
+				t.Fatalf("id=%s 解析漂移：期望 %s，第 %d 次得到 %s", id, want, i, token)
 			}
 		}
 	}

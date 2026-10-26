@@ -71,7 +71,10 @@ func (s *AccountService) Detail(token string) map[string]any {
 	if s.cfg != nil {
 		global = strings.TrimSpace(s.cfg.Proxy())
 	}
-	own := strings.TrimSpace(stringValue(account["proxy"]))
+	// 必须读副本 out，不能读 account —— account 是号池 map 里的活对象，
+	// 锁已释放，而 disambiguateAccountIDs 会在写锁下就地改 account["account_id"]。
+	// 读活对象是真实的数据竞争（-race 可复现）。
+	own := strings.TrimSpace(stringValue(out["proxy"]))
 	switch {
 	case own != "":
 		out["proxy_source"] = "account"
@@ -85,7 +88,7 @@ func (s *AccountService) Detail(token string) map[string]any {
 	}
 
 	for _, field := range []string{"password", "totp_secret", "refresh_token", "id_token", "session_token"} {
-		out["has_"+field] = strings.TrimSpace(stringValue(account[field])) != ""
+		out["has_"+field] = strings.TrimSpace(stringValue(out[field])) != ""
 	}
 
 	return out

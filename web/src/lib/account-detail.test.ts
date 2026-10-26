@@ -8,6 +8,9 @@ import {
   maskSecret,
   proxySourceLabel,
   accountRowKey,
+  selectAllKeys,
+  pruneSelection,
+  defaultUpstreamModelName,
   type DetailRow,
 } from "./account-detail.ts";
 
@@ -281,4 +284,67 @@ test("buildDetailRows exposes account_id for external references", () => {
   assert.ok(row, "详情里应显示 account_id，供外部系统引用");
   assert.equal(row.value, "acc-9");
   assert.equal(row.copyable, true, "account_id 应可复制");
+});
+
+// ── 选中态与全选（C2 回归） ────────────────────────────────
+//
+// 上一版把行 key、表头全选判定、selectedTokens 改成 accountRowKey，
+// 但 toggleSelectAll 与 6 处 reload 剪枝仍按 access_token ——
+// 结果：点全选勾不上、取消全选清不掉、每次刷新列表选中全丢。
+
+test("selectAllKeys returns stable keys for every row", () => {
+  const rows = [
+    { account_id: "acc-1", access_token: "at-OLD-1" },
+    { account_id: "acc-2", access_token: "at-OLD-2" },
+  ];
+  const keys = selectAllKeys(rows);
+  assert.deepEqual(keys, ["acc-1", "acc-2"]);
+});
+
+test("pruneSelection keeps selections whose account still exists after rotation", () => {
+  // 选中了 acc-1；列表刷新后 token 变了但 account_id 不变
+  const selected = ["acc-1", "acc-2"];
+  const rows = [
+    { account_id: "acc-1", access_token: "at-NEW-1" },
+    { account_id: "acc-3", access_token: "at-NEW-3" },
+  ];
+  const pruned = pruneSelection(selected, rows);
+  assert.deepEqual(pruned, ["acc-1"], "acc-1 仍在列表里，必须保留；acc-2 已消失，应剪掉");
+});
+
+test("pruneSelection drops everything when the pool becomes empty", () => {
+  assert.deepEqual(pruneSelection(["acc-1"], []), []);
+});
+
+test("toggleSelectAll select-all then unselect-all round-trips", () => {
+  const rows = [
+    { account_id: "acc-1", access_token: "at-1" },
+    { account_id: "acc-2", access_token: "at-2" },
+  ];
+  const afterSelect = selectAllKeys(rows);
+  assert.equal(afterSelect.length, 2);
+
+  // 全选后，表头应判定为「已全选」
+  assert.ok(afterSelect.every((k) => pruneSelection(afterSelect, rows).includes(k)));
+
+  // 取消全选 = 剪掉当前页所有 key
+  const afterUnselect = pruneSelection(afterSelect, []);
+  assert.equal(afterUnselect.length, 0);
+});
+
+// ── 默认上游模型名（与后端对齐） ──────────────────────────
+//
+// 后端 DefaultUpstreamModelName() 的回退值已是 "auto"（gpt-5-5 已从上游
+// 模型列表消失）。前端 store 的回退值必须一致，否则：
+//   - 设置页显示 gpt-5-5，用户以为当前值就是它
+//   - 保存时把 gpt-5-5 写回 config.json，覆盖掉后端的 auto
+test("defaultUpstreamModelName falls back to auto", () => {
+  assert.equal(defaultUpstreamModelName(undefined), "auto");
+  assert.equal(defaultUpstreamModelName(""), "auto");
+  assert.equal(defaultUpstreamModelName("   "), "auto");
+});
+
+test("defaultUpstreamModelName keeps an explicit value", () => {
+  assert.equal(defaultUpstreamModelName("gpt-5-1"), "gpt-5-1");
+  assert.equal(defaultUpstreamModelName("  auto  "), "auto");
 });

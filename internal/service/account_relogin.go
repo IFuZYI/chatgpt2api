@@ -71,11 +71,13 @@ func (s *AccountService) ReloginAccounts(
 		}
 	}
 	if len(unique) == 0 {
+		// 同 RefreshAccounts：进度结果不放 items —— 它会被
+		// FinishReloginProgress 存进 Progress.Result 并由进度接口原样返回，
+		// 等于泄漏全池凭据。
 		result := map[string]any{
 			"relogined": 0,
 			"skipped":   0,
 			"errors":    []any{},
-			"items":     s.ListAccounts(),
 		}
 		if progressID != "" {
 			s.FinishReloginProgress(progressID, result, "")
@@ -164,11 +166,11 @@ func (s *AccountService) ReloginAccounts(
 		s.UpdateReloginProgress(progressID, token, "成功", "")
 	}
 
+	// 同样不放 items（见上）。
 	result := map[string]any{
 		"relogined": relogined,
 		"skipped":   skipped,
 		"errors":    errorsOut,
-		"items":     s.ListAccounts(),
 	}
 	if progressID != "" {
 		s.FinishReloginProgress(progressID, result, "")

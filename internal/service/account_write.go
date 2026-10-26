@@ -627,10 +627,17 @@ func (s *AccountService) RefreshAccounts(
 		}
 	}
 
+	// 进度结果里**不放 items**。
+	//
+	// 原因：FinishRefreshProgress 会把整个 result 存进 Progress.Result，
+	// 而 GET /api/accounts/refresh/progress/:id 原样返回 —— 于是刷新**一个**
+	// 账号会泄漏**全池**的 password/totp_secret/refresh_token（实测确认）。
+	//
+	// 进度契约本来就只需要计数与错误：前端靠它显示「已处理 N/M」。
+	// 需要账号列表的调用方应当再请求 GET /api/accounts（那里有脱敏）。
 	result := map[string]any{
 		"refreshed": refreshed,
 		"errors":    errorsOut,
-		"items":     s.ListAccounts(),
 		"relogined": relogined,
 	}
 	if progressID != "" {

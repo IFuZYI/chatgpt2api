@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/IFuZYI/chatgpt2api/internal/api"
 )
@@ -102,4 +103,68 @@ func TestAccountListEndpointsDoNotLeakCredentials(t *testing.T) {
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	check("DELETE /api/accounts", w.Code, w.Body.Bytes())
+}
+
+// 刷新进度接口不能泄漏凭据。
+//
+// 回归点：RefreshAccounts 的 result 里带 "items": s.ListAccounts()，
+// 而 FinishRefreshProgress 把它整个存进 Progress.Result，
+// GET /api/accounts/refresh/progress/:id 原样返回 ——
+// 刷新**一个**账号会泄漏**全池**的 password/totp_secret/refresh_token，
+// 包括这次根本没被刷新的账号。
+func TestRefreshProgressDoesNotLeakCredentials(t *testing.T) {
+	deps := newTestDeps(t)
+	router := api.NewRouter(deps)
+
+	seed := `{"accounts":[{"access_token":"at-prog","email":"p@x.test",
+		"password":"SECRET-PW","totp_secret":"JBSWY3DPEHPK3PXP","refresh_token":"SECRET-RT"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/accounts", bytes.NewBufferString(seed))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("导入失败: %d", w.Code)
+	}
+
+	// 触发刷新，拿 progress_id
+	req = httptest.NewRequest(http.MethodPost, "/api/accounts/refresh",
+		bytes.NewBufferString(`{"tokens":["at-prog"]}`))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("刷新请求失败: %d %s", w.Code, w.Body.String())
+	}
+	var started map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &started)
+	progressID, _ := started["progress_id"].(string)
+	if progressID == "" {
+		t.Fatalf("没有 progress_id: %s", w.Body.String())
+	}
+
+	// 等刷新结束（可能很快失败，无所谓 —— 我们要看的是响应里有没有凭据）
+	var body []byte
+	for i := 0; i < 40; i++ {
+		req = httptest.NewRequest(http.MethodGet, "/api/accounts/refresh/progress/"+progressID, nil)
+		req.Header.Set("Authorization", "Bearer test")
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		body = w.Body.Bytes()
+		var payload map[string]any
+		if json.Unmarshal(body, &payload) == nil {
+			if done, _ := payload["done"].(bool); done {
+				break
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	// 断言：整个响应体里不能出现凭据原文
+	for _, secret := range []string{"SECRET-PW", "JBSWY3DPEHPK3PXP", "SECRET-RT"} {
+		if bytes.Contains(body, []byte(secret)) {
+			t.Errorf("刷新进度响应泄漏 %q —— 刷一个账号泄漏全池", secret)
+		}
+	}
 }

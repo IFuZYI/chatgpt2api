@@ -99,3 +99,23 @@ func TestAllAccountListEndpointsMasked(t *testing.T) {
 		}
 	}
 }
+
+// maskItems 必须同时处理 []map[string]any 与 []any 两种形态。
+//
+// service 层返回的 items 类型取决于是否经过 JSON 往返 ——
+// 两种都出现过，只处理一种会导致另一个端点静默泄漏。
+func TestMaskItemsHandlesBothShapes(t *testing.T) {
+	typed := []map[string]any{{"access_token": "at-1", "password": "pw"}}
+	if got := maskItems(typed); len(got) != 1 || got[0]["password"] != nil {
+		t.Errorf("[]map 形态未脱敏: %v", got)
+	}
+
+	untyped := []any{map[string]any{"access_token": "at-2", "password": "pw"}}
+	if got := maskItems(untyped); len(got) != 1 || got[0]["password"] != nil {
+		t.Errorf("[]any 形态未脱敏: %v", got)
+	}
+
+	if got := maskItems(nil); got != nil {
+		t.Errorf("nil 应返回 nil，实际 %v", got)
+	}
+}

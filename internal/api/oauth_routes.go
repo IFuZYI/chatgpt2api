@@ -63,12 +63,14 @@ func (d *Deps) registerOAuthRoutes(r *gin.Engine) {
 		if intOf(addResult["added"]) == 0 {
 			refreshed = 1 // 已存在也算刷新过
 		}
+		// items 必须脱敏：AddAccountItems 返回的是号池原始记录，
+		// 实测含 password / totp_secret 原文。
 		c.JSON(http.StatusOK, gin.H{
 			"added":     addResult["added"],
 			"skipped":   addResult["skipped"],
 			"refreshed": refreshed,
 			"errors":    []any{},
-			"items":     addResult["items"],
+			"items":     maskItems(addResult["items"]),
 		})
 	})
 }

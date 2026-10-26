@@ -62,7 +62,11 @@
 | `last_token_refresh_error` | string\|null | 最后一次 RT 续期失败原因 |
 | `last_token_refresh_error_at` | string\|null | 上述时间 |
 
-### 完整样例（真实返回，凭据已脱敏）
+### 完整样例（`GET /api/accounts/detail` 的返回，含凭据原文）
+
+> **注意**：列表类端点（`GET /api/accounts`、`POST /api/accounts` 等）返回的是
+> 脱敏版本 —— `password` / `totp_secret` / `refresh_token` / `id_token` /
+> `session_token` 被替换成 `*_set` 布尔值。只有**详情接口**给原文。
 
 ```json
 {
@@ -240,7 +244,7 @@ GET /api/accounts/detail?access_token=<urlencoded>
 
 | 情况 | 状态码 | 响应 |
 |:--|:--|:--|
-| 缺 `access_token` 参数 | 400 | `{"detail":{"error":"access_token is required"}}` |
+| 缺标识参数 | 400 | `{"detail":{"error":"access_token 或 account_id 必填一个"}}` |
 | 账号不存在 | 404 | `{"detail":{"error":"account not found"}}` |
 | 无 / 错误 auth | 401 | `{"detail":{"error":"密钥无效或已失效，请重新登录"}}` |
 

@@ -524,7 +524,13 @@ func disambiguateAccountIDs(accounts map[string]Account, persisted map[string]bo
 	taken := map[string]bool{}
 	changed := false
 
-	// 第一轮：保留已持久化的 id
+	// 第一轮：保留已持久化的 id。
+	//
+	// **必须记录谁占位成功**（keeper），不能只看 taken[id]：
+	// 磁盘上已重复时，第一条占位、第二条让位；若第二轮只用 taken[id] 判断，
+	// 第二条会误以为「我已在第一轮占位成功」而跳过 —— 重复 id 永远修不掉
+	// （实测：两个同 id 账号加载后仍重复，按 ID 查询在两者间漂移）。
+	keeper := make(map[string]bool, len(tokens))
 	for _, token := range tokens {
 		account := accounts[token]
 		id := strings.TrimSpace(stringValue(account["account_id"]))
@@ -532,18 +538,19 @@ func disambiguateAccountIDs(accounts map[string]Account, persisted map[string]bo
 			continue
 		}
 		if taken[id] {
-			// 磁盘上就已经重复 —— 后面的那条让位（下一轮重新派生）
+			// 磁盘上就已经重复 —— 后面的那条让位（第二轮重新派生）
 			continue
 		}
 		taken[id] = true
+		keeper[token] = true
 	}
 
 	// 第二轮：给其余账号分配唯一 id
 	for _, token := range tokens {
 		account := accounts[token]
 		id := strings.TrimSpace(stringValue(account["account_id"]))
-		if id != "" && persisted[token] && taken[id] {
-			// 它已经在上面的第一轮里占位成功
+		if keeper[token] {
+			// 第一轮已占位成功，保持原值
 			continue
 		}
 

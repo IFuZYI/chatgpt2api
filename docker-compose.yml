@@ -13,9 +13,29 @@ services:
     image: alpine:3.20
     container_name: chatgpt2api-init-data
     user: "0:0"
-    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    # 除了 data/，还要处理 config.json。
+    #
+    # config.json 是以**单文件 bind mount** 挂进容器的（见 app 的 volumes），
+    # 而容器以 uid 65532 运行。宿主的 config.json 通常是 root:root 644，
+    # 于是设置页保存会失败：
+    #   open /app/config.json: permission denied
+    # 且原子写的第一步（创建 .tmp）也会因 /app 目录不可写而失败。
+    #
+    # 这里把挂进来的 config.json 改成 65532 可写。文件不存在时跳过
+    # （用 [ -f ] 判断），不报错。
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data && chown -R 65532:65532 /data
+        if [ -f /config/config.json ]; then
+          chown 65532:65532 /config/config.json && chmod u+rw /config/config.json
+        fi
     volumes:
       - ./data:/data
+      # 单文件挂载 config.json 来 chown —— 实测可行，且会改到宿主文件本身
+      # （不需要挂整个项目目录）。
+      - ./config.json:/config/config.json
     restart: "no"
 
   app:

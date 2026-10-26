@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -478,7 +479,7 @@ func (s *Store) Update(patch map[string]any) (map[string]any, error) {
 	writeErr := writeFileAtomic(s.path, payload)
 	s.mu.Unlock()
 	if writeErr != nil {
-		return nil, writeErr
+		return nil, explainConfigWriteError(s.path, writeErr)
 	}
 	return s.Get(), nil
 }
@@ -508,6 +509,55 @@ func validateImageStorageSettings(settings map[string]any) error {
 		return errors.New("启用 WebDAV 图片存储后必须填写 WebDAV 密码")
 	}
 	return nil
+}
+
+// explainConfigWriteError 把「写不了 config.json」变成可操作的提示。
+//
+// 为什么需要：Docker 单文件 bind mount 是最常见的部署形态，而
+// config.json 通常是 root:root 644、容器以 uid 65532 运行 ——
+// 于是设置页保存失败，用户只看到 "open /app/config.json: permission denied"。
+// 这句话没说清是文件权限、目录权限还是挂载问题，也没说怎么修。
+//
+// 两个失败点都要说明：
+//  1. 创建 .tmp 失败 → /app 目录不可写（镜像内目录，属于 root）
+//  2. 回退就地写失败 → config.json 文件属主不是 65532
+//
+// 修复动作在**宿主侧**，容器内改不了 —— 所以提示必须给出宿主命令。
+func explainConfigWriteError(path string, err error) error {
+	if !isPermissionError(err) {
+		return err
+	}
+	return fmt.Errorf(
+		"写入 %s 失败：%w\n"+
+			"这是 Docker 部署的常见问题 —— config.json 以单文件 bind mount 挂进容器，\n"+
+			"而容器以非 root（uid 65532）运行。请在**宿主机**上执行：\n"+
+			"  sudo chown 65532:65532 %s\n"+
+			"或让容器以 root 运行（compose 里加 user: \"0:0\"，不推荐）。\n"+
+			"也可改用环境变量覆盖需要改的项，避免写文件。",
+		path, err, hostHintPath(path))
+}
+
+// hostHintPath 把容器内路径换回宿主侧相对路径，让提示可直接复制执行。
+// /app/config.json → config.json（compose 里 source 就是 ./config.json）
+func hostHintPath(path string) string {
+	cleaned := filepath.ToSlash(path)
+	for _, prefix := range []string{"/app/", "/data/"} {
+		if strings.HasPrefix(cleaned, prefix) {
+			return strings.TrimPrefix(cleaned, prefix)
+		}
+	}
+	return cleaned
+}
+
+// isPermissionError 判断错误链里是否有 permission denied。
+func isPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "permission denied")
 }
 
 func writeFileAtomic(path string, payload []byte) error {

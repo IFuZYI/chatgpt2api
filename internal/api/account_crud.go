@@ -76,6 +76,8 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusNotFound, "account not found"))
 			return
 		}
+		// 详情含凭据原文，禁止任何中间层缓存。
+		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, gin.H{"item": detail})
 	})
 
@@ -146,17 +148,7 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 
 		// 响应里的 items 必须脱敏。AddAccountItems / RefreshAccounts 返回的是
 		// 号池原始记录，实测含 password 与 totp_secret 原文。
-		if items, ok := result["items"].([]map[string]any); ok {
-			result["items"] = maskAccountCredentials(items)
-		} else if raw, ok := result["items"].([]any); ok {
-			converted := make([]map[string]any, 0, len(raw))
-			for _, item := range raw {
-				if typed, ok := item.(map[string]any); ok {
-					converted = append(converted, typed)
-				}
-			}
-			result["items"] = maskAccountCredentials(converted)
-		}
+		result["items"] = maskItems(result["items"])
 
 		c.JSON(http.StatusOK, result)
 	})
@@ -179,17 +171,7 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 		// 删除接口返回「剩余账号列表」供前端刷新表格 —— 它同样是一次
 		// 批量读，必须脱敏（实测未脱敏时 260 个账号全部带凭据原文）。
 		deleted := d.Accts.DeleteAccounts(tokens)
-		if items, ok := deleted["items"].([]map[string]any); ok {
-			deleted["items"] = maskAccountCredentials(items)
-		} else if raw, ok := deleted["items"].([]any); ok {
-			converted := make([]map[string]any, 0, len(raw))
-			for _, item := range raw {
-				if typed, ok := item.(map[string]any); ok {
-					converted = append(converted, typed)
-				}
-			}
-			deleted["items"] = maskAccountCredentials(converted)
-		}
+		deleted["items"] = maskItems(deleted["items"])
 		c.JSON(http.StatusOK, deleted)
 	})
 
@@ -408,4 +390,25 @@ func resolveAccountLookup(c *gin.Context) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// maskItems 把任意形态的 items 值（[]map[string]any 或 []any）脱敏。
+//
+// 抽出来是因为 service 层返回的 result["items"] 可能是两种类型：
+// 直接构造的 []map[string]any，或经 JSON 往返后的 []any。
+// 三处端点各自写一遍类型断言太容易漏 —— 事实上有两个端点就漏了。
+func maskItems(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return maskAccountCredentials(typed)
+	case []any:
+		converted := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if entry, ok := item.(map[string]any); ok {
+				converted = append(converted, entry)
+			}
+		}
+		return maskAccountCredentials(converted)
+	}
+	return nil
 }
