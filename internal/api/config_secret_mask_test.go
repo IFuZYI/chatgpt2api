@@ -71,3 +71,27 @@ func TestMaskConfigSecretsDoesNotMutateInput(t *testing.T) {
 		t.Error("脱敏修改了入参 —— 会把内存里的真实密钥删掉")
 	}
 }
+
+// POST /api/settings 的响应也必须脱敏。
+//
+// 回归点：这个端点返回 Config.Update() 的结果，而 Update 内部是 s.Get()
+// —— 不脱敏。GET 脱敏了、POST 没有，于是保存一次设置就把
+// webdav_password / R2 密钥 / AI key 明文送进浏览器，并被前端
+// normalizeConfig 存进 React state。
+//
+// 这条漏洞是「为修 WebDAV 密码保留而把密码注入响应」时暴露出来的：
+// 修复前响应里是空串，修复后是真实密钥。
+func TestUpdateSettingsResponseIsMasked(t *testing.T) {
+	cfg := map[string]any{
+		"backup":        map[string]any{"secret_access_key": "R2-SECRET", "passphrase": "PW"},
+		"image_storage": map[string]any{"webdav_password": "WEBDAV-SECRET"},
+		"ai_review":     map[string]any{"api_key": "sk-SECRET"},
+	}
+	masked := maskConfigSecrets(cfg)
+	encoded, _ := json.Marshal(masked)
+	for _, secret := range []string{"R2-SECRET", "WEBDAV-SECRET", "sk-SECRET"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("POST /api/settings 响应泄漏 %q", secret)
+		}
+	}
+}

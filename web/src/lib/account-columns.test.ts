@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ACCOUNT_COLUMNS, DEFAULT_PAGE_SIZE, FIRST_COLUMN_KEY, METRIC_GRID_CLASS, PAGE_SIZE_OPTIONS, rowAccentClass, sameAccountRow, resolveStatusMeta, normalizeStatusLabel, buildWebdavPayload, SEARCH_DEBOUNCE_MS, normalizeQuery, sameQuery, shouldCollapseModels, MOBILE_BREAKPOINT_PX } from "./account-columns.ts";
+import { ACCOUNT_COLUMNS, DEFAULT_PAGE_SIZE, FIRST_COLUMN_KEY, METRIC_GRID_CLASS, PAGE_SIZE_OPTIONS, rowAccentClass, sameAccountRow, resolveStatusMeta, normalizeStatusLabel, buildWebdavPayload, withSecretFlags, SEARCH_DEBOUNCE_MS, normalizeQuery, sameQuery, shouldCollapseModels, MOBILE_BREAKPOINT_PX } from "./account-columns.ts";
 
 // 账号首页：账号信息放第一列。
 //
@@ -212,4 +212,33 @@ test("clearing password while webdav enabled keeps the has flag true", () => {
   });
   // 留空时必须带 true —— 否则后端会把「留空」当成「要清空」并报错
   assert.equal(payload.has_webdav_password, true);
+});
+
+// R2 密钥与 AI key 留空时必须带 has_* —— 否则后端会静默抹掉。
+//
+// 这比 WebDAV 密码那条更隐蔽：没有校验错误，只是某天备份连不上。
+test("withSecretFlags marks blank backup secrets as unchanged", () => {
+  const stored = { has_secret_access_key: true, has_passphrase: true };
+  const payload = withSecretFlags(
+    { secret_access_key: "", passphrase: "" },
+    stored,
+    ["secret_access_key", "passphrase"],
+  );
+  assert.equal(payload.has_secret_access_key, true);
+  assert.equal(payload.has_passphrase, true);
+});
+
+test("withSecretFlags omits flags when a new value is typed", () => {
+  const payload = withSecretFlags(
+    { api_key: "sk-NEW" },
+    { has_api_key: true },
+    ["api_key"],
+  );
+  assert.equal(payload.api_key, "sk-NEW");
+  assert.equal(payload.has_api_key, undefined);
+});
+
+test("withSecretFlags omits flags when nothing was ever stored", () => {
+  const payload = withSecretFlags({ api_key: "" }, {}, ["api_key"]);
+  assert.equal(payload.has_api_key, undefined);
 });

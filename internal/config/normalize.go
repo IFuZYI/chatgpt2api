@@ -224,3 +224,22 @@ func trimSlashesOr(value, fallback string) string {
 	}
 	return trimmed
 }
+
+// normalizeAIReview 归一化 AI 审核配置。
+//
+// 之前 Update 完全不处理 ai_review —— 脱敏后的 has_api_key 会被原样
+// 持久化进 config.json（实测确认）。这里做白名单重建，与
+// normalizeBackupSettings / normalizeImageStorageSettings 保持一致。
+func normalizeAIReview(value any) map[string]any {
+	source, _ := value.(map[string]any)
+	if source == nil {
+		source = map[string]any{}
+	}
+	return map[string]any{
+		"enabled":  boolOr(source["enabled"], false),
+		"base_url": strings.TrimSpace(strOr(source["base_url"], "")),
+		"api_key":  strings.TrimSpace(strOr(source["api_key"], "")),
+		"model":    strings.TrimSpace(strOr(source["model"], "")),
+		"prompt":   strOr(source["prompt"], ""),
+	}
+}

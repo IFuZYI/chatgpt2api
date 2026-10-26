@@ -447,7 +447,20 @@ func (s *Store) Update(patch map[string]any) (map[string]any, error) {
 	}
 
 	if _, ok := next["backup"]; ok {
-		next["backup"] = normalizeBackupSettings(next["backup"])
+		incoming, isMap := next["backup"].(map[string]any)
+		if isMap {
+			incoming = preserveMaskedSecrets(incoming, s.sectionLocked("backup"),
+				[]string{"secret_access_key", "passphrase"})
+		}
+		next["backup"] = normalizeBackupSettings(incoming)
+	}
+	if _, ok := next["ai_review"]; ok {
+		incoming, isMap := next["ai_review"].(map[string]any)
+		if isMap {
+			incoming = preserveMaskedSecrets(incoming, s.sectionLocked("ai_review"),
+				[]string{"api_key"})
+		}
+		next["ai_review"] = normalizeAIReview(incoming)
 	}
 	if _, ok := next["image_storage"]; ok {
 		incoming := next["image_storage"]
@@ -541,6 +554,47 @@ func (s *Store) imageStoragePasswordLocked() string {
 	}
 	password, _ := settings["webdav_password"].(string)
 	return strings.TrimSpace(password)
+}
+
+// preserveMaskedSecrets 处理「脱敏字段留空 = 不修改」的通用逻辑。
+//
+// 背景：GET /api/settings 把敏感字段换成 has_<field> 标记（见 api 层的
+// maskConfigSecrets）。前端全量回传所有 section，敏感字段是空串 ——
+// 若直接归一化并落盘，用户的密钥就被静默抹掉了（备份连不上、AI 审核失效，
+// 且没有任何报错）。这比「校验失败」更难发现。
+//
+// 规则：字段值为空且 has_<field>=true 时，沿用 previous 里的旧值。
+// 事后统一删掉所有 has_* 键，避免它们被持久化。
+//
+// 调用方必须持 s.mu（previous 直接取自 s.data）。
+func preserveMaskedSecrets(incoming map[string]any, previous map[string]any, fields []string) map[string]any {
+	out := deepCopyMap(incoming)
+	for _, field := range fields {
+		value, _ := out[field].(string)
+		if strings.TrimSpace(value) != "" {
+			continue
+		}
+		if !boolOr(out["has_"+field], false) {
+			continue
+		}
+		if old, _ := previous[field].(string); strings.TrimSpace(old) != "" {
+			out[field] = old
+		}
+	}
+	for key := range out {
+		if len(key) > 4 && key[:4] == "has_" {
+			delete(out, key)
+		}
+	}
+	return out
+}
+
+// sectionLocked 取 s.data 里的某个子对象。调用方必须持 s.mu。
+func (s *Store) sectionLocked(key string) map[string]any {
+	if section, ok := s.data[key].(map[string]any); ok {
+		return section
+	}
+	return map[string]any{}
 }
 
 func validateImageStorageSettings(settings map[string]any) error {

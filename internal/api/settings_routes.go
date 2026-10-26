@@ -38,7 +38,11 @@ func (d *Deps) RegisterSettingsRoutes(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, updateErr.Error()))
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"config": updated})
+		// 与 GET 保持一致：Update 返回的是 s.Get()，其中含
+		// webdav_password / R2 密钥 / AI key 的**原文**。
+		// 不脱敏就等于每次保存设置都把密钥明文送回浏览器。
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, gin.H{"config": maskConfigSecrets(updated)})
 	})
 
 	r.GET("/api/proxy/runtime", func(c *gin.Context) {

@@ -64,7 +64,7 @@ import { cn } from "@/lib/utils";
 
 import { AccountDetailDialog } from "./components/account-detail-dialog";
 import { accountRowKey, pruneSelection, selectAllKeys } from "@/lib/account-detail";
-import { METRIC_GRID_CLASS, resolveStatusMeta, rowAccentClass } from "@/lib/account-columns";
+import { METRIC_GRID_CLASS, normalizeStatusLabel, resolveStatusMeta, rowAccentClass } from "@/lib/account-columns";
 import { AccountImportDialog } from "./components/account-import-dialog";
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
@@ -340,12 +340,16 @@ function AccountsPageContent() {
       try {
         const { progress_id } = await refreshAccounts(accessTokens);
         // 单账号：轮询等待完成
-        await pollRefreshProgress(progress_id, (progress) => {
-          if (progress.done && progress.result) {
-            setAccounts(progress.result.items);
-            setSelectedIds((prev) => pruneSelection(prev, progress.result!.items));
-          }
+        await pollRefreshProgress(progress_id, () => {
+          // 不从进度载荷取列表。
+          //
+          // 回归点：42dcbbd 出于安全考虑把 `items` 从刷新结果里移除了
+          // （它会泄漏全池凭据），但前端一直没跟着改 —— 这里读
+          // `progress.result.items` 得到 undefined，setAccounts(undefined)
+          // 之后下一次渲染 `accounts.filter` 直接抛错，整页崩溃。
+          // 账号列表本来就该走 GET /api/accounts（那里有脱敏）。
         });
+        await loadAccounts(true);
       } catch (error) {
         const message = error instanceof Error ? error.message : "刷新账户失败";
         toast.error(message);
@@ -391,9 +395,12 @@ function AccountsPageContent() {
           // 卸载守卫 + 超时：原实现只靠 done/error 退出，
           // 离开页面或进度接口异常时 interval 会永久跑下去。
           if (unmountedRef.current) {
-            // 组件已卸载：清掉定时器即可，不 resolve/reject
-            // （调用方已经不在了，任何后续 setState 都是无效操作）。
+            // 必须 resolve：不 settle 的话调用方的 finally 永远不执行
+            // （refreshingTokens / isRefreshing 卡在 true，刷新控件
+            // 永久禁用）。卸载后的 setState 是无效操作，但 Promise
+            // 本身必须收敛 —— 与下方 pollRefreshProgress 的写法保持一致。
             clearInterval(pollTimer);
+            resolve(undefined as never);
             return;
           }
           if (Date.now() - pollStartedAt > 30 * 60 * 1000) {
@@ -449,9 +456,11 @@ function AccountsPageContent() {
         }, 300);
       });
 
-      // 刷新完成，更新数据
-      setAccounts(data.items);
-      setSelectedIds((prev) => pruneSelection(prev, data.items));
+      // 刷新完成：重新拉列表，不从进度载荷取。
+      //
+      // 同单账号路径：安全修复移除了 result.items，这里原本会
+      // setAccounts(undefined) 导致下次渲染崩溃。
+      await loadAccounts(true);
 
       const relogined = data.relogined ?? 0;
 
@@ -1225,7 +1234,7 @@ function AccountIdentity({ account }: { account: Account }) {
                             className="inline-flex items-center gap-1 rounded-md px-2 py-1"
                           >
                             <StatusIcon className="size-3.5" />
-                            {account.status}
+                            {normalizeStatusLabel(account.status)}
                           </Badge>
                         </td>
                         <td className="px-4 py-3">

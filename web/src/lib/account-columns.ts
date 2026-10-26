@@ -201,3 +201,31 @@ export function buildWebdavPayload(stored: {
   }
   return payload;
 }
+
+/**
+ * 把脱敏字段的 has_* 标记带进保存 payload。
+ *
+ * 通用规则（与 WebDAV 密码同一套语义）：
+ * 字段留空时必须回传 `has_<field>: true`，否则后端会把「留空」当成
+ * 「用户要清空」，在 backup（R2 密钥/口令）与 ai_review（api_key）上
+ * 会**静默抹掉**用户的凭据 —— 没有校验错误，只是某天备份突然连不上。
+ *
+ * 填了新值就不带 has_*（避免后端误以为「不修改」）。
+ */
+export function withSecretFlags(
+  payload: Record<string, unknown>,
+  stored: Record<string, unknown>,
+  fields: string[],
+): Record<string, unknown> {
+  const out = { ...payload };
+  for (const field of fields) {
+    const value = String(payload[field] ?? "").trim();
+    if (value === "") {
+      const flag = Boolean(stored[`has_${field}`]);
+      if (flag) {
+        out[`has_${field}`] = true;
+      }
+    }
+  }
+  return out;
+}

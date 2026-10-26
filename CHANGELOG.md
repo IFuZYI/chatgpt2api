@@ -1,5 +1,62 @@
 # Changelog
 
+## 2.2.2 - 2026-10-27
+
+代码审查发现的 2 个 critical + 1 个 silent-data-loss 修复。
+
+### 修复
+
++ **[严重] 刷新账号仍会崩溃 —— v2.2.1 修错了地方。**
+  v2.2.1 归因于 `statusMeta` 查表（那个也是真的，但用户撞不上）。
+  真实原因：安全修复 `42dcbbd` 为防凭据泄漏把 `items` 从刷新进度结果里
+  移除了，**前端从未跟着改** —— 仍在读 `progress.result.items`。
+
+  链路：`setAccounts(undefined)` → 下一次渲染 `accounts.filter` 抛
+  `Cannot read properties of undefined` → 整页崩溃。
+  v2.2.1 加的 error boundary 只是把它降级成内联错误面板，页面依然不可用
+  （实测：刷新后 `页面出错了` 出现）。
+
+  修复：两条刷新路径都不再从进度载荷取列表，改为 `await loadAccounts(true)`
+  重新拉取（走 `GET /api/accounts`，那里有脱敏）。
+
++ **[严重] `POST /api/settings` 明文回传密钥 —— v2.2.1 引入。**
+  为修 WebDAV「留空不改密码」，我把已存密码注入了 `Update` 的返回值；
+  但该端点返回的是 `s.Get()`（未脱敏），而 GET 是脱敏的。
+  于是每次保存设置都把 `webdav_password` / R2 密钥 / AI key 明文送回浏览器，
+  并被前端 `normalizeConfig` 存进 React state。
+
+  修复：`POST /api/settings` 也走 `maskConfigSecrets`，并加 `no-store`。
+
++ **[严重] 保存任意设置会静默抹掉 R2 密钥与 AI key。**
+  与 WebDAV 密码同一类 bug，但**没有校验错误** —— 更难发现：某天备份
+  突然连不上，或 AI 审核失效，却没有任何提示。
+
+  根因：前端 `saveConfig` 每次全量提交所有 section，脱敏后
+  `secret_access_key` / `passphrase` / `api_key` 在响应里不存在 → 回传空串
+  → 后端只做 normalize，不保留旧值。`ai_review` 更是完全没有归一化，
+  连 `has_api_key` 都被持久化进 `config.json`。
+
+  修复两端：
+  - 后端：抽出 `preserveMaskedSecrets()`，`backup` 与 `ai_review` 都按
+    「留空 + `has_*` = 不修改」处理，并统一剥掉 `has_*` 防止落盘；
+    新增 `normalizeAIReview()` 白名单重建
+  - 前端：抽出 `withSecretFlags()`，两处 payload 都带上 `has_*`
+
+### 修复（次要）
+
++ 两处进度轮询的卸载守卫只 `clearInterval` 不 `resolve` —— 调用方的
+  `finally` 永不执行，`refreshingTokens` / `isRefreshing` 卡在 true，
+  刷新控件永久禁用。改为与另一处轮询一致地 `resolve`。
++ `normalizeStatusLabel` 是死代码（徽章仍渲染原始值）—— 已接上。
++ `statusMeta` 查表兜底（v2.2.1 已加）保留，它是真实的第二道崩溃源。
+
+### 验证
+
+- 单账号刷新：修复前 `页面出错了`，修复后正常
+- `POST /api/settings` 响应：不含任何明文密钥，只有 `has_*`
+- 全量保存后 R2 密钥与 AI key：保留 ✓，`has_*` 未落盘 ✓
+- 8 包 + 2 包 `-race` + 67 项 compose 契约 + 46 前端测试全绿
+
 ## 2.2.1 - 2026-10-27
 
 两个用户报告的故障修复。

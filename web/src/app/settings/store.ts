@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { buildWebdavPayload } from "@/lib/account-columns";
+import { buildWebdavPayload, withSecretFlags } from "@/lib/account-columns";
 import { defaultUpstreamModelName } from "@/lib/account-detail";
 import { toast } from "sonner";
 
@@ -427,7 +427,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         ai_review: {
           enabled: Boolean(config.ai_review?.enabled),
           base_url: String(config.ai_review?.base_url || "").trim(),
-          api_key: String(config.ai_review?.api_key || "").trim(),
+          ...withSecretFlags(
+            { api_key: String(config.ai_review?.api_key || "").trim() },
+            (config.ai_review ?? {}) as Record<string, unknown>,
+            ["api_key"],
+          ),
           model: String(config.ai_review?.model || "").trim(),
           prompt: String(config.ai_review?.prompt || "").trim(),
         },
@@ -465,7 +469,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           ...(config.backup as BackupSettings),
           account_id: String(config.backup?.account_id || "").trim(),
           access_key_id: String(config.backup?.access_key_id || "").trim(),
-          secret_access_key: String(config.backup?.secret_access_key || "").trim(),
+          ...withSecretFlags(
+            { secret_access_key: String(config.backup?.secret_access_key || "").trim() },
+            (config.backup ?? {}) as Record<string, unknown>,
+            ["secret_access_key"],
+          ),
           bucket: String(config.backup?.bucket || "").trim(),
           prefix: String(config.backup?.prefix || "backups").trim(),
           interval_minutes: Math.max(1, Number(config.backup?.interval_minutes) || 360),
