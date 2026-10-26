@@ -76,6 +76,7 @@ func TestRouteParity(t *testing.T) {
 		"DELETE /api/auth/users/{x}",
 
 		"GET /api/accounts",
+		"GET /api/accounts/detail",
 		"POST /api/accounts",
 		"DELETE /api/accounts",
 		"POST /api/accounts/update",

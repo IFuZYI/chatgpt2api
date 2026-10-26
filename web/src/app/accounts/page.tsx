@@ -11,6 +11,7 @@ import {
   CircleOff,
   Copy,
   Download,
+  Eye,
   Link2,
   LoaderCircle,
   LogIn,
@@ -61,6 +62,7 @@ import {
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
+import { AccountDetailDialog } from "./components/account-detail-dialog";
 import { AccountImportDialog } from "./components/account-import-dialog";
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
@@ -176,6 +178,8 @@ function AccountsPageContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState("10");
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  // 详情弹窗要看的账号 token；null 表示关闭。
+  const [detailToken, setDetailToken] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<AccountStatus>("正常");
   const [editProxy, setEditProxy] = useState("");
   const [isTestingProxy, setIsTestingProxy] = useState(false);
@@ -777,6 +781,8 @@ function AccountsPageContent() {
         </div>
       )}
 
+      <AccountDetailDialog accessToken={detailToken} onClose={() => setDetailToken(null)} />
+
       <Dialog open={Boolean(editingAccount)} onOpenChange={(open) => (!open ? setEditingAccount(null) : null)}>
         <DialogContent showCloseButton={false} className="rounded-2xl p-6">
           <DialogHeader className="gap-2">
@@ -1171,6 +1177,14 @@ function AccountsPageContent() {
                         <td className="px-4 py-3 text-stone-500">{account.fail}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1 text-stone-400">
+                            <button
+                              type="button"
+                              className="rounded-lg p-2 transition hover:bg-stone-100 hover:text-stone-700"
+                              onClick={() => setDetailToken(account.access_token)}
+                              title="查看账号详情（含密码、2FA、令牌有效期）"
+                            >
+                              <Eye className="size-4" />
+                            </button>
                             <button
                               type="button"
                               className="rounded-lg p-2 transition hover:bg-stone-100 hover:text-stone-700"

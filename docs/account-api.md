@@ -279,6 +279,7 @@ curl -sS -X POST "$BASE/api/accounts/proxy" \
 | `GET /api/accounts` | 列出账号 |
 | `POST /api/accounts/update` | 改单账号（`type`/`status`/`quota`/`proxy`） |
 | `POST /api/accounts/proxy` | 批量设置代理 |
+| `GET /api/accounts/detail` | **查看单账号详情**（凭据原文、AT 有效期、代理来源、诊断） |
 | `POST /api/accounts/refresh` | 刷新账号信息（后台跑，返回 `progress_id`） |
 | `GET /api/accounts/refresh/progress/:progress_id` | 查刷新进度 |
 | `POST /api/accounts/re-login` | 密码重登（救失效账号） |

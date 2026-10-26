@@ -1,3 +1,4 @@
+import { accountDetailPath } from "@/lib/account-detail";
 import { httpRequest, request } from "@/lib/request";
 
 export type AccountType = string;
@@ -46,6 +47,33 @@ export type AccountImportPayload = {
   export_type?: string;
   source_type?: string;
   [key: string]: unknown;
+};
+
+/**
+ * 账号详情。比列表的 Account 多出凭据原文与派生字段。
+ *
+ * 派生字段由后端算（不是前端解析 JWT），因为后端已经有一套 JWT 解码工具，
+ * 前端再实现一份会出现「两边算法不一致」的偏差。
+ */
+export type AccountDetail = Account & {
+  refresh_token?: string | null;
+  id_token?: string | null;
+  session_token?: string | null;
+  password?: string | null;
+  totp_secret?: string | null;
+  /** 实际生效的代理地址（账号自带优先，否则全局，直连时为空串）。 */
+  proxy_effective?: string | null;
+  /** account | global | direct */
+  proxy_source?: string | null;
+  /** AT 剩余秒数；-1 表示该 token 不是 JWT、无法判断。 */
+  access_token_expires_in?: number;
+  /** AT 过期时间（RFC3339）；未知时为空串。 */
+  access_token_expires_at?: string | null;
+  has_password?: boolean;
+  has_totp_secret?: boolean;
+  has_refresh_token?: boolean;
+  has_id_token?: boolean;
+  has_session_token?: boolean;
 };
 
 export type Model = {
@@ -325,6 +353,17 @@ export async function login(authKey: string) {
 
 export async function fetchAccounts() {
   return httpRequest<AccountListResponse>("/api/accounts");
+}
+
+/**
+ * 账号详情（含凭据原文与 AT 有效期）。
+ *
+ * 与 fetchAccounts 的差异：列表接口会把 password / totp_secret 抹成
+ * `*_set` 布尔值（批量读不能给原文），详情接口是显式单条查询，
+ * 返回未脱敏的记录。仅 admin 可用。
+ */
+export async function fetchAccountDetail(accessToken: string) {
+  return httpRequest<{ item: AccountDetail }>(accountDetailPath(accessToken));
 }
 
 export async function fetchModels() {

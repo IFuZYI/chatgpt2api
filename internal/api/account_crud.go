@@ -15,19 +15,31 @@ import (
 // （前端要显示、导出要用），密码没有这个需求。
 //
 // 保留 *_set 布尔值，让前端能显示「已配置密码 / 未配置」。
+//
+// 覆盖 5 个凭据字段，不只是 password / totp_secret：
+// refresh_token / id_token / session_token 同样是可直接接管账号的凭据。
+//
+// **不修改入参**：ListAccounts 返回的是 copyMap 副本，但同一批 map 可能被
+// 其他路径复用；就地 delete 会删掉号池内存里的密码，导致后续重登失败。
+// 所以每个 item 复制一份再处理。
 func maskAccountCredentials(items []map[string]any) []map[string]any {
+	secretFields := []string{"password", "totp_secret", "refresh_token", "id_token", "session_token"}
+	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		for _, field := range []string{"password", "totp_secret"} {
-			value := stringValueOf(item[field])
-			if value == "" {
-				delete(item, field)
-				continue
-			}
-			delete(item, field)
-			item[field+"_set"] = true
+		masked := make(map[string]any, len(item)+len(secretFields))
+		for key, value := range item {
+			masked[key] = value
 		}
+		for _, field := range secretFields {
+			value := stringValueOf(masked[field])
+			delete(masked, field)
+			if value != "" {
+				masked[field+"_set"] = true
+			}
+		}
+		out = append(out, masked)
 	}
-	return items
+	return out
 }
 
 // registerAccountCRUD 复刻 api/accounts.py 里 /api/accounts 的六个端点。
@@ -38,6 +50,32 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"items": maskAccountCredentials(d.Accts.ListAccounts())})
+	})
+
+	// 单账号详情：返回**未脱敏**的完整记录 + 派生字段。
+	//
+	// 与 GET /api/accounts 的差异是刻意的：列表是批量读，一次会话就能拿到
+	// 整个号池的密码与 TOTP 种子，所以那里必须脱敏；详情是显式的单条查询，
+	// 用户点「查看」要的就是凭据原文。因此这里：
+	//   - 只认 admin（user key 连列表都读不到，详情更不能开）
+	//   - 必须带 access_token 参数，不支持「不传就返回全部」
+	//   - 账号不存在返回 404，与「参数缺失」的 400 区分开
+	r.GET("/api/accounts/detail", func(c *gin.Context) {
+		if _, err := d.RequireAdmin(c.GetHeader("Authorization")); err != nil {
+			writeErr(c, err)
+			return
+		}
+		accessToken := strings.TrimSpace(c.Query("access_token"))
+		if accessToken == "" {
+			writeErr(c, Errorf(http.StatusBadRequest, "access_token is required"))
+			return
+		}
+		detail := d.Accts.Detail(accessToken)
+		if detail == nil {
+			writeErr(c, Errorf(http.StatusNotFound, "account not found"))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"item": detail})
 	})
 
 	r.POST("/api/accounts", func(c *gin.Context) {
@@ -105,6 +143,20 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			}
 		}
 
+		// 响应里的 items 必须脱敏。AddAccountItems / RefreshAccounts 返回的是
+		// 号池原始记录，实测含 password 与 totp_secret 原文。
+		if items, ok := result["items"].([]map[string]any); ok {
+			result["items"] = maskAccountCredentials(items)
+		} else if raw, ok := result["items"].([]any); ok {
+			converted := make([]map[string]any, 0, len(raw))
+			for _, item := range raw {
+				if typed, ok := item.(map[string]any); ok {
+					converted = append(converted, typed)
+				}
+			}
+			result["items"] = maskAccountCredentials(converted)
+		}
+
 		c.JSON(http.StatusOK, result)
 	})
 
@@ -159,7 +211,12 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusNotFound, "account not found"))
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"item": account, "items": d.Accts.ListAccounts()})
+		// 列表与单项都脱敏：update 之后前端会把 items 存进状态，
+		// 返回凭据原文等于把密码送进浏览器内存。
+		c.JSON(http.StatusOK, gin.H{
+			"item":  maskAccountCredentials([]map[string]any{account})[0],
+			"items": maskAccountCredentials(d.Accts.ListAccounts()),
+		})
 	})
 
 	// 批量设置代理：一次给多个账号分配出口代理。
@@ -224,7 +281,7 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 		c.JSON(http.StatusOK, gin.H{
 			"updated": updated,
 			"missing": missing,
-			"items":   d.Accts.ListAccounts(),
+			"items":   maskAccountCredentials(d.Accts.ListAccounts()),
 		})
 	})
 }

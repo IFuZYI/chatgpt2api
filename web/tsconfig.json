@@ -11,6 +11,9 @@
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
+    // 前端测试用 node --test 直接跑 .ts（Node 22 原生剥离类型），
+    // 因此测试文件里的 import 必须带 .ts 扩展名。noEmit 之下这是允许的。
+    "allowImportingTsExtensions": true,
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,

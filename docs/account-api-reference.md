@@ -188,6 +188,72 @@
 
 ---
 
+## 2.5 查看详情：`GET /api/accounts/detail`
+
+```
+GET /api/accounts/detail?access_token=<urlencoded>
+```
+
+### 查询参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|:--|:--|:--|:--|
+| `access_token` | string | ✅ | 要查的账号。**必须 URL 编码** |
+
+**必须 `encodeURIComponent`**：token 可能是 JWT（含 `.`），也可能是 session
+形态（含 `+` `/` `=`）。不转义时 `+` 会被解析成空格、`&` 会截断参数 ——
+症状是「账号明明在池子里，详情却 404」。
+
+### 返回
+
+```json
+{ "item": { /* 完整账号对象 + 派生字段 */ } }
+```
+
+与列表接口的**关键差异**：详情返回**凭据原文**（`password`、`totp_secret`、
+`refresh_token` 等），列表接口只给 `*_set` 布尔值。
+
+设计理由：列表是批量读，一次泄漏等于全池接管；详情是显式的单条查询，
+功能本身就是「看这个账号的密码和 2FA 种子」，不给原文就没有意义。
+
+**两个接口都需要 admin 权限**，无 auth 或错误 auth 一律 401。
+
+### 派生字段（详情独有）
+
+| 字段 | 类型 | 说明 |
+|:--|:--|:--|
+| `access_token_expires_in` | int | AT 剩余秒数。**-1 = 未知**（该 token 不是 JWT） |
+| `access_token_expires_at` | string | AT 过期绝对时间（RFC3339）。未知时为空串 |
+| `proxy_source` | string | `account` / `global` / `direct` |
+| `proxy_effective` | string | 实际生效的代理地址；`direct` 时为空 |
+| `has_password` | bool | 是否配了密码 |
+| `has_totp_secret` | bool | 是否配了 2FA 种子 |
+| `has_refresh_token` | bool | 是否有 RT |
+| `has_id_token` | bool | 是否有 ID token |
+| `has_session_token` | bool | 是否有 session token |
+
+**`-1` 与 `0` 的语义必须分开**：`0` 会和「已过期」混淆，前端会显示
+「已过期」误导运维去重登一个其实好用的号。所以非 JWT 用 `-1`（未知）。
+
+### 错误
+
+| 情况 | 状态码 | 响应 |
+|:--|:--|:--|
+| 缺 `access_token` 参数 | 400 | `{"detail":{"error":"access_token is required"}}` |
+| 账号不存在 | 404 | `{"detail":{"error":"account not found"}}` |
+| 无 / 错误 auth | 401 | `{"detail":{"error":"密钥无效或已失效，请重新登录"}}` |
+
+### 示例
+
+```bash
+TOKEN='eyJhbGciOiJSUzI1Ni...'
+curl -sS --get "$BASE/api/accounts/detail" \
+  -H "$AUTH" \
+  --data-urlencode "access_token=$TOKEN"
+```
+
+---
+
 ## 3. 编辑：`POST /api/accounts/update`
 
 ### 请求体
