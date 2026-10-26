@@ -102,3 +102,32 @@ func TestMultipartBodyAlsoLimited(t *testing.T) {
 			maxImageBodyBytes, 32<<20)
 	}
 }
+
+// PPT / PSD 端点必须被认作图片端点。
+//
+// 回归点：`isImageBodyPath` 漏了 /v1/ppt/generations 与 /v1/psd/generations，
+// 而两者都收 base64_images（PSD 还**要求**至少一张参考图）。
+// 漏在列表外会让 >~750 KB 的参考图被 413 拒绝 —— 合法上传被误伤。
+func TestImageBodyPathsCoverBase64ImageEndpoints(t *testing.T) {
+	mustAllow := []string{
+		"/v1/images/edits",       // mask 合成
+		"/v1/images/generations", // 参考图
+		"/v1/chat/completions",   // 图片分支
+		"/v1/responses",          // image tool
+		"/v1/ppt/generations",    // base64_images
+		"/v1/psd/generations",    // base64_images（必需）
+		"/api/image-tasks/edits", // 异步编辑
+		"/api/image-tasks/generations",
+	}
+	for _, path := range mustAllow {
+		if !isImageBodyPath(path) {
+			t.Errorf("%s 收 base64 图片，必须用图片额度而非控制面额度", path)
+		}
+	}
+	// 控制面端点不能误用图片额度
+	for _, path := range []string{"/api/settings", "/api/accounts", "/api/backups/run"} {
+		if isImageBodyPath(path) {
+			t.Errorf("%s 是控制面端点，不应拿到图片额度", path)
+		}
+	}
+}

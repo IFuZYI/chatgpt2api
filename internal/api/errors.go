@@ -170,6 +170,10 @@ func defaultErrorCode(status int) string {
 		return "permission_denied"
 	case status == 429:
 		return "rate_limit_exceeded"
+	case status == 413:
+		// 413 有专属 code：客户端按 code 分流时，把「请求体过大」当成
+		// 「参数错误」会误导（前者该缩小体积，后者该改参数）。
+		return "request_too_large"
 	case status >= 400 && status < 500:
 		return "bad_request"
 	default:

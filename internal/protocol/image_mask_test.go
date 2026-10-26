@@ -543,36 +543,22 @@ func TestCompositeMaskScalesWhenSizesDiffer(t *testing.T) {
 // 锁住「合法大图不被误伤」。这里用 IHDR 声明尺寸来锁边界：fixture 只有
 // 一百多字节，DecodeConfig 读到假尺寸，尺寸检查先返回，不会真的解码。
 func TestCompositeMaskPixelLimitBoundary(t *testing.T) {
+	// 用例按**当前生效的预算**判定，而不是写死 wantRejected：
+	// CHATGPT2API_MAX_IMAGE_PIXELS 可以覆盖预算，写死会让测试在
+	// 覆盖场景下误报。断言的是「与预算一致」这个**关系**。
 	cases := []struct {
-		name         string
-		width        int
-		height       int
-		wantRejected bool
-		reason       string
+		name   string
+		width  int
+		height int
 	}{
-		{
-			name: "4096x4096", width: 4096, height: 4096,
-			wantRejected: false,
-			reason:       "16.7M 像素，常见上限，必须放行",
-		},
-		{
-			// 有意偏离 Python：Pillow 对 144M 像素只警告不拒绝，但本进程
-			// 解码 144M 像素要分配 ~549 MB NRGBA（实测 RSS +459 MB），
-			// 容器内存限制下足以 OOM。安全优先于逐字兼容。
-			name: "12000x12000", width: 12000, height: 12000,
-			wantRejected: true,
-			reason:       "144M 像素超出进程像素预算（默认 16M），必须拒绝以防 OOM",
-		},
-		{
-			name: "14000x14000", width: 14000, height: 14000,
-			wantRejected: true,
-			reason:       "196M 像素，远超预算",
-		},
+		{name: "2000x2000", width: 2000, height: 2000},     // 4M
+		{name: "4096x4096", width: 4096, height: 4096},     // 16.7M
+		{name: "12000x12000", width: 12000, height: 12000}, // 144M
+		{name: "14000x14000", width: 14000, height: 14000}, // 196M
 	}
 
-	// 先确认边界值本身没被写错。
-	if maxImagePixels != maxImagePixelsDefault {
-		t.Fatalf("maxImagePixels = %d, want %d", maxImagePixels, maxImagePixelsDefault)
+	if maxImagePixels <= 0 {
+		t.Fatalf("maxImagePixels = %d，必须是正数", maxImagePixels)
 	}
 
 	for _, tc := range cases {
@@ -585,9 +571,12 @@ func TestCompositeMaskPixelLimitBoundary(t *testing.T) {
 			err := checkImageDimensions(oversized, "image")
 			rejected := err != nil && strings.Contains(err.Error(), "exceed")
 
-			if rejected != tc.wantRejected {
-				t.Fatalf("%dx%d (%d px): rejected = %v, want %v — %s",
-					tc.width, tc.height, tc.width*tc.height, rejected, tc.wantRejected, tc.reason)
+			pixels := int64(tc.width) * int64(tc.height)
+			wantRejected := pixels > maxImagePixels
+
+			if rejected != wantRejected {
+				t.Fatalf("%dx%d (%d px): rejected = %v, want %v（预算 %d）",
+					tc.width, tc.height, pixels, rejected, wantRejected, maxImagePixels)
 			}
 			if err != nil && !rejected {
 				t.Fatalf("%dx%d: unexpected non-size error: %v", tc.width, tc.height, err)
@@ -598,10 +587,12 @@ func TestCompositeMaskPixelLimitBoundary(t *testing.T) {
 
 // mask 侧与图片侧共用同一个上限，这里确认走 mask 标签时也按同一阈值判定。
 func TestCompositeMaskPixelLimitAppliesToMask(t *testing.T) {
-	// 用预算内的尺寸（4096²=16.7M）验证 mask 侧走同一阈值且放行。
-	atLimit := buildOversizedPNG(t, 4096, 4096)
-	if err := checkImageDimensions(atLimit, "mask image"); err != nil {
-		t.Errorf("4096x4096 mask 在预算内，应放行，got: %v", err)
+	// 尺寸按当前生效预算选：预算足够时才验证放行（环境变量可覆盖预算）。
+	if maxImagePixels >= 4_000_000 {
+		withinBudget := buildOversizedPNG(t, 2000, 2000) // 4M
+		if err := checkImageDimensions(withinBudget, "mask image"); err != nil {
+			t.Errorf("2000x2000 mask 在预算内（%d），应放行，got: %v", maxImagePixels, err)
+		}
 	}
 	overBudget := buildOversizedPNG(t, 12000, 12000)
 	if err := checkImageDimensions(overBudget, "mask image"); err == nil {

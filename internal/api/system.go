@@ -249,11 +249,16 @@ const (
 	maxImageBodyBytes = 16 << 20 // 16 MiB（base64 图片）
 )
 
-// imageBodyPaths 是需要更大额度的端点（base64 图片上传）。
+// isImageBodyPath 报告该端点是否接受 base64 图片。
+//
+// 漏一个端点的后果不是「限额松一点」而是「合法上传被 413」——
+// /v1/ppt/generations 与 /v1/psd/generations 都收 base64_images
+// （PSD 还**要求**至少一张参考图），漏在列表外会让 >~750 KB 的参考图被拒。
 func isImageBodyPath(path string) bool {
 	switch path {
 	case "/v1/images/edits", "/v1/images/generations",
 		"/v1/chat/completions", "/v1/responses",
+		"/v1/ppt/generations", "/v1/psd/generations",
 		"/api/image-tasks/edits", "/api/image-tasks/generations":
 		return true
 	}
