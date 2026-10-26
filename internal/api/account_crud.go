@@ -61,30 +61,48 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 		}
 		result := d.Accts.AddAccountItems(accounts, tokens)
 
-		// 导入后立刻同步刷新一次，与 Python api/accounts.py:233 一致。
+		// 刷新默认**不做**，由 ?refresh=1 显式开启。
 		//
-		// 不刷新的话，新导入账号的 email/quota/limits_progress 全是空，
-		// 而前端 toast 会提示「已自动刷新账号信息」—— UI 说了假话，
-		// 用户以为数据就绪，直到手动点刷新才发现是空的。
+		// 为什么默认关：同步刷新会给每个账号打一次上游（/me + conversation/init
+		// + accounts/check），注册机一次传 500 个账号要串行等几分钟，且
+		// 上游会看到 500 个新会话。上传接口的职责是「落盘并返回计数」，
+		// 刷新交给后台 watcher（启动后先跑一轮，之后按
+		// refresh_account_interval_minute 周期跑）。
+		//
+		// 需要立即验证 token 有效性的调用方（例如注册机自己要先筛掉死号）
+		// 传 ?refresh=1 即可恢复旧行为。
+		// 去重：同一个 token 可能同时出现在 tokens 与 accounts 里
+		// （parseAccountCreateBody 已为 tokens 生成过 account 条目）。
+		// 不去重会让 refresh_deferred 翻倍 —— 实测上传 1 个账号报 2。
+		seen := make(map[string]bool, len(tokens)+len(accounts))
 		allTokens := make([]string, 0, len(tokens)+len(accounts))
-		allTokens = append(allTokens, tokens...)
-		for _, account := range accounts {
-			if token := strings.TrimSpace(stringValueOf(account["access_token"])); token != "" {
-				allTokens = append(allTokens, token)
+		addToken := func(raw string) {
+			token := strings.TrimSpace(raw)
+			if token == "" || seen[token] {
+				return
 			}
+			seen[token] = true
+			allTokens = append(allTokens, token)
 		}
+		for _, token := range tokens {
+			addToken(token)
+		}
+		for _, account := range accounts {
+			addToken(stringValueOf(account["access_token"]))
+		}
+		result["refreshed"] = 0
+		result["errors"] = []any{}
+		result["refresh_deferred"] = len(allTokens)
 
-		if len(allTokens) > 0 {
+		if wantsRefresh(c) && len(allTokens) > 0 {
 			refreshResult := d.Accts.RefreshAccounts(
 				c.Request.Context(), allTokens, "", d.refreshVerifier())
 			result["refreshed"] = refreshResult["refreshed"]
 			result["errors"] = refreshResult["errors"]
+			result["refresh_deferred"] = 0
 			if items, ok := refreshResult["items"]; ok {
 				result["items"] = items
 			}
-		} else {
-			result["refreshed"] = 0
-			result["errors"] = []any{}
 		}
 
 		c.JSON(http.StatusOK, result)
@@ -139,6 +157,72 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"item": account, "items": d.Accts.ListAccounts()})
+	})
+
+	// 批量设置代理：一次给多个账号分配出口代理。
+	//
+	// 注册机通常按批产出账号，逐个调 /api/accounts/update 既慢又容易漏。
+	// 支持两种形态：
+	//   1. 统一代理：{"access_tokens":[...], "proxy":"socks5h://..."}
+	//   2. 逐个映射：{"proxies":{"at-1":"socks5h://a", "at-2":""}}
+	//      （映射里的空字符串表示清空该账号的代理，回退全局）
+	r.POST("/api/accounts/proxy", func(c *gin.Context) {
+		if _, err := d.RequireAdmin(c.GetHeader("Authorization")); err != nil {
+			writeErr(c, err)
+			return
+		}
+		body, err := decodeJSONBody(c)
+		if err != nil {
+			writeErr(c, err)
+			return
+		}
+
+		assignments := map[string]string{}
+		if raw, ok := body["proxies"].(map[string]any); ok {
+			for token, value := range raw {
+				assignments[strings.TrimSpace(token)] = strings.TrimSpace(stringValueOf(value))
+			}
+		}
+		// 统一代理形态：access_tokens 里每个账号都设成同一个 proxy。
+		if proxy, ok := body["proxy"]; ok {
+			shared := strings.TrimSpace(stringValueOf(proxy))
+			for _, token := range stringList(body["access_tokens"]) {
+				assignments[strings.TrimSpace(token)] = shared
+			}
+		}
+		if len(assignments) == 0 {
+			writeErr(c, Errorf(http.StatusBadRequest,
+				"需要 access_tokens + proxy，或 proxies 映射"))
+			return
+		}
+
+		updated := 0
+		missing := make([]string, 0)
+		for token, proxy := range assignments {
+			if token == "" {
+				continue
+			}
+			if proxy == "" {
+				// 清空：写空串让 ProxyFor 回退全局。
+				if d.Accts.UpdateAccount(token, map[string]any{"proxy": ""}, true) != nil {
+					updated++
+				} else {
+					missing = append(missing, token)
+				}
+				continue
+			}
+			if d.Accts.UpdateAccount(token, map[string]any{"proxy": proxy}, true) != nil {
+				updated++
+			} else {
+				missing = append(missing, token)
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"updated": updated,
+			"missing": missing,
+			"items":   d.Accts.ListAccounts(),
+		})
 	})
 }
 
@@ -220,4 +304,16 @@ func stringList(value any) []string {
 	default:
 		return nil
 	}
+}
+
+// wantsRefresh 报告调用方是否要求上传后同步刷新。
+//
+// 接受 ?refresh=1 与 ?refresh=true（大小写不敏感）。默认不刷新 ——
+// 注册机批量上传时同步刷新会阻塞数分钟，且上游会看到成百个新会话。
+func wantsRefresh(c *gin.Context) bool {
+	switch strings.ToLower(strings.TrimSpace(c.Query("refresh"))) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }

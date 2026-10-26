@@ -622,6 +622,38 @@ func (s *AccountService) ListExpiringAccessTokens() []string {
 	return out
 }
 
+// ProxyFor 返回该 access_token 应该使用的出口代理。
+//
+// 优先级：账号自己的 proxy > config.json 的全局 proxy。
+//
+// 为什么需要它：账号记录里的 proxy 字段此前只被显示层读取
+// （ProxySettings.GetProfile → RuntimeStatus → /health 与设置页），
+// 从未参与真实出站请求 —— 7 处上游客户端全部只用 cfg.Proxy()。
+// 于是「给每个账号配不同出口 IP」这件事在数据上成立、在行为上无效。
+//
+// 空白字符视为未配置：把 "   " 传给 HTTP 客户端会得到一个解析不了的
+// 代理地址，比直接回退全局更糟。
+func (s *AccountService) ProxyFor(accessToken string) string {
+	global := ""
+	if s.cfg != nil {
+		global = s.cfg.Proxy()
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return global
+	}
+
+	s.mu.RLock()
+	account, ok := s.accounts[s.resolveTokenLocked(accessToken)]
+	s.mu.RUnlock()
+	if !ok {
+		return global
+	}
+	if own := strings.TrimSpace(stringValue(account["proxy"])); own != "" {
+		return own
+	}
+	return global
+}
+
 // ListAbnormalTokens 返回被标记为「异常」的账号。
 //
 // 为什么需要它：`异常` 原本是**终态** —— watcher 只挑 limited/normal/expiring，

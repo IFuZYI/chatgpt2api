@@ -103,7 +103,7 @@ func main() {
 	deps.Models = service.NewModelCatalog(accounts, func(ctx context.Context, accessToken string) ([]map[string]any, error) {
 		client, err := upstream.NewClient(upstream.ClientConfig{
 			AccessToken: accessToken,
-			ProxyURL:    cfg.Proxy(),
+			ProxyURL:    accounts.ProxyFor(accessToken),
 		})
 		if err != nil {
 			return nil, err
@@ -116,14 +116,14 @@ func main() {
 	deps.OAuth = service.NewOAuthLoginService()
 	deps.ChatCache = protocol.NewChatCompletionCache(deps.ChatCacheSettings)
 	deps.TextUpstream = func(ctx context.Context, accessToken string) (protocol.Upstream, func(), error) {
-		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
+		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: accounts.ProxyFor(accessToken)})
 		if err != nil {
 			return nil, nil, err
 		}
 		return client, client.Close, nil
 	}
 	deps.AccountInfoFetcher = func(ctx context.Context, accessToken string) (service.Account, error) {
-		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
+		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: accounts.ProxyFor(accessToken)})
 		if err != nil {
 			return nil, err
 		}
@@ -143,21 +143,21 @@ func main() {
 	// 必须在 NewRouter 之前接，否则第一次自动重登会因为未接线而被跳过。
 	deps.Accts.SetAutoRelogin(deps.PasswordLoginFunc())
 	deps.ImageUpstream = func(ctx context.Context, accessToken string) (protocol.ImageUpstream, func(), error) {
-		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
+		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: accounts.ProxyFor(accessToken)})
 		if err != nil {
 			return nil, nil, err
 		}
 		return client, client.Close, nil
 	}
 	deps.SearchUpstream = func(ctx context.Context, accessToken string) (protocol.SearchUpstream, func(), error) {
-		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
+		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: accounts.ProxyFor(accessToken)})
 		if err != nil {
 			return nil, nil, err
 		}
 		return client, client.Close, nil
 	}
 	deps.EditableUpstream = func(ctx context.Context, accessToken string) (protocol.EditableFileUpstream, func(), error) {
-		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: cfg.Proxy()})
+		client, err := upstream.NewClient(upstream.ClientConfig{AccessToken: accessToken, ProxyURL: accounts.ProxyFor(accessToken)})
 		if err != nil {
 			return nil, nil, err
 		}

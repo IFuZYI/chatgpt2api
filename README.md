@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="./README.en.md">English</a> ·
+  <a href="./docs/account-api.md">账号接口</a> ·
   <a href="./docs/deployment.md">部署文档</a> ·
   <a href="./docs/adr/">架构决策</a> ·
   <a href="./CHANGELOG.md">更新日志</a>
@@ -650,6 +651,7 @@ goroutine 槽位模型、单实例约束、`both` 模式为何降级、为何异
 
 | 文档 | 内容 |
 |:--|:--|
+| [账号接口](./docs/account-api.md) | **注册机上传账号、配置账号代理** —— 字段、返回、刷新行为、代理优先级 |
 | [配置说明](./docs/configuration.md) | **config.json / .env / compose 三者关系与优先级** —— 部署时该改哪个 |
 | [图片存储三模式](./docs/image-storage-modes.md) | `local` / `webdav` / `both` 的写入、读取、删除全流程与实测耗时 |
 | [部署文档](./docs/deployment.md) | 部署形态、反向代理、存储后端、备份、升级回滚、安全加固、排障 |
