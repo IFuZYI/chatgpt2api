@@ -2,44 +2,91 @@
 
 ## 2.3.0 - 2026-10-26
 
-账号引入稳定标识 `account_id`，并修掉由此暴露的前端选中态丢失问题。
+账号稳定标识 + 详情弹窗。**含 1 个安全修复**，建议升级。
+
+### 安全
+
++ **[中危] 4 个账号端点的响应泄漏凭据原文。**
+  脱敏函数 `maskAccountCredentials` 原本只在 `GET /api/accounts` 一个 handler
+  里调用，而 `POST /api/accounts`、`/api/accounts/update`、
+  `/api/accounts/proxy`、`DELETE /api/accounts` 都直接返回
+  `ListAccounts()` —— 实测响应含 `password` / `totp_secret` /
+  `refresh_token` / `id_token` 原文（DELETE 一次返回 260 个账号全部凭据）。
+
+  虽然都要 admin 权限，但列表接口刻意脱敏说明设计意图就是「不在批量读里
+  给原文」；且前端 update 后会把 items 存进状态，等于把密码送进浏览器内存。
+
+  修复：四个端点全部走脱敏；脱敏范围从 2 个字段扩到 **5 个**
+  （补 `refresh_token` / `id_token` / `session_token`）；
+  并改为**复制后处理**（原实现就地 `delete` 会改写入参 ——
+  若该 map 与号池内存共享，密码被删后重登会失败）。
+
+  新增**端点级集成测试**：经真实 router 逐个打 5 个返回账号列表的端点。
+  这比只测脱敏函数有价值 —— 后者测不出「handler 忘了调用它」。
 
 ### 新增
 
++ **账号详情弹窗。** 号池管理每个账号行新增眼睛按钮，点开显示 5 组信息：
+  基本信息 / 凭据（密码、2FA）/ 令牌与有效期 / 运行状态 / 诊断。
+  凭据默认遮罩，点「显示」展开，可复制。
+
+  派生字段：`access_token_expires_in`（**-1 = 非 JWT，无法判断**，
+  与「已过期」严格区分）、`access_token_expires_at`、`proxy_source`
+  （account/global/direct）、`proxy_effective`、`has_*` 布尔值。
+
+  诊断组展示 `invalid_count` / `last_invalid_at` / `last_refresh_error` /
+  `last_token_refresh_*` / `default_model_slug` —— 这些后端一直在返回但 UI
+  此前完全不展示，而它们正是「这个号为什么失效」的答案。
+
++ **`GET /api/accounts/detail`** —— 单账号详情，返回凭据原文（与列表接口
+  刻意不同）。同时接受 `access_token` 与 `account_id` 两个参数名。
+
 + **`account_id`：UUID 形态的稳定标识，终身不变。**
-  此前账号没有稳定标识，唯一可用的引用键是 `access_token` —— 而它会变：
-  RT 换 AT（keepalive，每 3 天一次）与密码重登都会换掉它。
+  此前唯一可用的引用键是 `access_token`，而它会变：RT 换 AT（keepalive，
+  每 3 天一次）与密码重登都会换掉它。
 
   后果（实测）：
-  - 前端 React key 用 token，轮换后该行 DOM 被重建，选中态与展开态丢失
-  - SQL 后端把旧行 `DELETE`、新行 `INSERT`，自增 `id` 从 1 变成 3
+  - 前端 React key 用 token，轮换后 DOM 被重建，**选中态与展开态丢失**
+  - SQL 后端把旧行 DELETE、新行 INSERT，自增 id 从 1 变成 3
   - 外部系统记下的 token 引用在轮换后失效（`aliases` 只在内存，重启即丢）
 
-  生成规则：新账号用 UUIDv5 确定性派生；已有 `account_id` 原样保留；
-  历史账号按 `user_id > email > access_token` 的种子确定性回填 ——
-  **不是随机生成**，否则每次重启都会换一批 ID。
+  生成规则：新账号 UUIDv5 确定性派生；已有 `account_id` 原样保留；
+  历史账号按种子确定性回填。**确定性是关键** —— 随机生成会让每次重启
+  换一批 ID，等于没有稳定标识（实测 260 个账号重启前后 ID 完全一致）。
 
-+ **详情接口可按 `account_id` 查询**，不必再用 token：
-  `GET /api/accounts/detail?account_id=...`。
-  三个参数名都接受，优先级 `access_token` → `account_id` → `id`。
+  唯一性由 `disambiguateAccountIDs` 在**插入点**保证，并优先保留已持久化
+  的 id（可能已被外部引用）。
 
 ### 修复
 
-+ **前端选中态在 token 轮换后丢失。** React key 与 `selectedIds` 此前存
-  `access_token`，轮换后 React 认为是新行 —— 用户明明没动过，勾选却没了。
-  改为存 `account_id`（批量操作时再映射回 token，因为刷新/删除接口按 token 工作）。
++ **`account_id` 同种子碰撞导致按 ID 查询解析到不确定的账号。**
+  派生只用「第一个非空字段」做种子，两个账号共享 `user_id`/`email` 时
+  会派生出**完全相同**的 id；而 `findByAccountIDLocked` 返回 map 迭代中的
+  第一个匹配 —— Go 的 map 顺序随机。实测：连续两次查询分别得到 `at-1`
+  与 `at-2`。
+
+  修复时踩了三个坑（记录在 `AGENTS.md`）：把 token 纳入种子会破坏轮换
+  稳定性；`persisted` 用「id 非空」判断会把刚派生的也当成已持久化；
+  最终在插入循环**之前**快照 pre-existing 账号才通过。
+
++ 前端选中态在 token 轮换后丢失。`React key` 与 `selectedIds` 从
+  `access_token` 改为 `account_id`（批量操作时再映射回 token）。
+
++ `POST /api/accounts/update` 无法补 `totp_secret` / `password` / `email`
+  —— 白名单原本只有 4 个字段，漏了 TOTP 的账号只能重新上传整个对象。
 
 ### 迁移
 
 + 已有账号在首次加载时自动回填 `account_id`，无需人工操作。
-  实测 260 个账号全部回填成功，且重启前后 ID 完全一致。
+  实测 260 个账号全部回填成功，重启前后 ID 完全一致，唯一性 260/260。
 + JSON 与 SQL 后端都会持久化该字段（SQL 的 `data` 列存整个对象，无需改表）。
+  SQL 首次升级走 UPDATE 而非 DELETE+INSERT，自增 id 保持不变。
 
 ### 文档
 
-+ 格式参考新增 [2.6 `account_id`](docs/account-api-reference.md#26-account_id稳定标识)：
-  为什么需要、生成规则、用于别处、场景对照表。
-+ 操作文档注明「把返回的 `account_id` 存进你自己的库」。
++ `AGENTS.md`：项目作业规范（5 条硬规则，每条附实测来源）
++ [账号接口](docs/account-api.md) 与 [格式参考](docs/account-api-reference.md)：
+  补 2FA 章节（只支持 TOTP）、`account_id` 章节、详情接口。
 
 ## 2.2.1 - 2026-10-26
 
