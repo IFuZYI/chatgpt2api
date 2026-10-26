@@ -292,7 +292,7 @@ service starts.
 | `CHATGPT2API_BASE_DIR` | Data root | binary's directory |
 | `CHATGPT2API_DEBUG` | `1` emits `[image]` diagnostics | off |
 | `CHATGPT2API_WEB_DIST` | Frontend static dir (dev, overrides embed) | empty |
-| `CHATGPT2API_MAX_IMAGE_PIXELS` | Max decoded pixels per image (OOM guard) | `20000000` |
+| `CHATGPT2API_MAX_IMAGE_PIXELS` | Max decoded pixels per image (OOM guard) | `8000000` |
 | `STORAGE_BACKEND` | `json` / `sqlite` / `postgres` / `git` | `json` |
 | `DATABASE_URL` | File path for sqlite, DSN for postgres | empty |
 
@@ -455,18 +455,31 @@ to OOM the instance.
 
 ### Image decode pixel budget
 
-Decoded pixels per image default to **20 million** (about 1.2× a 4096×4096 image).
+Decoded pixels per image default to **8 million** (about 2828×2828).
 
 Why this is not aligned with Pillow: Pillow's hard-error threshold is 179M pixels,
-but that is the **library's** threshold, not the **process's** budget — 179M pixels
-× 4 bytes = 683 MB of NRGBA, while the compositing path holds the decoded image,
-the NRGBA copy, the alpha channel and the PNG encode buffer at once.
+but that is the **library's** threshold, not the **process's** budget. Measured
+allocation is **14.2 bytes/pixel** (not the 4 bytes of a single NRGBA) — the
+compositing path holds the decoded image, the composited result, the scaled mask,
+the mask grayscale and the alpha channel at once. 8M pixels peaks at about
+**144 MB** RSS.
+
+Mask compositing also has a **concurrency gate** (default 2): it runs before the
+account-pool quota and concurrency admission gates, so without one N concurrent
+requests cost N × 144 MB. Measured: 4 concurrent requests peaked at +168 MB.
 
 Raise it on large-memory deployments:
 
 ```bash
-CHATGPT2API_MAX_IMAGE_PIXELS=50000000 ./chatgpt2api --addr :8080
+CHATGPT2API_MAX_IMAGE_PIXELS=30000000 ./chatgpt2api --addr :8080
 ```
+
+### Difference from OpenAI's own limits
+
+Upstream `/v1/images/edits` allows roughly a 50 MB body; this service allows
+16 MiB. Base64 uploads above 16 MiB get a 413 — a deliberate trade-off: a single
+instance has finite memory, and the decoded pixel budget (8M) is usually the
+binding constraint anyway.
 
 ### Deployment notes
 

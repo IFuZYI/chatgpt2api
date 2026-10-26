@@ -29,10 +29,26 @@
   = 683 MB NRGBA，而 `compositeOneMask` 同时持有 `decoded` + `composited`
   + `alpha` + PNG 编码缓冲，峰值远超 683 MB。
 
-  修复：改为默认 20,000,000 像素（4096×4096 正常放行，峰值 ~80 MB），
-  可用 `CHATGPT2API_MAX_IMAGE_PIXELS` 覆盖。
+  修复：改为默认 8,000,000 像素（2828×2828，实测峰值 RSS ~144 MB），
+  并给 mask 合成加**并发闸门**（默认 2）—— 合成发生在号池配额与并发槽位
+  准入之前，不设闸门时 N 个并发就是 N × 144 MB（实测 4 个并发峰值 +168 MB）。
+
+  更正一处早期说明：实测分配系数是 **14.2 字节/像素**而非 4 ——
+  合成路径同时持有原始图、合成结果、缩放 mask、mask 灰度图与 alpha 五份缓冲。
+
+  可用 `CHATGPT2API_MAX_IMAGE_PIXELS` 覆盖（大内存部署放宽到 3000 万等）。
 
   **有意偏离 Python**：Pillow 对 144M 像素只警告不拒绝，本版拒绝。
+
++ **[中危] multipart 上传绕过请求体上限。**
+  `ParseMultipartForm` 是独立的 body 读取路径，不经过 `decodeJSONBody`，
+  所以 `MaxBytesReader` 不生效。实测 41.9 MB multipart body 被接受，
+  分配 274.8 MiB。修复：同一上限（16 MiB）单独套在 multipart 分支。
+
++ **[中危] PPT / PSD 端点漏在图片额度列表外。**
+  `/v1/ppt/generations` 与 `/v1/psd/generations` 都收 `base64_images`
+  （PSD 要求至少一张参考图），漏在列表外会让 >~750 KB 的参考图被 413
+  —— 合法上传被误伤。
 
 + **[中危] 首次 401 就删除账号。**
   `shouldDeferInvalidTokenLocked` 在首次失效时 `last_invalid_at` 为空、
