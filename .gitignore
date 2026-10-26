@@ -55,3 +55,6 @@ test_batch_output/
 .superpowers/
 # 自改进学习日志（本地）
 .learnings/
+
+# dogfood 产物（截图/轨迹，本地保留即可）
+dogfood-output/

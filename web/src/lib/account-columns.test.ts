@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ACCOUNT_COLUMNS, FIRST_COLUMN_KEY, METRIC_GRID_CLASS, rowAccentClass } from "./account-columns.ts";
+import { ACCOUNT_COLUMNS, DEFAULT_PAGE_SIZE, FIRST_COLUMN_KEY, METRIC_GRID_CLASS, PAGE_SIZE_OPTIONS, rowAccentClass, sameAccountRow, SEARCH_DEBOUNCE_MS, normalizeQuery, sameQuery, shouldCollapseModels, MOBILE_BREAKPOINT_PX } from "./account-columns.ts";
 
 // 账号首页：账号信息放第一列。
 //
@@ -61,4 +61,61 @@ test("metric grid uses multiple columns on mobile", () => {
   assert.ok(METRIC_GRID_CLASS.includes("grid-cols-2"), "移动端应 2 列，避免占满整屏");
   assert.ok(!/^grid grid-cols-1 /.test(METRIC_GRID_CLASS), "不应是单列");
   assert.ok(METRIC_GRID_CLASS.includes("xl:grid-cols-6"), "宽屏应展示全部 6 张");
+});
+
+// 分页默认值：过大导致每次渲染重建上千 DOM 节点（实测卡顿）。
+test("default page size keeps render cost bounded", () => {
+  assert.ok(DEFAULT_PAGE_SIZE >= 10, "太小会让翻页过于频繁");
+  assert.ok(DEFAULT_PAGE_SIZE <= 50, "超过 50 条单次渲染节点过多，会卡顿");
+  assert.ok(PAGE_SIZE_OPTIONS.includes(DEFAULT_PAGE_SIZE), "默认值必须在可选项里");
+});
+
+test("page size options are ascending and unique", () => {
+  const sorted = [...PAGE_SIZE_OPTIONS].sort((a, b) => a - b);
+  assert.deepEqual([...PAGE_SIZE_OPTIONS], sorted, "选项应升序");
+  assert.equal(new Set(PAGE_SIZE_OPTIONS).size, PAGE_SIZE_OPTIONS.length, "选项不应重复");
+});
+
+// 行比对：只有影响视觉的字段变化才重渲染。
+test("sameAccountRow ignores access_token rotation", () => {
+  const before = { account_id: "a", email: "x@y.z", status: "正常", type: "free", quota: 1, restore_at: null, success: 0, fail: 0, access_token: "OLD" };
+  const after = { ...before, access_token: "NEW" };
+  assert.equal(sameAccountRow(before, after), true, "token 轮换不该触发重渲染");
+});
+
+test("sameAccountRow detects visible field changes", () => {
+  const base = { account_id: "a", email: "x@y.z", status: "正常", type: "free", quota: 1, restore_at: null, success: 0, fail: 0 };
+  for (const [field, value] of [["status", "异常"], ["quota", 0], ["email", "z@y.z"], ["type", "Plus"]] as const) {
+    assert.equal(sameAccountRow(base, { ...base, [field]: value }), false, `${field} 变化必须重渲染`);
+  }
+});
+
+// 搜索延迟：必须在一个「打字不卡」与「输入有反馈」之间的区间。
+test("search debounce is in a sane range", () => {
+  assert.ok(SEARCH_DEBOUNCE_MS >= 100, "低于 100ms 快速打字仍逐字重算");
+  assert.ok(SEARCH_DEBOUNCE_MS <= 250, "高于 250ms 用户会觉得输入没反应");
+});
+
+// 纯空白与空串等价，避免按空格时白跑一次全量过滤。
+test("normalizeQuery treats whitespace as empty", () => {
+  assert.equal(normalizeQuery(""), "");
+  assert.equal(normalizeQuery("   "), "");
+  assert.equal(normalizeQuery("  Laxest "), "laxest");
+});
+
+test("sameQuery ignores case and surrounding spaces", () => {
+  assert.equal(sameQuery("Laxest", "laxest"), true);
+  assert.equal(sameQuery("  laxest  ", "laxest"), true);
+  assert.equal(sameQuery("laxest", "laxest1"), false);
+  assert.equal(sameQuery("", "   "), true);
+});
+
+// 移动端必须默认折叠模型列表，否则账号列表要滚 3 屏才出现。
+test("models block collapses on mobile by default", () => {
+  assert.equal(shouldCollapseModels(true), true, "移动端应折叠");
+  assert.equal(shouldCollapseModels(false), false, "桌面端应展开");
+});
+
+test("mobile breakpoint matches tailwind sm", () => {
+  assert.equal(MOBILE_BREAKPOINT_PX, 640);
 });

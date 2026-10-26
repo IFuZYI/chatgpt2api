@@ -920,7 +920,13 @@ function AccountIdentity({ account }: { account: Account }) {
               系统可用模型
               <span className="ml-1 text-stone-400">({availableModels.length})</span>
             </div>
-            <div className="flex flex-wrap gap-2">
+            {/*
+              移动端限高：dogfood 实测（390×844）15 个标签换行 5 行、
+              占满整整一屏，加上统计卡片后账号列表要滚 3 屏才出现。
+              这里用 max-height + overflow 限制到约 2 行，
+              需要看全部时仍可滚动（不引入 JS 状态，无 hydration 抖动）。
+            */}
+            <div className="flex max-h-[4.5rem] flex-wrap gap-2 overflow-y-auto sm:max-h-none sm:overflow-visible">
               {availableModels.length > 0 ? (
                 availableModels.map((model) => (
                   <button
