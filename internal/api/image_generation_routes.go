@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -432,7 +433,19 @@ func parseImageEditRequest(c *gin.Context) (map[string]any, [][3]string, [][3]st
 		return body, images, mask, nil
 	}
 
+	// multipart 是**独立**的 body 读取路径，不经过 decodeJSONBody，
+	// 所以 MaxBytesReader 不会自动生效 —— 必须在这里自己套一层。
+	//
+	// 否则 multipart 形态可以绕过整个上限：ParseMultipartForm 的 32 MiB
+	// 是「内存阈值」（超过就落临时文件），不是请求体总上限，攻击者仍可
+	// 上传任意大的 body。
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxImageBodyBytes)
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return nil, nil, nil, Errorf(http.StatusRequestEntityTooLarge,
+				"request body too large: limit is "+strconv.FormatInt(maxImageBodyBytes, 10)+" bytes")
+		}
 		return nil, nil, nil, Errorf(http.StatusBadRequest, "invalid multipart form")
 	}
 

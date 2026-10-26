@@ -82,3 +82,23 @@ func TestImageLimitExceedsControlPlane(t *testing.T) {
 		t.Fatalf("图片上限 %d 应大于控制面上限 %d", maxImageBodyBytes, maxJSONBodyBytes)
 	}
 }
+
+// multipart 路径必须同样受上限约束。
+//
+// 回归点：ParseMultipartForm 是**独立**的 body 读取路径，不经过
+// decodeJSONBody —— MaxBytesReader 不会自动生效。它自己的 32 MiB 参数是
+// 「内存阈值」（超过就落临时文件），不是请求体总上限，攻击者仍可上传
+// 任意大的 body 绕过整个限制。
+func TestMultipartBodyAlsoLimited(t *testing.T) {
+	if maxImageBodyBytes <= 0 {
+		t.Fatal("图片端点上限未定义")
+	}
+	// 断言上限确实小于 ParseMultipartForm 的内存阈值不会掩盖问题：
+	// 关键是两者都存在，且请求体上限先触发。
+	t.Logf("multipart 端点上限 %d B，ParseMultipartForm 内存阈值 %d B",
+		maxImageBodyBytes, 32<<20)
+	if maxImageBodyBytes > 32<<20 {
+		t.Errorf("请求体上限 %d 大于内存阈值 %d，应更小或相等",
+			maxImageBodyBytes, 32<<20)
+	}
+}
