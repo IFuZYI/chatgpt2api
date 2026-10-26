@@ -176,7 +176,21 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 			writeErr(c, Errorf(http.StatusBadRequest, "tokens is required"))
 			return
 		}
-		c.JSON(http.StatusOK, d.Accts.DeleteAccounts(tokens))
+		// 删除接口返回「剩余账号列表」供前端刷新表格 —— 它同样是一次
+		// 批量读，必须脱敏（实测未脱敏时 260 个账号全部带凭据原文）。
+		deleted := d.Accts.DeleteAccounts(tokens)
+		if items, ok := deleted["items"].([]map[string]any); ok {
+			deleted["items"] = maskAccountCredentials(items)
+		} else if raw, ok := deleted["items"].([]any); ok {
+			converted := make([]map[string]any, 0, len(raw))
+			for _, item := range raw {
+				if typed, ok := item.(map[string]any); ok {
+					converted = append(converted, typed)
+				}
+			}
+			deleted["items"] = maskAccountCredentials(converted)
+		}
+		c.JSON(http.StatusOK, deleted)
 	})
 
 	r.POST("/api/accounts/update", func(c *gin.Context) {
