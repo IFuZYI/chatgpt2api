@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.3.2 - 2026-10-26
+
+Docker 部署全面优化。
+
+### 修复
+
++ **`docker-compose.local.yml` 与 `docker-compose.warp.yml` 的
+  `config.json` 同样会 `permission denied`。**
+  2.3.1 只修了主 compose 的 `init-data`，而另外两个也挂 `config.json`
+  却只 chown 了 `data/`。修复：三个 compose 全部处理。
+
++ **三个 compose 都没有安全加固。**
+  补齐 `user: "65532:65532"`、`cap_drop: [ALL]`、
+  `security_opt: no-new-privileges:true`。
+
++ **容器日志无大小限制。**
+  docker 默认无限增长；本服务每 5 分钟刷一次账号，日志量不小，
+  单机跑几个月会写满磁盘。补齐 `json-file` + `max-size: 10m` +
+  `max-file: 3`（含 warp 的 privoxy / flaresolverr）。
+
++ **`.dockerignore` 未排除测试文件与本地日志。**
+  `*_test.go`（1 MB，含测试夹具常量）与 `.learnings/` 会进构建上下文。
+
+### 新增
+
++ **`scripts/test-compose.py`** —— Docker 部署的契约测试，43 项检查，
+  每个用例对应一个真实部署缺陷（不是最佳实践清单）：
+
+  1. 每个 compose 的 `init-data` 必须 chown `config.json`，且真的挂载它
+  2. `app` 必须显式非 root + `cap_drop ALL` + `no-new-privileges`
+  3. 每个长期运行的服务必须有日志大小限制
+  4. `/app/data` 必须可写（唯一需要持久化的目录）
+  5. `.dockerignore` 必须挡住 `data` / `config.json` / `.learnings` / `*_test.go`
+  6. Dockerfile 最终层只能 COPY 二进制与 VERSION，且切到 nonroot
+
+  改动前 19 项失败 → 改动后 43 项全过。
+
+### 文档
+
++ `docs/deployment.md` 补「容器安全基线」章节与 `config.json` 权限的
+  完整诊断说明（为什么只改目录权限不够，必须改文件属主）。
+
+### 验证
+
+真实容器端到端：`config.json` 属主 `root:root` → `65532:65532`；
+容器 `healthy`；设置保存 `200` 且配置真的落盘；加固后 5 个关键端点全 200；
+`docker inspect` 确认 User / CapDrop / SecurityOpt / LogConfig 全部生效。
+
 ## 2.3.1 - 2026-10-26
 
 code review 后的修复版。**含 2 个安全修复**，建议升级。

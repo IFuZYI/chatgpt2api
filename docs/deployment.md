@@ -50,9 +50,50 @@
 
 **升级和迁移时只需要保留以上内容**；二进制/镜像本身可以随时替换。
 
-> `data/` 目录必须对容器内的 **uid 65532**（`nonroot`）可写。
-> 用 bind mount 时若宿主机目录属主是 root 且权限过紧，
-> 服务会在写账号文件时报 `permission denied`。
+> **两个路径都必须对容器内的 uid 65532（`nonroot`）可写：**
+>
+> | 路径 | 用途 | 不可写时 |
+> |:--|:--|:--|
+> | `data/` | 账号、图片、任务记录 | 写账号文件报 `permission denied` |
+> | `config.json` | 运行配置 | **设置页保存失败**：`open /app/config.json: permission denied` |
+>
+> 用 bind mount 时若宿主机属主是 root 且权限过紧，两个都会中招。
+> compose 里的 `init-data` 服务会自动 chown 它们（含 `config.json`），
+> 所以**正常流程不需要手动处理**。
+>
+> 若你手工起了容器（不用 compose），或者从旧版本升级，手动修一次：
+>
+> ```bash
+> sudo chown -R 65532:65532 data config.json
+> docker compose restart chatgpt2api
+> ```
+>
+> 诊断方法：容器内以 65532 运行，`config.json` 以**单文件 bind mount**
+> 挂进 `/app/config.json`。原子写需要先在 `/app` 建 `.tmp`（镜像内目录，
+> 属 root，不可写），失败后回退就地写文件本身（属主不是 65532，也不可写）
+> —— 两个都失败，所以只改目录权限不够，必须改文件属主。
+
+---
+
+## 容器安全基线
+
+三个 compose 文件都已配置：
+
+| 项 | 值 | 作用 |
+|:--|:--|:--|
+| `user` | `65532:65532` | 显式非 root（镜像默认已是，但写明才防基础层回归） |
+| `cap_drop` | `[ALL]` | 进程不需要任何 capability（不绑特权端口） |
+| `security_opt` | `no-new-privileges:true` | 禁止 setuid/setgid 提权 |
+| `logging` | json-file, 10m × 3 | 限制日志大小（默认无限增长会写满磁盘） |
+
+这些约束由 `scripts/test-compose.py` 守卫（43 项检查）：
+
+```bash
+python3 scripts/test-compose.py
+```
+
+改 compose 后跑一遍 —— 它会检查每个 compose 的 init-data 是否 chown 了
+`config.json`、app 是否有加固、每个长期运行的服务是否限了日志大小。
 
 ---
 
