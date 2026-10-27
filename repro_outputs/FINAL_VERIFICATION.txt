@@ -1072,3 +1072,43 @@ VERIFICATION AFTER ROUND 27
 [PASS] gofmt / go vet / go build / go test ./...   (8 packages)
 [PASS] CHANGELOG and release notes: code fences balanced, 0 broken links
 [PASS] performance figures consistent between CHANGELOG and docs/performance.md
+
+ROUND 28 — REPOSITORY HYGIENE
+-----------------------------
+[FIXED] A bare `edit` rule in .gitignore, left over from the Python era.
+  Commit b36b432 (2026-04, "支持图片编辑") added two bare rules:
+
+      +edit
+      +test
+
+  `test` was later removed for colliding with the test/ directory; `edit`
+  survived. A bare rule matches ANY file or directory named exactly `edit`
+  anywhere in the tree — and "edit" is a common word, so a future docs/edit,
+  a script named edit, or a subdirectory would be silently ignored with no
+  hint at commit time. (`test` had already demonstrated exactly this failure.)
+  Safe to remove: image-edit output now goes to data/files/, and "edit" appears
+  in the code only as a task-mode string; there is no top-level edit directory.
+  Verified that removing it surfaces no previously-hidden files.
+
+  Other entries (docker-compose-local.yml, git_cache/, loginwithpassword_*/,
+  logwithemailverifycode_*/, test_batch_output/) were reviewed and deliberately
+  KEPT: they are preventative ignores for tool/runtime directories whose names
+  cannot collide with real files — a different situation from `edit`.
+
+CHECKED, NO ISSUES FOUND (recorded so this ground is not re-covered):
+  * No runtime data or credentials are tracked: config.json, .env,
+    data/accounts.json, data/auth_keys.json, data/logs.jsonl, web/out/ are all
+    untracked, and nothing under data/ is tracked at all.
+  * Full git history scanned for credential shapes (JWT bodies, sk-…, ghp_…,
+    AKIA…): the only hit is the literal placeholder `ghp_xxx…` in docs. No real
+    secrets were ever committed.
+  * `.gitignore` coverage is complete: `git status` shows no untracked,
+    unignored noise.
+  * testdata fixtures are not dead weight: the 27 golden files map to exactly
+    27 TestGoldenParity subtests.
+
+VERIFICATION AFTER ROUND 28
+---------------------------
+[PASS] gofmt / go vet / go build / go test ./...   (8 packages)
+[PASS] removing the `edit` rule surfaces no new files
+[PASS] 27 golden fixtures = 27 subtests
