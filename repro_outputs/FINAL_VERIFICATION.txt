@@ -924,3 +924,60 @@ VERIFICATION AFTER ROUND 24
 [PASS] go test ./...            (8 packages)
 [PASS] every numeric claim in the ADRs either verified or rewritten to state
        its measurement basis
+
+ROUND 25 — RELEASE WORKFLOWS + A MODULE BOUNDARY BUG
+----------------------------------------------------
+Audited all three workflows (release.yml, docker-publish.yml, test.yml), since
+these are the paths that will run the moment a maintainer re-enables Actions —
+a defect here would fail the 2.2.3 release itself.
+
+[FIXED] Go tooling was absorbing third-party code from node_modules.
+  `./...` cannot exclude node_modules, and the npm tree can contain Go sources
+  (flatted ships a golang/ directory with no go.mod of its own). Measured:
+
+      go list ./...    with web/node_modules → 11 packages (incl. flatted)
+                       without               → 10 packages
+
+  So `go test ./...` / `go vet ./...` / `go build ./...` produced different
+  results depending on whether the developer had run npm install, and compiled
+  plus tested code we neither wrote nor control (it moves with npm dependency
+  versions). Fixed by placing a minimal `web/go.mod` as a module boundary —
+  `./...` now stops there and the count is a stable 10.
+  Verified: go list stable at 10; go test / vet / build pass; npm run build
+  unaffected; docker build unaffected (image still carries HEALTHCHECK and the
+  --healthcheck subcommand executes). CI happens to be unaffected today (its Go
+  jobs never run npm ci) but that is coincidence, not a guarantee.
+  Recorded as AGENTS.md rule 14.
+
+WORKFLOW AUDIT — checked, all sound:
+  * release.yml resolves the version by stripping the `v` prefix, builds the
+    frontend before the Go build (order matters: `all:web_dist` embed fails
+    otherwise), stages it with `cp -r web/out/.`, and injects the version via
+    -X. Reproduced this exact sequence locally for all six platforms in an
+    earlier round; artifact names and checksums match.
+  * `go build -o dist/<name>` without a prior mkdir — verified Go creates the
+    parent directory, so this is fine.
+  * docker-publish.yml tags both `vX.Y.Z` (type=ref,event=tag) and `X.Y.Z`
+    (type=semver), so the release body's
+    `docker pull .../chatgpt2api:vX.Y.Z` resolves.
+  * `target: runtime` exists in the Dockerfile (the historical `target: app`
+    bug is fixed and commented).
+  * Go and Docker agree on 1.27; web/package-lock.json exists for the
+    setup-node cache key.
+  * Race job (`./internal/service/ ./internal/protocol/ ./internal/api/`)
+    reproduced locally with TZ=Asia/Shanghai: all three pass.
+  * `generate_release_notes: true` together with an inline `body`: per the
+    action's README, the body is PREPENDED to the generated notes, not an
+    override — so both appear. Checked because it would have silently
+    discarded either my release notes or GitHub's changelog.
+  * Deliberately did NOT bump softprops/action-gh-release v2 → v3: v3 is only a
+    Node 20→24 runtime change, and v2 is *proven* for this repo (releases
+    v2.0.1–v2.2.2 were produced by it). Changing a working, untestable
+    component would add risk for no functional gain.
+
+VERIFICATION AFTER ROUND 25
+---------------------------
+[PASS] gofmt / go vet / go build / go test ./...   (8 packages)
+[PASS] go list ./... stable at 10 packages regardless of node_modules
+[PASS] 0 broken links
+[PASS] docker build ok, HEALTHCHECK present, --healthcheck executes
