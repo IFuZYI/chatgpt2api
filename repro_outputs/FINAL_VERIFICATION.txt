@@ -118,3 +118,23 @@ Artifacts + SHA256SUMS.txt staged outside the repo at:
   /home/chatgpt2api-release-v2.2.3/
 linux/amd64 artifact verified at runtime: /, /health and an authenticated API
 all return 200 and it reports version 2.2.3 without a VERSION file.
+
+DEPENDENCY SECURITY (round 2)
+-----------------------------
+[FIXED] npm audit --omit=dev reported 3 vulnerabilities (1 critical, 2 high):
+        next <=16.4.0, postcss <=8.5.22, sharp <=0.35.5-rc.1.
+        Risk assessment: the frontend is `output: 'export'` — a pure static
+        bundle with no Next.js server process, no Server Actions and no
+        route.ts, so most advisories (RCE / SSRF / middleware bypass) are not
+        reachable; postcss and sharp never enter the shipped bundle. The
+        upgrade is defence in depth, not an emergency fix.
+        Upgraded next 16.2.3 → 16.4.3. After upgrade: typecheck ok,
+        51 frontend tests pass, next build ok, `npm audit --omit=dev` reports
+        0 vulnerabilities, and the embedded build still serves /, /accounts and
+        /health with 200 and the correct 2.2.3 version string.
+
+FINAL ARTIFACTS (rebuilt after all fixes)
+-----------------------------------------
+6 platforms + SHA256SUMS.txt at /home/chatgpt2api-release-v2.2.3/
+linux/amd64 verified at runtime: / 200, /health 200, authenticated API 200,
+startup log reports "chatgpt2api 2.2.3".
