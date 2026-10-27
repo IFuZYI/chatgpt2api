@@ -52,7 +52,7 @@ func (s *passwordLoginStub) Close() {}
 func TestReLoginEndpointRunsPasswordFlow(t *testing.T) {
 	deps := newTestDeps(t)
 	stub := &passwordLoginStub{}
-	deps.PasswordLoginClient = func() (service.PasswordLoginTransport, error) { return stub, nil }
+	deps.PasswordLoginClient = func(proxyURL string) (service.PasswordLoginTransport, error) { return stub, nil }
 
 	seed := deps.Accts.AddAccountItems([]map[string]any{{
 		"access_token": "stale-token",
@@ -137,7 +137,7 @@ func TestReLoginEndpointRunsPasswordFlow(t *testing.T) {
 func TestReLoginEndpointReportsMissingPassword(t *testing.T) {
 	deps := newTestDeps(t)
 	calls := 0
-	deps.PasswordLoginClient = func() (service.PasswordLoginTransport, error) {
+	deps.PasswordLoginClient = func(proxyURL string) (service.PasswordLoginTransport, error) {
 		calls++
 		return &passwordLoginStub{}, nil
 	}

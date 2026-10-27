@@ -45,6 +45,15 @@ const (
 	PasswordLoginNoAuthCode = "no_auth_code"
 	// PasswordLoginInvalidPassword 表示密码错误。
 	PasswordLoginInvalidPassword = "invalid_password"
+	// PasswordLoginInvalidUsernameOrPassword 是上游对凭据错误的另一种 code。
+	//
+	// 实测（2026-10-27）：password/verify 返回
+	//   HTTP 401 {"code":"invalid_username_or_password",
+	//             "message":"Login failed. Please try again or seek help at ..."}
+	// message 是通用文案，不含 "invalid credentials" / "wrong password"，
+	// 只按 message 匹配会漏判成 password_verify_failed_401 —— 于是
+	// 一个密码确实错掉的账号被当成"环境问题"无限重试。
+	PasswordLoginInvalidUsernameOrPassword = "invalid_username_or_password"
 	// PasswordLoginInvalidState 表示 authorize 的 state 失效。
 	PasswordLoginInvalidState = "invalid_state"
 	// PasswordLoginUnsupportedRegion 表示出口 IP 所在地区不被支持。
@@ -98,7 +107,10 @@ type PasswordLoginTransport interface {
 }
 
 // PasswordLoginClientFactory 构造一个 transport；每次登录一个新会话。
-type PasswordLoginClientFactory func() (PasswordLoginTransport, error)
+//
+// proxyURL 是该账号的出口代理（可能为空 = 直连）。工厂必须把它传给
+// 上游客户端，不能忽略 —— 否则账号在重登时从另一个 IP 出去。
+type PasswordLoginClientFactory func(proxyURL string) (PasswordLoginTransport, error)
 
 // GenerateTOTP 生成 RFC 6238 的 6 位验证码（SHA1 / 30 秒窗口）。
 //
@@ -241,6 +253,18 @@ func mfaVerifyHeaders(deviceID, referer string) map[string]string {
 // 返回 {access_token, refresh_token, id_token}；失败返回 *PasswordLoginError，
 // 其中的 Code 是明确分类（绝不静默跳过）。
 func LoginWithPassword(ctx CtxLike, newTransport PasswordLoginClientFactory, email, password, totpSecret string) (map[string]string, error) {
+	return LoginWithPasswordVia(ctx, newTransport, "", email, password, totpSecret)
+}
+
+// LoginWithPasswordVia 是带出口代理的版本。
+//
+// proxyURL 由调用方从账号记录解析（AccountService.ProxyFor），
+// 保持「同一账号的所有出站走同一个出口」这一不变量。
+func LoginWithPasswordVia(
+	ctx CtxLike,
+	newTransport PasswordLoginClientFactory,
+	proxyURL, email, password, totpSecret string,
+) (map[string]string, error) {
 	trimmedEmail := strings.TrimSpace(email)
 	if trimmedEmail == "" {
 		return nil, newPasswordLoginError(PasswordLoginNoEmail, "账号缺少 email，无法发起密码登录")
@@ -251,7 +275,7 @@ func LoginWithPassword(ctx CtxLike, newTransport PasswordLoginClientFactory, ema
 	if newTransport == nil {
 		return nil, newPasswordLoginError("transport_not_configured", "密码登录的上游客户端未注入")
 	}
-	transport, err := newTransport()
+	transport, err := newTransport(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("build auth client: %w", err)
 	}
@@ -401,6 +425,27 @@ type mfaVerifyPayload struct {
 	Code string `json:"code"`
 }
 
+// accountDeactivatedSignals 是「账号已被停用/删除」的判定信号。
+//
+// 为什么必须单独抽出来：上游把 account_deactivated 报在**多个步骤**上，
+// 而每个步骤各有一套错误映射。实测（2026-10-27，真实封号账号）：
+// 密码校验能过，账号在 **mfa/verify** 才回 403 + code=account_deactivated。
+// 只有 passwordVerifyError 认这个 code 时，封号会被降级成
+// mfa_verify_failed_403 → 上层判为「非确定性失败」→ 永远不禁用、永远重试。
+//
+// 判定同时看 code 与 message：上游不同步骤给的 code 未必一致，
+// 但 message 里固定出现 "deleted or deactivated"。
+func accountDeactivatedSignals(code, message string) bool {
+	if strings.EqualFold(strings.TrimSpace(code), PasswordLoginAccountDeactivated) {
+		return true
+	}
+	lowered := strings.ToLower(message)
+	return strings.Contains(lowered, "deleted or deactivated") ||
+		strings.Contains(lowered, "account_deactivated") ||
+		strings.Contains(lowered, "account has been deleted") ||
+		strings.Contains(lowered, "account is deactivated")
+}
+
 // passwordVerifyError 把 ③ 的非 200 响应映射成明确错误码。
 func passwordVerifyError(status int, data map[string]any, body []byte) error {
 	code, message := upstreamErrorFields(data)
@@ -411,13 +456,19 @@ func passwordVerifyError(status int, data map[string]any, body []byte) error {
 		return &PasswordLoginError{Code: PasswordLoginInvalidState, Message: "authorize 的 state 已失效，请重试: " + message, Detail: data}
 	case code == PasswordLoginRateLimited:
 		return &PasswordLoginError{Code: PasswordLoginRateLimited, Message: "上游限流: " + message, Detail: data}
-	case code == PasswordLoginAccountDeactivated:
+	case accountDeactivatedSignals(code, message):
 		return &PasswordLoginError{Code: PasswordLoginAccountDeactivated, Message: "账号已停用: " + message, Detail: data}
 	case code == PasswordLoginInvalidPassword,
+		code == PasswordLoginInvalidUsernameOrPassword,
 		strings.Contains(strings.ToLower(message), "invalid credentials"),
+		strings.Contains(strings.ToLower(message), "invalid username or password"),
 		strings.Contains(strings.ToLower(message), "wrong password"):
 		// 优先认 code：上游若改用别的措辞仍能命中。消息匹配是兜底
 		// （实测上游走的是消息路径，code 未必出现）。
+		//
+		// invalid_username_or_password 是实测到的第二种凭据错误码，
+		// 它的 message 是通用文案（"Login failed. Please try again..."），
+		// 不含任何可用于匹配的关键词 —— 只按 message 判断会漏成通用 401。
 		return &PasswordLoginError{Code: PasswordLoginInvalidPassword, Message: "密码错误: " + message, Detail: data}
 	}
 	detail := message
@@ -439,6 +490,11 @@ func passwordVerifyError(status int, data map[string]any, body []byte) error {
 }
 
 // mfaVerifyError 把 ⑤ 的非 200 响应映射成明确错误码。
+//
+// 关键：必须识别 account_deactivated。实测（2026-10-27）被封账号的
+// 密码校验能通过，上游在 mfa/verify 才回 403 + code=account_deactivated。
+// 早期实现只在这里做通用兜底（mfa_verify_failed_403），导致封号被判成
+// 「非确定性失败」——不禁用、继续按 6 小时退避重试，永远出不来。
 func mfaVerifyError(status int, data map[string]any, body []byte) error {
 	code, message := upstreamErrorFields(data)
 	if code == "" {
@@ -446,6 +502,13 @@ func mfaVerifyError(status int, data map[string]any, body []byte) error {
 	}
 	if message == "" {
 		message = code
+	}
+	if accountDeactivatedSignals(code, message) {
+		return &PasswordLoginError{
+			Code:    PasswordLoginAccountDeactivated,
+			Message: "账号已停用: " + message,
+			Detail:  data,
+		}
 	}
 	return &PasswordLoginError{
 		Code:    fmt.Sprintf("mfa_verify_failed_%d", status),

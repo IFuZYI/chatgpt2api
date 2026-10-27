@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 
 import { AccountDetailDialog } from "./components/account-detail-dialog";
 import { accountRowKey, pruneSelection, selectAllKeys } from "@/lib/account-detail";
+import { isRecoverableStatus, selectRecoverableTokens } from "@/lib/account-recovery";
 import { METRIC_GRID_CLASS, normalizeStatusLabel, resolveStatusMeta, rowAccentClass } from "@/lib/account-columns";
 import { AccountImportDialog } from "./components/account-import-dialog";
 
@@ -290,7 +291,7 @@ function AccountsPageContent() {
   }, [accounts, selectedIds]);
 
   const abnormalTokens = useMemo(() => {
-    return accounts.filter((item) => item.status === "异常").map((item) => item.access_token);
+    return accounts.filter((item) => isRecoverableStatus(item.status)).map((item) => item.access_token);
   }, [accounts]);
 
   const paginationItems = useMemo(() => {
@@ -594,19 +595,19 @@ function AccountsPageContent() {
       return;
     }
 
-    // 只处理异常账号，过滤非异常账号
-    const abnormalTokens = accessTokens.filter((token) => {
-      const account = accounts.find((a) => a.access_token === token);
-      return account?.status === "异常";
-    });
+    // 只处理「异常」与「禁用」账号。
+    //
+    // 禁用也必须包含：不可恢复的账号（封号、缺 2FA 密钥、缺凭据…）
+    // 会被自动路径转成禁用终态，人工补齐凭据后这里是唯一的解禁通道。
+    const abnormalTokens = selectRecoverableTokens(accounts, accessTokens);
 
     if (abnormalTokens.length === 0) {
-      toast.error("选中账号中没有异常账号");
+      toast.error("选中账号中没有可恢复的账号（仅「异常」与「禁用」可恢复）");
       return;
     }
 
     if (abnormalTokens.length < accessTokens.length) {
-      toast.info(`已过滤 ${accessTokens.length - abnormalTokens.length} 个非异常账号`);
+      toast.info(`已过滤 ${accessTokens.length - abnormalTokens.length} 个不可恢复的账号`);
     }
 
     setIsRelogining(true);

@@ -66,8 +66,8 @@ func NewModelCatalog(accounts AccountLister, fetch ModelFetcher) *ModelCatalog {
 func (c *ModelCatalog) activeGroups() map[string][]string {
 	groups := map[string][]string{}
 	for _, account := range c.accounts.ListAccounts() {
-		status := stringValue(account["status"])
-		if status == StatusDisabled || status == StatusAbnormal {
+		// 白名单：未知状态不参与模型目录聚合（同 account_slots 的理由）。
+		if !isSchedulableStatus(stringValue(account["status"])) {
 			continue
 		}
 		token := strings.TrimSpace(stringValue(account["access_token"]))

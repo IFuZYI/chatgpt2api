@@ -24,7 +24,12 @@ func (d *Deps) registerAccountRefresh(r *gin.Engine) {
 		}
 		tokens := stringList(body["access_tokens"])
 		if len(tokens) == 0 {
-			tokens = d.Accts.ListTokens()
+			// 整池刷新必须排除禁用/需人工的账号。
+			//
+			// 用 ListTokens 会把禁用号也拉进来：刷新成功时
+			// applyRefreshedAccount 合并上游 status，禁用会被复活成「正常」。
+			// 这是面板上「选一个禁用行点刷新就变绿」的直接成因。
+			tokens = d.Accts.ListMaintainableTokens()
 		}
 		if len(tokens) == 0 {
 			writeErr(c, Errorf(http.StatusBadRequest, "access_tokens is required"))
@@ -136,8 +141,8 @@ func (d *Deps) PasswordLoginFunc() service.PasswordLoginFunc {
 	if d.PasswordLoginClient == nil {
 		return nil
 	}
-	return func(ctx context.Context, email, password, totpSecret string) (map[string]string, error) {
-		return service.LoginWithPassword(ctx, d.PasswordLoginClient, email, password, totpSecret)
+	return func(ctx context.Context, proxyURL, email, password, totpSecret string) (map[string]string, error) {
+		return service.LoginWithPasswordVia(ctx, d.PasswordLoginClient, proxyURL, email, password, totpSecret)
 	}
 }
 

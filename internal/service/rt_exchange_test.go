@@ -18,7 +18,7 @@ func TestKeepaliveRefreshPassesRefreshTokenNotAccessToken(t *testing.T) {
 	})
 
 	var got string
-	refresh := func(ctx context.Context, refreshToken string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
 		got = refreshToken
 		return map[string]string{"access_token": "at-new"}, nil
 	}
@@ -35,7 +35,7 @@ func TestKeepaliveRefreshWritesBackNewAccessToken(t *testing.T) {
 		{"access_token": "at-1", "refresh_token": "rt-1", "type": "free", "status": StatusNormal},
 	})
 
-	refresh := func(ctx context.Context, refreshToken string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
 		return map[string]string{"access_token": "at-2"}, nil
 	}
 	result := svc.KeepaliveRefreshTokens(context.Background(), []string{"at-1"}, refresh)
@@ -63,7 +63,7 @@ func TestKeepaliveRefreshRecordsErrorAndKeepsAccount(t *testing.T) {
 		{"access_token": "at-1", "refresh_token": "rt-1", "type": "free", "status": StatusNormal},
 	})
 
-	refresh := func(ctx context.Context, refreshToken string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
 		return nil, errors.New("boom")
 	}
 	result := svc.KeepaliveRefreshTokens(context.Background(), []string{"at-1"}, refresh)
@@ -91,7 +91,7 @@ func TestKeepaliveWritesBackRotatedRefreshToken(t *testing.T) {
 		{"access_token": "at-1", "refresh_token": "rt-old", "type": "free", "status": StatusNormal},
 	})
 
-	refresh := func(ctx context.Context, refreshToken string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
 		return map[string]string{
 			"access_token":  "at-2",
 			"refresh_token": "rt-rotated",
@@ -127,7 +127,7 @@ func TestKeepaliveKeepsOldRefreshTokenWhenNotRotated(t *testing.T) {
 		{"access_token": "at-1", "refresh_token": "rt-keep-me", "type": "free", "status": StatusNormal},
 	})
 
-	refresh := func(ctx context.Context, refreshToken string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
 		return map[string]string{"access_token": "at-2"}, nil // 无 refresh_token
 	}
 	svc.KeepaliveRefreshTokens(context.Background(), []string{"at-1"}, refresh)
@@ -153,7 +153,7 @@ func TestKeepaliveFailureRecordsErrorTimestamp(t *testing.T) {
 		{"access_token": "at-1", "refresh_token": "rt-1", "type": "free", "status": StatusNormal},
 	})
 
-	refresh := func(ctx context.Context, refreshToken string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
 		return nil, errors.New("invalid_grant")
 	}
 	svc.KeepaliveRefreshTokens(context.Background(), []string{"at-1"}, refresh)
@@ -194,12 +194,12 @@ func TestKeepaliveTriggersReloginWhenRTRejected(t *testing.T) {
 	}
 
 	reloginCalled := 0
-	svc.SetAutoRelogin(func(ctx context.Context, email, password, totp string) (map[string]string, error) {
+	svc.SetAutoRelogin(func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
 		reloginCalled++
 		return map[string]string{"access_token": "at-recovered", "refresh_token": "rt-new"}, nil
 	})
 
-	refresh := func(ctx context.Context, refreshToken string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
 		return nil, &RefreshTokenRejectedError{StatusCode: 401, Detail: "invalid_grant"}
 	}
 	result := svc.KeepaliveRefreshTokens(context.Background(), []string{"at-1"}, refresh)
@@ -229,7 +229,7 @@ func TestKeepaliveDoesNotReloginOnTransientError(t *testing.T) {
 	}
 
 	reloginCalled := 0
-	svc.SetAutoRelogin(func(ctx context.Context, email, password, totp string) (map[string]string, error) {
+	svc.SetAutoRelogin(func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
 		reloginCalled++
 		return nil, nil
 	})
@@ -240,7 +240,7 @@ func TestKeepaliveDoesNotReloginOnTransientError(t *testing.T) {
 		errors.New("refresh_token 换 access_token 网络异常: dial timeout"),
 	} {
 		svc.KeepaliveRefreshTokens(context.Background(), []string{"at-1"},
-			func(ctx context.Context, rt string) (map[string]string, error) { return nil, e })
+			func(ctx context.Context, proxyURL, rt string) (map[string]string, error) { return nil, e })
 	}
 	if reloginCalled != 0 {
 		t.Fatalf("临时故障不应触发重登，实际调用 %d 次", reloginCalled)
@@ -260,7 +260,7 @@ func TestReloginResetsKeepaliveState(t *testing.T) {
 			"last_token_refresh_error_at": "2020-01-01 00:00:00"},
 	})
 
-	login := func(ctx context.Context, email, password, totp string) (map[string]string, error) {
+	login := func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
 		return map[string]string{
 			"access_token":  "at-new",
 			"refresh_token": "rt-fresh",

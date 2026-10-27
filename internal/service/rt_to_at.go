@@ -130,6 +130,77 @@ func RefreshAccessTokenVia(
 }
 
 // RefreshAccessToken 用生产端点换 token。
-func RefreshAccessToken(ctx context.Context, refreshToken string) (map[string]string, error) {
-	return RefreshAccessTokenVia(ctx, oauthTokenURL, refreshToken, nil)
+// RefreshAccessToken 用生产端点换 token。
+//
+// proxyURL 是该账号的出口代理（空串 = 直连）。必须建一个走该代理的
+// http.Client，不能传 nil —— nil 会落到裸 &http.Client{}，只吃环境变量
+// HTTP(S)_PROXY，等于让 RT 续期从一个不受控的出口发出。
+func RefreshAccessToken(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
+	client, err := newProxyHTTPClient(proxyURL, 60*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	// 回收空闲连接。
+	//
+	// 每次 keepalive 都新建一个 transport；不回收的话，池规模 300+、
+	// watcher 每轮 tick 一次，会向代理端持续累积空闲连接（靠
+	// IdleConnTimeout=30s 兜底，不是无限泄漏，但每轮都会短暂堆积
+	// 最多 MaxIdleConns×N 条）。对照 upstream.Client.Close 是有做的。
+	defer client.CloseIdleConnections()
+	return RefreshAccessTokenVia(ctx, oauthTokenURL, refreshToken, client)
+}
+
+// withDirectHTTPClient 构造一个直连 http.Client，执行 fn 后回收空闲连接。
+//
+// 抽出来是为了让「用完回收」这件事可测试：连接回收是无观测副作用的，
+// 直接断言 client 内部状态等于测实现；用一个带 ConnState 计数的
+// httptest 服务端观察"连接是否真的被关掉"才是行为断言。
+func withDirectHTTPClient(timeout time.Duration, fn func(*http.Client) error) error {
+	client := &http.Client{Timeout: timeout}
+	defer client.CloseIdleConnections()
+	return fn(client)
+}
+
+// newProxyHTTPClient 按代理 URL 构造一个 http.Client（空串则直连）。
+//
+// 支持 http/https/socks5/socks5h；socks 系走 golang.org/x/net/proxy 的
+// Dialer，与 tls-client 侧对 socks5h 的处理保持同一语义（远程 DNS）。
+func newProxyHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, error) {
+	normalized := normalizeProxyURL(proxyURL)
+	if normalized == "" {
+		return &http.Client{Timeout: timeout}, nil
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		// 必须脱敏：url.Parse 的错误文本里含整个 URL，包括 user:password。
+		// 这条错误会经 RecordTokenRefreshError / recordReloginFailure 落盘到
+		// accounts.json 的 last_*_error 字段，并由 GET /api/accounts 返回、
+		// 在详情弹窗里可复制 —— 而那 5 个脱敏字段不含 last_*_error。
+		// 也就是说：不脱敏 = 把代理密码写进面板。
+		return nil, fmt.Errorf("解析代理地址失败: %s", redactURLCredentials(err.Error()))
+	}
+	transport := &http.Transport{
+		Proxy:                 http.ProxyURL(parsed),
+		MaxIdleConns:          4,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		// 必须显式开启：设置 DialContext 会让 Go 关闭自动 HTTP/2
+		// （见 transport.go："Be conservative and don't automatically
+		// enable http2 if they've specified ... custom dialers"）。
+		// socks5h 分支设了 DialContext，不开这一项就会退到 HTTP/1.1，
+		// 于是同一产品内 http 代理走 H2、socks5h 走 H1.1 —— 上游指纹不一致。
+		ForceAttemptHTTP2: true,
+	}
+	// socks5/socks5h 不能走 http.Transport.Proxy（它只认 http/https 代理）。
+	switch strings.ToLower(parsed.Scheme) {
+	case "socks5", "socks5h":
+		dialer, dialErr := newSOCKS5Dialer(parsed, timeout)
+		if dialErr != nil {
+			return nil, dialErr
+		}
+		transport.Proxy = nil
+		transport.DialContext = dialer
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}, nil
 }

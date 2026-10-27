@@ -28,8 +28,8 @@ func (s *AccountService) EditableFileAccessToken() (string, error) {
 		if strings.TrimSpace(stringValue(account["access_token"])) == "" {
 			continue
 		}
-		switch stringValue(account["status"]) {
-		case StatusDisabled, StatusAbnormal:
+		// 白名单：未知状态不参与可编辑文件调度（同 account_slots 的理由）。
+		if !isSchedulableStatus(stringValue(account["status"])) {
 			continue
 		}
 		if !accountMatchesAnyPlanType(account, EditableFilePlanTypes) {

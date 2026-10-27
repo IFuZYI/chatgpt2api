@@ -239,8 +239,9 @@ func (s *AccountService) GetTextAccessToken(excluded map[string]bool, routeAccou
 	s.mu.RLock()
 	candidates := make([]string, 0, len(s.accounts))
 	for token, account := range s.accounts {
-		status := stringValue(account["status"])
-		if status == StatusDisabled || status == StatusAbnormal {
+		// 白名单：只有「正常」与「限流」可调度，未知状态一律不可调度。
+		// 黑名单写法会让导入的英文状态（banned/expired…）被当作可用号。
+		if !isSchedulableStatus(stringValue(account["status"])) {
 			continue
 		}
 		if excluded[token] {
@@ -304,16 +305,31 @@ func (s *AccountService) MarkImageResult(token string, success bool) Account {
 	}
 	next := copyMap(current)
 	next["last_used_at"] = localTimestamp()
+	// statusTransitionsAllowed 决定这次调用能不能改 status。
+	//
+	// 关键：图片任务只在「正常 ↔ 限流」这一对状态之间做转换。
+	// 「异常」与「禁用」是账号可用性的判定，不是用量状态 —— 一个正在
+	// 处理图片的账号可能同时被判为失效（上游 401）或封号，此时图片任务
+	// 成功返回、quota 归零，若无条件写「限流」，就把刚判死的账号重新
+	// 激活了（文本链路接受限流号）。实测确认过这条覆写。
+	//
+	// 排除法而不是白名单：这里检查的是「当前状态是否属于可被用量改写的
+	// 状态」，未知状态按不可改写处理，避免把一个陌生状态意外激活。
+	statusTransitionsAllowed := func(status string) bool {
+		return status == StatusNormal || status == StatusLimited
+	}
 	if success {
 		next["success"] = intValue(next["success"]) + 1
 		next["quota"] = maxInt(intValue(next["quota"])-1, 0)
-		if intValue(next["quota"]) == 0 {
-			next["status"] = StatusLimited
-			if stringValue(next["restore_at"]) == "" {
-				next["restore_at"] = nil
+		if statusTransitionsAllowed(stringValue(current["status"])) {
+			if intValue(next["quota"]) == 0 {
+				next["status"] = StatusLimited
+				if stringValue(next["restore_at"]) == "" {
+					next["restore_at"] = nil
+				}
+			} else if stringValue(next["status"]) == StatusLimited {
+				next["status"] = StatusNormal
 			}
-		} else if stringValue(next["status"]) == StatusLimited {
-			next["status"] = StatusNormal
 		}
 	} else {
 		next["fail"] = intValue(next["fail"]) + 1

@@ -40,7 +40,11 @@ type AccountRefresher interface {
 // 返回 map[string]string 而不是单个字符串，因为它必须带回**轮换后的新 refresh_token**。
 // 上游每次换 AT 都会返回一个新 RT（实测 196 → 211 字符），只取 access_token
 // 会把新 RT 丢掉，账号一直用旧 RT 续期。
-type TokenRefreshFunc func(ctx context.Context, refreshToken string) (map[string]string, error)
+//
+// proxyURL 是该账号的出口代理（同 PasswordLoginFunc 的理由）：RT 续期
+// 虽然打的是 auth.openai.com，但对上游而言仍是"这个账号在续期"，从
+// 一个陌生 IP 续期与从常用 IP 续期的风险完全不同。
+type TokenRefreshFunc func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error)
 
 // WatcherConfig 是 watcher 需要的配置访问器。
 type WatcherConfig interface {

@@ -177,6 +177,19 @@ func (s *AccountService) addAccountPayloads(payloads []map[string]any) map[strin
 		} else if stringValue(incoming["type"]) == "" {
 			merged["type"] = current["type"]
 		}
+		// 已有账号如果是「禁用」终态，重新导入不得改变它。
+		//
+		// 回归点：上面的逐 key 合并会把 payload 里的 status 原样写进去，
+		// 而号池导出文件天然带 status —— 于是「重新导入一次」就等于静默
+		// 解禁，绕过「禁用只能人工恢复」的约定。
+		// 新账号不受此限（新账号没有 current），它的初始状态尊重导入值，
+		// 因为外部号池可能确实标着 banned。
+		if current != nil && stringValue(current["status"]) == StatusDisabled {
+			merged["status"] = StatusDisabled
+			merged["disabled_reason"] = current["disabled_reason"]
+			merged["disabled_at"] = current["disabled_at"]
+			merged["disabled_detail"] = current["disabled_detail"]
+		}
 		if account := normalizeAccount(merged); account != nil {
 			s.accounts[accessToken] = account
 		}
@@ -791,7 +804,11 @@ func (s *AccountService) KeepaliveRefreshTokens(
 			if refreshToken == "" {
 				continue
 			}
-			rotated, err := refresh(ctx, refreshToken)
+			// 出口与其它出站一致（账号代理 > 全局代理 > 直连）。
+			// RT 续期虽然打 auth.openai.com，但对上游而言仍是这个账号
+			// 在续期 —— 从陌生 IP 续期的风险与从常用 IP 完全不同。
+			proxyURL := s.ProxyFor(token)
+			rotated, err := refresh(ctx, proxyURL, refreshToken)
 			if err != nil {
 				// 本地 ctx 取消不是上游拒绝 —— 记进去会让整批账号被推进 6 小时退避。
 				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -975,7 +992,8 @@ func (s *AccountService) RecordTokenRefreshError(accessToken, reason string) {
 		return
 	}
 	updated := copyMap(account)
-	updated["last_token_refresh_error"] = reason
+	// 落盘前统一脱敏：错误文本可能带回代理 URL 的账号密码。
+	updated["last_token_refresh_error"] = redactURLCredentials(reason)
 	updated["last_token_refresh_error_at"] = nowLocal()
 	s.accounts[s.resolveTokenLocked(accessToken)] = updated
 	s.saveAccountsLocked()
@@ -1073,9 +1091,33 @@ func (s *AccountService) applyRefreshedAccount(oldToken, resolvedToken string, i
 			merged[key] = value
 		}
 	}
+	// 禁用是终态：上游返回的 status（只可能是正常/限流）不得覆盖它。
+	//
+	// 没有这一条，禁用号只要还带 refresh_token 且 AT 临近过期，
+	// 就会被 watcher 的 expiring 列表拉去刷新，成功后自动复活成「正常」。
+	// 同理 needs_manual 的号不该因为一次成功的元信息查询就丢掉标记。
+	if stringValue(current["status"]) == StatusDisabled {
+		merged["status"] = StatusDisabled
+		merged["quota"] = 0
+	}
+	if reason := strings.TrimSpace(stringValue(current["needs_manual_reason"])); reason != "" {
+		merged["needs_manual_reason"] = reason
+	}
 	// 上游刷新成功即清掉上一次的刷新错误。
 	merged["last_refresh_error"] = nil
 	merged["last_refresh_error_at"] = nil
+	// 刷新成功也意味着「这个 token 当前是可用的」——重置失效计数。
+	//
+	// 为什么必须在这里做：watcher 对异常号的重试正是走 applyRefreshedAccount，
+	// 它是异常号唯一的自动恢复路径。不清零的话，一个已经恢复的号
+	// invalid_count 仍停在 8，下一轮失败立刻又跳回 6 小时退避 ——
+	// 表现为「恢复了又马上变回异常且再也不动」。
+	//
+	// 与 ApplyReloginTokens 的清理保持一致，但这里不清 disabled_* 与
+	// needs_manual_*：那两类由各自的语义管理（禁用号根本不会走到这里，
+	// 见上方 status 保护）。
+	merged["invalid_count"] = 0
+	merged["last_invalid_at"] = nil
 	merged["access_token"] = resolved
 	if refreshedAt := stringValue(incoming["last_token_refresh_at"]); refreshedAt != "" {
 		merged["last_token_refresh_at"] = refreshedAt
@@ -1112,11 +1154,39 @@ func (s *AccountService) recordRefreshError(token, message string) {
 		return
 	}
 	next := copyMap(current)
-	next["last_refresh_error"] = strings.TrimSpace(message)
+	// 同 RecordTokenRefreshError：落盘是唯一出境点，统一脱敏。
+	next["last_refresh_error"] = redactURLCredentials(strings.TrimSpace(message))
 	// 同类：用 nowLocal 与 last_invalid_at（同为本地）保持一致。
 	next["last_refresh_error_at"] = nowLocal()
 	if account := normalizeAccount(next); account != nil {
 		s.accounts[resolved] = account
 		s.saveAccountsLocked()
 	}
+}
+
+// beginRelogin 尝试占住一个账号的重登权，返回 false 表示已有另一轮在登它。
+//
+// 与 beginRefresh 同构。缺了它时，同一账号可能被两条路径同时密码登录：
+// RefreshAccounts 收尾的重登、以及 KeepaliveRefreshTokens 里 RT 被拒的
+// 重登 —— 两者都会把 token 放进 ReloginAccounts。并发登录会各自生成
+// 一套 AT/RT，后写入的覆盖先写入的，另一套当场作废；对上游而言则是
+// "同一账号在极短时间内从同一出口完成两次完整登录"，是最强的风控信号。
+func (s *AccountService) beginRelogin(token string) bool {
+	s.reloginMu.Lock()
+	defer s.reloginMu.Unlock()
+	if s.relogining == nil {
+		s.relogining = map[string]bool{}
+	}
+	if s.relogining[token] {
+		return false
+	}
+	s.relogining[token] = true
+	return true
+}
+
+// endRelogin 释放重登权。必须与 beginRelogin 成对调用。
+func (s *AccountService) endRelogin(token string) {
+	s.reloginMu.Lock()
+	delete(s.relogining, token)
+	s.reloginMu.Unlock()
 }

@@ -15,6 +15,7 @@ type reloginLogin struct {
 }
 
 type reloginCall struct {
+	proxyURL   string
 	email      string
 	password   string
 	totpSecret string
@@ -25,8 +26,8 @@ type reloginResult struct {
 	err    error
 }
 
-func (r *reloginLogin) login(ctx context.Context, email, password, totpSecret string) (map[string]string, error) {
-	r.calls = append(r.calls, reloginCall{email: email, password: password, totpSecret: totpSecret})
+func (r *reloginLogin) login(ctx context.Context, proxyURL, email, password, totpSecret string) (map[string]string, error) {
+	r.calls = append(r.calls, reloginCall{proxyURL: proxyURL, email: email, password: password, totpSecret: totpSecret})
 	result, ok := r.results[email]
 	if !ok {
 		return nil, fmt.Errorf("unexpected email %s", email)

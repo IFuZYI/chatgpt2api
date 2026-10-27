@@ -116,7 +116,7 @@ func TestAccountIDSurvivesTokenRotation(t *testing.T) {
 		t.Fatal("初始就没有 account_id")
 	}
 
-	refresh := func(ctx context.Context, rt string) (map[string]string, error) {
+	refresh := func(ctx context.Context, proxyURL, rt string) (map[string]string, error) {
 		return map[string]string{"access_token": "at-new", "refresh_token": "rt-2"}, nil
 	}
 	svc.KeepaliveRefreshTokens(context.Background(), []string{"at-old"}, refresh)
@@ -160,7 +160,7 @@ func TestAccountIDSurvivesRelogin(t *testing.T) {
 		t.Fatal("初始没有 account_id")
 	}
 
-	login := func(ctx context.Context, email, password, totp string) (map[string]string, error) {
+	login := func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
 		return map[string]string{"access_token": "at-fresh", "refresh_token": "rt-fresh"}, nil
 	}
 	svc.ReloginAccounts(context.Background(), []string{"at-1"}, "", login)

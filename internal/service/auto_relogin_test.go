@@ -20,7 +20,7 @@ func TestRefreshAutoReloginTriggersOnInvalidToken(t *testing.T) {
 	}
 
 	called := 0
-	svc.SetAutoRelogin(func(ctx context.Context, email, password, totp string) (map[string]string, error) {
+	svc.SetAutoRelogin(func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
 		called++
 		return map[string]string{"access_token": "at-2", "refresh_token": "rt-2", "id_token": "id-2"}, nil
 	})
@@ -47,7 +47,7 @@ func TestRefreshAutoReloginRespectsSwitchOff(t *testing.T) {
 	})
 
 	called := 0
-	svc.SetAutoRelogin(func(ctx context.Context, email, password, totp string) (map[string]string, error) {
+	svc.SetAutoRelogin(func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
 		called++
 		return map[string]string{"access_token": "at-2"}, nil
 	})
@@ -73,7 +73,7 @@ func TestRefreshAutoReloginIgnoresRateLimit(t *testing.T) {
 	}
 
 	called := 0
-	svc.SetAutoRelogin(func(ctx context.Context, email, password, totp string) (map[string]string, error) {
+	svc.SetAutoRelogin(func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
 		called++
 		return nil, errors.New("should not be called")
 	})

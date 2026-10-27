@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"sort"
 	"strconv"
@@ -87,6 +88,15 @@ type AccountService struct {
 	refreshingMu sync.Mutex
 	refreshing   map[string]bool
 
+	// relogining 标记「正在被某条路径重登」的账号。
+	//
+	// 与 refreshing 同构，但保护的是密码登录 —— 这是风控最敏感的动作。
+	// 没有它时，RefreshAccounts 的收尾重登与 KeepaliveRefreshTokens 的
+	// RT 拒绝重登可以同时对同一账号发起登录：两次并发密码登录 +
+	// 两次 TOTP，几乎是主动邀请上游判定为异常会话。
+	reloginMu  sync.Mutex
+	relogining map[string]bool
+
 	cumulativeTotal int
 	cumulativeMu    sync.Mutex
 
@@ -102,6 +112,14 @@ const (
 	refreshKeepaliveErrorBackoff   = 6 * 60 * 60
 	refreshTokenKeepaliveBatchSize = 3
 	tokenRefreshErrorBackoff       = 5 * 60
+	// reloginMaxConcurrency 限制同时进行的密码登录数。
+	//
+	// 为什么必须限制：密码登录是账号维度最强的风控信号。一次对全池
+	// 发起登录（实测号池 300+ 账号）会在几分钟内产生数百次 authorize
+	// 请求，且全部来自同一批出口 IP —— 这是最典型的自动化特征。
+	// 取 2 是保守值：串行太慢（一次 2~3 秒，300 个号要 15 分钟），
+	// 太高则失去限流意义。
+	reloginMaxConcurrency = 2
 )
 
 const (
@@ -438,11 +456,35 @@ func (s *AccountService) isImageAccountAvailable(account Account) bool {
 	if account == nil {
 		return false
 	}
-	switch stringValue(account["status"]) {
-	case StatusDisabled, StatusLimited, StatusAbnormal:
+	// 白名单写法（原为黑名单：case 禁用/限流/异常 → reject，其余放行）。
+	//
+	// 为什么要反过来：黑名单让**任何未识别的状态字符串都被当作可用**。
+	// 实测来源是外部号池导出 —— status 是英文（registered / invalid /
+	// banned / expired），或拼写带空格。这些号一旦导入就会被当"正常"
+	// 参与调度，然后每次请求都失败。
+	//
+	// 白名单的代价是：未来新增一个"可用"状态时必须显式加进来。
+	// 这是可接受的 —— 加错一个状态会让账号不可用（立刻可见），
+	// 而漏挡一个坏状态会让坏号长期污染流量（难以发现）。
+	if !isSchedulableStatus(stringValue(account["status"])) {
 		return false
 	}
 	return intValue(account["quota"]) > 0
+}
+
+// isSchedulableStatus 判断状态是否允许参与调度。
+//
+// 只有「正常」与「限流」可调度：
+//   - 正常：常规可用
+//   - 限流：文本链路仍可尝试（图片受 quota 限制），这是原有语义
+//
+// 「异常」与「禁用」不可调度；**其它任何值一律不可调度**。
+func isSchedulableStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case StatusNormal, StatusLimited:
+		return true
+	}
+	return false
 }
 
 func accountMatchesPlanType(account Account, planType string) bool {
@@ -675,6 +717,26 @@ func (s *AccountService) ListTokens() []string {
 	return out
 }
 
+// ListMaintainableTokens 返回应参与「整池刷新」的账号：排除禁用。
+//
+// 为什么不直接改 ListTokens：它还有别的用途（导出、统计），
+// 而「整池刷新」是一个会改状态的自动动作 —— 必须排除禁用，
+// 否则面板上选一个禁用行点刷新，或干脆不传 access_tokens，
+// 就会把它刷成「正常」（刷新成功会合并上游 status）。
+func (s *AccountService) ListMaintainableTokens() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, 0, len(s.accounts))
+	for token, account := range s.accounts {
+		if !isAutoMaintainable(account) {
+			continue
+		}
+		out = append(out, token)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // GetAccount 返回副本。
 func (s *AccountService) GetAccount(token string) Account {
 	s.mu.RLock()
@@ -787,11 +849,20 @@ func (s *AccountService) tokensByStatus(status string) []string {
 }
 
 // ListExpiringAccessTokens 返回 24h 内过期、且带 refresh_token 的账号。
+//
+// 必须排除「禁用」：禁用是自动路径的终态，不该再被刷新。
+// 原实现只看 refresh_token 与过期窗口，不看 status —— 一个禁用号只要
+// 还带 RT 且 AT 临近过期，就会被 watcher 拉去刷新；而刷新成功时
+// applyRefreshedAccount 会合并上游返回的 status（正常/限流），
+// 于是「禁用」被自动复活。这是禁用不成立的主要原因之一。
 func (s *AccountService) ListExpiringAccessTokens() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]string, 0)
 	for token, account := range s.accounts {
+		if !isAutoMaintainable(account) {
+			continue
+		}
 		if stringValue(account["refresh_token"]) == "" {
 			continue
 		}
@@ -802,6 +873,23 @@ func (s *AccountService) ListExpiringAccessTokens() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// isAutoMaintainable 判断账号是否还应参与任何自动维护（刷新/keepalive/重登）。
+//
+// 两个排除项：
+//   - 禁用：自动路径已判死，只能人工恢复
+//   - 需人工（needs_manual_reason 非空）：缺凭据之类，自动重试永远不会成功
+//
+// 注意「异常」不在排除列表里 —— 异常号恰恰需要自动维护来尝试恢复。
+func isAutoMaintainable(account Account) bool {
+	if stringValue(account["status"]) == StatusDisabled {
+		return false
+	}
+	if strings.TrimSpace(stringValue(account["needs_manual_reason"])) != "" {
+		return false
+	}
+	return true
 }
 
 // ProxyFor 返回该 access_token 应该使用的出口代理。
@@ -815,13 +903,22 @@ func (s *AccountService) ListExpiringAccessTokens() []string {
 //
 // 空白字符视为未配置：把 "   " 传给 HTTP 客户端会得到一个解析不了的
 // 代理地址，比直接回退全局更糟。
+//
+// 返回值**已归一化**（normalizeProxyURL）：socks:// 与 socks5:// 升级为
+// socks5h://，host:port:user:pass 简写补成 http://user:pass@host:port。
+//
+// 为什么在这里归一化而不是让各调用点自己做：这个值是所有出站路径的
+// 唯一来源（tls-client 的 6 处 + 新的 http.Client 路径）。如果有的路径
+// 归一化、有的不归一化，同一份配置就可能被解释成不同的代理形式 ——
+// 轻则「测试代理通过、真实请求失败」，重则同一账号从不同出口出去，
+// 正是要防的 IP 跳变。
 func (s *AccountService) ProxyFor(accessToken string) string {
 	global := ""
 	if s.cfg != nil {
 		global = s.cfg.Proxy()
 	}
 	if strings.TrimSpace(accessToken) == "" {
-		return global
+		return normalizeProxyURL(global)
 	}
 
 	// 必须在锁内取出 proxy 字符串。
@@ -837,9 +934,9 @@ func (s *AccountService) ProxyFor(accessToken string) string {
 	}
 	s.mu.RUnlock()
 	if own != "" {
-		return own
+		return normalizeProxyURL(own)
 	}
-	return global
+	return normalizeProxyURL(global)
 }
 
 // ListAbnormalTokens 返回被标记为「异常」的账号。
@@ -880,6 +977,11 @@ func (s *AccountService) ListAbnormalTokens() []string {
 		if stringValue(account["status"]) != StatusAbnormal {
 			continue
 		}
+		// 需人工的账号不再自动重试：缺凭据的号每次重试都会立刻返回
+		// no_password，纯浪费且会让用户以为系统在努力。
+		if strings.TrimSpace(stringValue(account["needs_manual_reason"])) != "" {
+			continue
+		}
 		if !s.abnormalRetryDueLocked(account, now) {
 			continue
 		}
@@ -891,9 +993,36 @@ func (s *AccountService) ListAbnormalTokens() []string {
 
 // abnormalRetryDueLocked 判断异常账号是否到了下一次重试时间。
 func (s *AccountService) abnormalRetryDueLocked(account Account, now time.Time) bool {
+	last := parseAccountTime(account["last_invalid_at"])
+	if last == nil {
+		return true
+	}
+	if last.After(now) {
+		return true // 未来时间戳（时钟错乱）：当作已到期，避免永久冻结
+	}
+	return now.Sub(*last) >= s.abnormalRetryDelay(account)
+}
+
+// abnormalRetryDelay 计算某个异常账号当前应等待的退避时长。
+//
+// 抖动（full jitter）是这里的关键。固定指数退避有一个致命缺陷：
+// **同时失败的一批账号会在同一时刻齐发重试**（thundering herd）。
+// 本仓库实测到的正是这种形态 —— 168 个异常号的 last_invalid_at
+// 高度集中在少数几个小时，watcher 每轮只能挑出 1~19 个处理，
+// 其余全在同一个退避窗口里排队，一轮结束又同时到期。
+//
+// 做法参考 AWS "Exponential Backoff And Jitter" 的 Full Jitter：
+// 取 [delay/2, delay] 的均匀随机。下界取一半（而不是 0）是为了
+// 保住指数退避的语义 —— 失败次数越多，等待的期望值仍然越长，
+// 只是不再有确定的重合点。
+//
+// 注意：抖动让"到期时间"变成每次计算都可能不同。这不会造成抖动
+// 永远不到期 —— 窗口上界仍是 delay，下界是 delay/2，所以最坏情况
+// 只是比固定值早一半触发。
+func (s *AccountService) abnormalRetryDelay(account Account) time.Duration {
 	count := intValue(account["invalid_count"])
 	if count <= 1 {
-		return true // 刚失效，立即重试（捕获上游抖动恢复）
+		return 0 // 刚失效，立即重试（捕获上游抖动恢复）
 	}
 	delay := abnormalRetryBaseDelay
 	for i := 1; i < count && delay < abnormalRetryMaxDelay; i++ {
@@ -902,23 +1031,28 @@ func (s *AccountService) abnormalRetryDueLocked(account Account, now time.Time) 
 	if delay > abnormalRetryMaxDelay {
 		delay = abnormalRetryMaxDelay
 	}
-	last := parseAccountTime(account["last_invalid_at"])
-	if last == nil {
-		return true
+	// Full jitter 变体：delay/2 ~ delay。
+	half := delay / 2
+	if half <= 0 {
+		return delay
 	}
-	if last.After(now) {
-		return true // 未来时间戳（时钟错乱）：当作已到期，避免永久冻结
-	}
-	return now.Sub(*last) >= delay
+	return half + time.Duration(rand.Int63n(int64(half)+1))
 }
 
 // ListRefreshTokenKeepaliveTokens 返回 refresh_token 接近闲置上限的账号。
+//
+// 同 ListExpiringAccessTokens：排除禁用与需人工的账号。
+// 原实现只看 RT 是否存在与错误退避，禁用号的凭据会被持续轮换 ——
+// 状态虽然保住，但等于还在替一个已判死的账号花风控预算。
 func (s *AccountService) ListRefreshTokenKeepaliveTokens() []string {
 	now := time.Now().UTC()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]string, 0)
 	for token, account := range s.accounts {
+		if !isAutoMaintainable(account) {
+			continue
+		}
 		if stringValue(account["refresh_token"]) == "" {
 			continue
 		}

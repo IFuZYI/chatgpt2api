@@ -116,6 +116,8 @@ type passwordAuthFake struct {
 	responses map[string]passwordAuthResponse
 	cookies   map[string]string
 	closed    bool
+	// proxyURL 记录工厂收到的出口代理，供「代理是否透传到底」的断言使用。
+	proxyURL string
 }
 
 type passwordAuthRequest struct {
@@ -186,7 +188,10 @@ func (f *passwordAuthFake) find(kind, contains string) *passwordAuthRequest {
 }
 
 func (f *passwordAuthFake) factory() PasswordLoginClientFactory {
-	return func() (PasswordLoginTransport, error) { return f, nil }
+	return func(proxyURL string) (PasswordLoginTransport, error) {
+		f.proxyURL = proxyURL
+		return f, nil
+	}
 }
 
 // 全链路成功：authorize → sentinel → password/verify → mfa/verify → token。
@@ -703,7 +708,7 @@ func TestLoginWithPasswordWithoutTransport(t *testing.T) {
 
 // 构建 transport 失败要原样带出来。
 func TestLoginWithPasswordTransportBuildFailure(t *testing.T) {
-	factory := func() (PasswordLoginTransport, error) {
+	factory := func(proxyURL string) (PasswordLoginTransport, error) {
 		return nil, errors.New("tls profile missing")
 	}
 	_, err := LoginWithPassword(context.Background(), factory, "u@x.com", "pw", "")
