@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/IFuZYI/chatgpt2api/internal/protocol"
 	"github.com/IFuZYI/chatgpt2api/internal/service"
@@ -46,7 +47,8 @@ func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.T
 	// 真正的取消需要 TaskContext 携带 ctx（见 ADR-0009 的遗留项）。
 	// 不要在这里写「用 WithoutCancel 支持取消」之类的注释：
 	// 当前实现不支持取消，注释必须如实描述。
-	ctx := context.Background()
+	ctx, cancel := backgroundTaskContext(context.Background())
+	defer cancel()
 
 	summary := "生图"
 	endpoint := "/api/image-tasks/generations"
@@ -158,4 +160,20 @@ func (d *Deps) runImageTask(taskCtx service.TaskContext, isEdit bool) (service.T
 // 内存里也是同样量级。Python 同样用 "url"（image_task_service.py:139,165）。
 func imageTaskResponseFormat() string {
 	return "url"
+}
+
+// backgroundTaskMaxDuration 是后台图片任务的兜底超时。
+//
+// 为什么需要：upstream.Client 的客户端级超时是 0（见 client.go 的注释：
+// 避免 60s 硬切断长 SSE），每个请求的超时完全依赖调用方 ctx。而后台任务
+// 原先传的是 context.Background() —— 上游 TCP 挂起（不返回也不断开）时，
+// 任务 goroutine 永久不结束，**账号槽位永久被占**，最终整个池子无号可用。
+//
+// 取值依据：同步链路最长等 image_poll_timeout_secs（默认 120s）+ 重试；
+// 后台任务允许更宽松（用户已经离开页面），但必须有界。
+const backgroundTaskMaxDuration = 30 * time.Minute
+
+// backgroundTaskContext 给后台任务加兜底超时，并尊重更早的父 deadline。
+func backgroundTaskContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, backgroundTaskMaxDuration)
 }
