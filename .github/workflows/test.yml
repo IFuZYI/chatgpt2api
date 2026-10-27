@@ -39,6 +39,13 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      # build tag 腐烂是静默的：默认构建不编译带 tag 的文件，
+      # 所以 `live` 测试里的 API 一旦变化，普通 CI 完全发现不了 ——
+      # 直到有人真的带 tag 去跑。这里只编译不执行（live 测试需要真实
+      # 上游凭据，不该在 CI 用真号）。
+      - name: compile live-tagged tests
+        run: go test -tags live -run '^$' ./internal/upstream/
+
       - name: test (${{ matrix.tz }})
         run: go test -count=1 ./...
 
