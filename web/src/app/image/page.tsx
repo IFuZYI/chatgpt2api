@@ -387,7 +387,13 @@ async function syncConversationImageTasks(items: ImageConversation[]) {
   });
 
   if (changed) {
-    await saveImageConversations(normalized);
+    // 批量落盘失败同样只提示：内存状态已更新，用户继续操作即可。
+    try {
+      await saveImageConversations(normalized);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "保存会话列表失败";
+      toast.error(`本地保存失败：${message}`);
+    }
   }
   return normalized;
 }
@@ -873,6 +879,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   }, [conversations, selectedConversationId]);
 
+  // 本地持久化失败不应打断交互。
+  //
+  // 内存里的会话已经更新（上面两行），落盘只是备份；失败时提示一次即可。
+  // 不 catch 的后果：这里被 4 处事件处理器 / 轮询回调 await，
+  // rejection 会冒泡成 unhandledrejection —— 控制台一条红字，
+  // 用户看不到任何提示，也不知道刚才的编辑没保存。
   const persistConversation = async (conversation: ImageConversation) => {
     const nextConversations = sortImageConversations([
       conversation,
@@ -880,7 +892,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     ]);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
-    await saveImageConversation(conversation);
+    try {
+      await saveImageConversation(conversation);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "保存会话失败";
+      toast.error(`本地保存失败：${message}`);
+    }
   };
 
   const updateConversation = useCallback(
@@ -898,7 +915,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
       if (options.persist !== false) {
-        await saveImageConversation(nextConversation);
+        // 同 persistConversation：落盘失败只提示，不打断已完成的界面更新。
+        try {
+          await saveImageConversation(nextConversation);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "保存会话失败";
+          toast.error(`本地保存失败：${message}`);
+        }
       }
     },
     [],
