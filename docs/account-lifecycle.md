@@ -58,11 +58,18 @@
 
 **关键不变量**：
 
-1. 禁用是**吸收态**。刷新成功、keepalive、401 命中，都不能把它改回
-   其它状态（`applyRefreshedAccount` 有显式保护，`RecordInvalidTokenSeen`
-   在写 status 前检查当前值）。
+1. 禁用是**吸收态**。所有写入点都有保护，逐个列出（漏一个等于没保护）：
+   - `applyRefreshedAccount`：刷新成功不合并上游 status
+   - `RecordInvalidTokenSeen`：401 命中不降级
+   - `RemoveInvalidToken`：**入口直接跳过**（它的调用方由上面的返回值驱动，
+     原本这里无保护 → 批量刷新会把禁用号降级或删除）
+   - `ApplyReloginTokens`：登录期间被禁用的不撤销（见 §5.5）
+   - `MarkImageResult`：在途图片任务只允许在「正常 ↔ 限流」间转换
+   - `addAccountPayloads`：重新导入不覆盖已有禁用记录
 2. 禁用号**不进任何自动维护列表**（`isAutoMaintainable` 统一判定）。
 3. 恢复成功必须**清零**失效计数与所有派生标记。
+4. **状态判定用白名单**：`isSchedulableStatus` 只认「正常」「限流」，
+   未知状态一律不可调度（黑名单写法会让导入的 `banned`/`expired` 放行）。
 
 ---
 
@@ -159,7 +166,28 @@ watcher 每轮只挑出 1~19 个。
   两套 AT/RT 互相覆盖，且对上游表现为「同一出口极短时间内两次完整登录」。
 - `reloginMaxConcurrency = 2`：限制全局并发密码登录数。
 
-### 5.4 错误分类必须覆盖每个步骤
+### 5.4 重登并发保护
+
+- `beginRelogin` / `endRelogin` 的键是**解析后的账号身份**
+  （`resolveTokenLocked`），不是原始 token 字符串 —— token 轮换会建立别名，
+  按字符串去重会让同一账号被并发登录两次。
+- `endRelogin` 必须传 `beginRelogin` 返回的键，并用 `defer` 释放：
+  轮换后重新解析会删错键（占用位永久残留），手动调用在 panic 路径会漏。
+
+### 5.5 人工解禁与「登录期间被禁用」
+
+`applyReloginTokens(oldToken, issued, wasDisabledBeforeLogin)` 用**登录前的
+状态**区分两个相反的需求：
+
+| 登录前状态 | 登录期间发生 | 结果 |
+|:--|:--|:--|
+| 禁用 | — | 成功 → 解禁（人工点「尝试恢复」的唯一出口） |
+| 非禁用 | 被别人禁用 | 成功 → **保留禁用**，只更新凭据 |
+
+不区分的话，人工禁用会被一次并发的成功回写静默抹掉，连
+`disabled_reason` 一起消失，排查时毫无痕迹。
+
+### 5.6 错误分类必须覆盖每个步骤
 
 上游把 `account_deactivated` 报在 **mfa/verify**（实测：密码校验能过，
 MFA 才回 403）。因此判定抽成 `accountDeactivatedSignals(code, message)`，
