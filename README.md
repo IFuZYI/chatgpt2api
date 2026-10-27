@@ -672,7 +672,7 @@ goroutine 槽位模型、单实例约束、`both` 模式为何降级、为何异
 | [图片存储三模式](./docs/image-storage-modes.md) | `local` / `webdav` / `both` 的写入、读取、删除全流程与实测耗时 |
 | [部署文档](./docs/deployment.md) | 部署形态、反向代理、存储后端、备份、升级回滚、安全加固、排障 |
 | [功能清单](./docs/feature-status.md) | 逐项功能状态 |
-| [ADR](./docs/adr/) | 13 条架构决策记录 |
+| [ADR](./docs/adr/) | 14 条架构决策记录 |
 | [上游 SSE 协议](./docs/upstream-sse-conversation.md) | 会话流式协议记录 |
 | [Python 后端归档](./docs/archive-python-backend.md) | 1.x 的 Python 实现在哪个分支、为什么移除 |
 | [术语表](./GLOSSARY.md) | 项目内术语 |

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -152,13 +153,21 @@ func collectMarkdown(root string) (map[string]string, error) {
 	return out, err
 }
 
-// relPathForTest 只保留仓库内相对路径，让失败信息简短。
+// relPathForTest 只保留仓库内相对路径，让失败信息简短、也便于按名字判断
+// （例如「这份是不是 README」）。
+//
+// walk 的起点是 `../..`，所以原始路径形如 `../../docs/deployment.md`；
+// 这里剥掉前导的 `../`，得到 `docs/deployment.md`。
 func relPathForTest(path string) string {
-	idx := strings.Index(path, "chatgpt2api/")
-	if idx >= 0 {
-		return path[idx+len("chatgpt2api/"):]
+	slashed := filepath.ToSlash(path)
+	for strings.HasPrefix(slashed, "../") {
+		slashed = strings.TrimPrefix(slashed, "../")
 	}
-	return filepath.ToSlash(path)
+	// 若工作目录已在仓库内（路径里带仓库名），再从仓库名之后截取。
+	if idx := strings.Index(slashed, "chatgpt2api/"); idx >= 0 {
+		return slashed[idx+len("chatgpt2api/"):]
+	}
+	return slashed
 }
 
 // 文档里点名的测试文件必须存在。
@@ -208,5 +217,62 @@ func TestDocumentedTestFilesExist(t *testing.T) {
 	if len(missing) > 0 {
 		t.Errorf("文档点名但仓库里不存在的测试文件（%d 个）:\n  %s",
 			len(missing), strings.Join(dedupe(missing), "\n  "))
+	}
+}
+
+// README 声明的 ADR 数量必须与实际文件数一致。
+//
+// 与路由数量同一类：README 写着「N 条架构决策记录」，加一篇 ADR 不会让
+// 任何测试失败，只有读文档的人会发现数字不对（本次审计就是这样发现的：
+// 加了 ADR-0014 之后两版 README 仍写 13）。
+//
+// 改 ADR 数量时若这条失败，请同步更新 README.md 与 README.en.md 的
+// 「相关文档 / Documentation」表。
+func TestADRCountMatchesDocumentedNumber(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	adrDir := filepath.Join(repoRoot, "docs", "adr")
+
+	entries, err := os.ReadDir(adrDir)
+	if err != nil {
+		t.Fatalf("读 ADR 目录失败: %v", err)
+	}
+	actual := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		// 只数编号文件（0001-…），跳过 README/index 之类。
+		if len(e.Name()) >= 4 && e.Name()[0] >= '0' && e.Name()[0] <= '9' {
+			actual++
+		}
+	}
+	if actual == 0 {
+		t.Fatal("没数到任何 ADR —— 目录结构可能变了")
+	}
+
+	docs, err := collectMarkdown(repoRoot)
+	if err != nil {
+		t.Fatalf("收集文档失败: %v", err)
+	}
+
+	// 两版 README 都必须声明同一个数字。
+	re := regexp.MustCompile(`(\d+)\s*(?:条架构决策记录|architecture decision records)`)
+	checked := 0
+	for path, body := range docs {
+		if path != "README.md" && path != "README.en.md" {
+			continue
+		}
+		m := re.FindStringSubmatch(body)
+		if m == nil {
+			continue
+		}
+		checked++
+		if m[1] != strconv.Itoa(actual) {
+			t.Errorf("%s 声明 %s 条 ADR，实际 %d 条 —— 请同步更新两版 README",
+				path, m[1], actual)
+		}
+	}
+	if checked != 2 {
+		t.Errorf("只检查了 %d 份 README（应为 2）—— 文档结构可能变了", checked)
 	}
 }
