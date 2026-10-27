@@ -160,3 +160,53 @@ func relPathForTest(path string) string {
 	}
 	return filepath.ToSlash(path)
 }
+
+// 文档里点名的测试文件必须存在。
+//
+// 为什么需要：docs/account-lifecycle.md 的「测试清单」曾引用
+// `retry_policy_test.go` —— 那个文件在某次重构里被合并进
+// `audit_regression_test.go`，文档没跟着改。读者按图索骥会找不到文件，
+// 而没有任何测试会失败。
+//
+// 只检查 `*_test.go`：这类引用是「去哪里看回归覆盖」的指路牌，
+// 指错了等于把读者引到荒地。Python 文件名不在检查范围内 ——
+// 那些是已归档到另一分支的历史实现，在 archive/ADR 里被有意提及。
+func TestDocumentedTestFilesExist(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	docs, err := collectMarkdown(repoRoot)
+	if err != nil {
+		t.Fatalf("收集文档失败: %v", err)
+	}
+
+	// 仓库里真实存在的 *go 文件，按 basename 索引。
+	existing := map[string]bool{}
+	err = filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".go") {
+			existing[info.Name()] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("遍历 Go 文件失败: %v", err)
+	}
+	if len(existing) == 0 {
+		t.Fatal("没找到任何 .go 文件 —— 路径假设可能不对")
+	}
+
+	re := regexp.MustCompile("`([a-zA-Z0-9_]+_test\\.go)`")
+	var missing []string
+	for path, body := range docs {
+		for _, m := range re.FindAllStringSubmatch(body, -1) {
+			if !existing[m[1]] {
+				missing = append(missing, m[1]+"   ← "+path)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("文档点名但仓库里不存在的测试文件（%d 个）:\n  %s",
+			len(missing), strings.Join(dedupe(missing), "\n  "))
+	}
+}

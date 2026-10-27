@@ -282,6 +282,6 @@ MFA 才回 403）。因此判定抽成 `accountDeactivatedSignals(code, message)
 | 文件 | 覆盖 |
 |:--|:--|
 | `account_lifecycle_test.go` | MFA 识别封号、自动/手动路径分叉、禁用隔离、刷新不复活、首次失效标异常 |
-| `retry_policy_test.go` | 退避抖动与边界、成功清零计数、重登去重与并发上限 |
+| `audit_regression_test.go` | 退避抖动与边界、成功清零计数、重登/刷新去重（含别名）、重登并发上限、panic 释放槽位、代理透传与脱敏、禁用不被复活 |
 | `invalid_token_test.go` | 失效计数、403 来源区分、删除门槛 |
 | `auto_relogin_test.go` | 开关语义、429 不触发、未接线不 panic |

@@ -11,7 +11,8 @@ git fetch origin archive/python-backend-2.0
 git checkout archive/python-backend-2.0
 ```
 
-该分支是移除 Python 代码前的最后一个提交，包含全部 99 个文件：
+该分支是移除 Python 代码前的最后一个提交。整棵仓库当时有 497 个文件
+（含 Go 后端与前端），其中 **Python 实现本身 99 个文件**：
 
 | 路径 | 内容 |
 |:--|:--|
