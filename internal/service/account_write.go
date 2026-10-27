@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -457,7 +458,13 @@ func (s *AccountService) StartProgressSweeper(maxAge time.Duration) func() {
 	if interval < time.Minute {
 		interval = time.Minute
 	}
+	return s.startProgressSweeperWithInterval(interval, func() { s.SweepStaleProgress(maxAge) })
+}
+
+// startProgressSweeperWithInterval 接受显式间隔（测试用短间隔）。
+func (s *AccountService) startProgressSweeperWithInterval(interval time.Duration, sweep func()) func() {
 	done := make(chan struct{})
+	var once sync.Once
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -466,11 +473,19 @@ func (s *AccountService) StartProgressSweeper(maxAge time.Duration) func() {
 			case <-done:
 				return
 			case <-ticker.C:
-				s.SweepStaleProgress(maxAge)
+				// 单轮 panic 不能杀死整个循环，更不能杀死进程。
+				func() {
+					defer func() {
+						if recovered := recover(); recovered != nil {
+							fmt.Printf("[progress-sweeper] sweep panicked, recovered: %v\n", recovered)
+						}
+					}()
+					sweep()
+				}()
 			}
 		}
 	}()
-	return func() { close(done) }
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // backdateProgressForTest 把指定条目的时间戳往前拨 —— 仅供测试构造
