@@ -353,3 +353,36 @@ VERIFICATION AFTER ROUND 7
 [PASS] /api/metrics returns 401 without a key, 200 with admin
 [PASS] /health 200
 [PASS] 6-platform release artifacts rebuilt with SHA256SUMS
+
+ROUND 8 — FULL-REPO STRUCTURAL SCAN + DOC COVERAGE
+--------------------------------------------------
+Structural scan over all 454 tracked files:
+  [PASS] every JSON parses (the one "failure" is web/tsconfig.json, which is
+         JSONC — comments are legal there and tsc accepts it)
+  [PASS] every YAML parses (workflows + compose files)
+  [PASS] every Markdown file has balanced code fences
+  [PASS] every Go file declares a package (5 initial "failures" were files
+         with `//go:build` tags before the package clause, or a package
+         doc-comment — all false positives)
+
+Documentation coverage fixes:
+[FIXED] Two environment variables were read by the code but never documented:
+        CHATGPT2API_WEB_DIST (runtime frontend dir) and
+        GIT_AUTH_KEYS_FILE_PATH (git backend auth-keys path).
+        .env.example now covers all 16 environment variables the code reads
+        (verified by diffing the two sets programmatically).
+
+CI hardening:
+[FIXED] Nothing compiled the build-tagged files. The `live` tests (which need
+        real upstream credentials and therefore cannot run in CI) would rot
+        silently — an API change would only surface when someone finally ran
+        them with the tag. test.yml now runs
+        `go test -tags live -run '^$' ./internal/upstream/` — compile only.
+
+VERIFICATION AFTER ROUND 8
+--------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] go vet -tags live ./internal/upstream/
+[PASS] .env.example syntax (all keys are valid identifiers)
+[PASS] 6-platform release artifacts rebuilt with SHA256SUMS
