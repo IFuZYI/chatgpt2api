@@ -632,3 +632,37 @@ VERIFICATION AFTER ROUND 17
 [PASS] gofmt / go vet / go build
 [PASS] go test ./...            (8 packages)
 [PASS] 0 broken links in docs (TOC updated for the new section)
+
+ROUND 18 — ROLLBACK PROCEDURE (documentation defect, same class as round 1)
+--------------------------------------------------------------------------
+The "回滚" section told operators to roll back with:
+
+    git checkout v2.0.0 && go build -o chatgpt2api ./cmd/server
+
+Two defects, both making the rolled-back service unusable:
+
+1. Missing frontend build. The frontend is embedded into the binary, so a bare
+   `go build` produces a binary with no pages at all — `/` and `/accounts`
+   both 404. This is the same trap fixed for the "源码运行" section in round 1;
+   the rollback path had been missed.
+
+2. Missing version injection. A standalone binary usually has no VERSION file
+   next to it, so AppVersion() falls back to BuildVersion, and with neither the
+   service reports 0.0.0. Confirmed by building with the old command: the
+   startup log said "chatgpt2api 0.0.0".
+
+Fixed to the full two-step procedure (frontend → build with
+-ldflags -X ...BuildVersion), with a note explaining why -X is not optional.
+
+VERIFIED: followed the corrected steps from a fresh clone of tag v2.2.3 —
+`/`, `/accounts` and `/health` all return 200.
+
+Also audited the other four `go build` occurrences in docs (README ×2,
+AGENTS.md, deployment source-run section): all now include the frontend step.
+
+VERIFICATION AFTER ROUND 18
+---------------------------
+[PASS] 0 broken links
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] corrected rollback procedure produces a working binary
