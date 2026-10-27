@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,8 +28,8 @@ func (d *Deps) healthPayload() map[string]any {
 		"healthy": healthy,
 		"version": d.Config.AppVersion(),
 		"storage": map[string]any{
-			"backend": d.Storage.BackendInfo(),
-			"health":  d.Storage.HealthCheck(),
+			"backend": redactStoragePaths(d.Storage.BackendInfo()),
+			"health":  redactStoragePaths(d.Storage.HealthCheck()),
 		},
 		"proxy_runtime": d.proxyRuntimeStatus(),
 		"accounts":      stats,
@@ -299,4 +300,34 @@ func decodeJSONBody(c *gin.Context) (map[string]any, *HTTPError) {
 		return map[string]any{}, nil
 	}
 	return body, nil
+}
+
+// storagePathFields 是存储信息里会带绝对路径的字段。
+//
+// /health 是**未鉴权**端点（Python 版契约如此，监控系统要能直接探活）。
+// 原始实现把 /home/<user>/chatgpt2api/data/accounts.json 这类绝对路径
+// 直接返回给任何访问者 —— 攻击者据此可定位部署目录、判断是否容器、
+// 推断宿主机用户名。健康检查不需要路径，只需要「文件在不在」。
+var storagePathFields = []string{"file_path", "auth_keys_file_path"}
+
+// redactStoragePaths 把绝对路径替换成只保留文件名（并保留 *_exists 布尔）。
+//
+// 保留文件名（accounts.json / auth_keys.json）是为了排障时仍能看出
+// 「后端在读写哪个文件」，去掉的是目录部分。
+func redactStoragePaths(info map[string]any) map[string]any {
+	if info == nil {
+		return info
+	}
+	out := make(map[string]any, len(info))
+	for key, value := range info {
+		out[key] = value
+	}
+	for _, field := range storagePathFields {
+		raw, ok := out[field].(string)
+		if !ok || raw == "" {
+			continue
+		}
+		out[field] = filepath.Base(raw)
+	}
+	return out
 }
