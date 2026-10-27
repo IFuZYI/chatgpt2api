@@ -138,3 +138,48 @@ FINAL ARTIFACTS (rebuilt after all fixes)
 6 platforms + SHA256SUMS.txt at /home/chatgpt2api-release-v2.2.3/
 linux/amd64 verified at runtime: / 200, /health 200, authenticated API 200,
 startup log reports "chatgpt2api 2.2.3".
+
+ROUND 3 — ADDITIONAL STABILITY FIXES
+------------------------------------
+[FIXED] Progress-sweeper goroutine had no panic recovery.
+        A long-lived ticker loop (every maxAge/4 ≈ 90 min) called
+        SweepStaleProgress unprotected. In Go an unrecovered goroutine panic
+        terminates the WHOLE PROCESS. watcher / cleanupScheduler /
+        backupScheduler all had recovery; only this one did not.
+        Verified by injecting a panicking sweep: without recovery the test
+        process dies with "panic: sweeper blew up"; with recovery the loop
+        survives and runs the next round. Stop is now idempotent (sync.Once).
+[FIXED] cleanup/backup schedulers swallowed panics silently (`_ = recover()`).
+        The loop kept running but did nothing, with zero log output — the
+        failure mode is "images pile up / backups stop" with no clue why.
+        Both now log the recovered value.
+[FIXED] Background image tasks ran with context.Background().
+        upstream.Client sets TimeoutSec=0 deliberately (to avoid cutting long
+        SSE), so every request's deadline comes from the caller's ctx. With
+        Background, an upstream TCP hang meant the task goroutine never
+        finished and the account slot stayed occupied forever.
+        Added backgroundTaskContext (30-minute backstop, respects earlier
+        parent deadlines).
+[FIXED] Frontend conversation persistence produced unhandledrejection.
+        persistConversation / updateConversation awaited saveImageConversation
+        with no catch, and are awaited by 4 event handlers plus a polling
+        callback. A failed local save surfaced only as a red console line —
+        the user neither saw a message nor knew the edit was not saved.
+        Three save points now try/catch + toast; 3 frontend tests added.
+[DOC]   ADR-0009 gap table re-verified: 6 of 8 items were already fixed
+        (progress eviction, editable-task retention, request body limit,
+        atomic tag writes) and are now marked as such; 2 remain documented
+        design trade-offs (no active task cancellation; backups unencrypted
+        by default).
+
+VERIFICATION AFTER ROUND 3
+--------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] go test -race ./internal/service/ ./internal/api/
+[PASS] npm test                 (54 tests)
+[PASS] npm run typecheck
+[PASS] npm audit --omit=dev     (0 vulnerabilities)
+[PASS] next build + embed + restart; / and /health both 200
+[PASS] Request body limit enforced: 29 MB body → 413
+[PASS] 6-platform release artifacts rebuilt with SHA256SUMS
