@@ -186,7 +186,6 @@ func (c *CPAConfig) UpdatePool(poolID string, updates map[string]any) map[string
 func (c *CPAConfig) DeletePool(poolID string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	before := len(c.pools)
 	kept := make([]map[string]any, 0, len(c.pools))
 	for _, pool := range c.pools {
 		if stringValue(pool["id"]) == poolID {
@@ -199,7 +198,6 @@ func (c *CPAConfig) DeletePool(poolID string) bool {
 	}
 	c.pools = kept
 	c.save()
-	_ = before
 	return true
 }
 

@@ -50,7 +50,11 @@ func (s *AccountService) RecordInvalidTokenSeen(accessToken, event, reason strin
 	next := copyMap(current)
 	next["invalid_count"] = intValue(next["invalid_count"]) + 1
 	next["last_invalid_at"] = now.Format(accountTimeLayout)
-	next["last_refresh_error"] = reason
+	// 脱敏：错误文本可能带回代理 URL 的账号密码，而这个字段会落盘
+	// accounts.json 并经 GET /api/accounts 返回、在详情弹窗里可复制。
+	// 审计发现这里是 4 个落盘点里唯一漏掉脱敏的那个 —— recordRefreshError
+	// 先写了脱敏值，随后本函数用原始错误文本把它覆盖掉。
+	next["last_refresh_error"] = truncateText(redactURLCredentials(reason), 300)
 	next["last_refresh_error_at"] = now.Format(accountTimeLayout)
 
 	decision := invalidTokenDecision{MarkAbnormal: true, Remove: true}

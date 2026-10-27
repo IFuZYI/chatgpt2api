@@ -86,7 +86,7 @@
 | `security_opt` | `no-new-privileges:true` | 禁止 setuid/setgid 提权 |
 | `logging` | json-file, 10m × 3 | 限制日志大小（默认无限增长会写满磁盘） |
 
-这些约束由 `scripts/test-compose.py` 守卫（43 项检查）：
+这些约束由 `scripts/test-compose.py` 守卫（67 项检查）：
 
 ```bash
 python3 scripts/test-compose.py
@@ -352,19 +352,32 @@ CHATGPT2API_PROXY_RUNTIME_PROXY_URL=http://127.0.0.1:8118 \
 
 适合本地开发。需要 **Go 1.27+** 与 **Node 22+**。
 
+前端是**编译进 Go 二进制**的（`//go:embed all:web_dist`），所以两步都不能少：
+
 ```bash
 git clone https://github.com/IFuZYI/chatgpt2api.git
 cd chatgpt2api
 
+# 1) 构建前端。
+#    仓库里 internal/web/web_dist/ 只有占位文件 .gitkeep —— 跳过这一步
+#    编译仍然成功，但二进制里没有任何前端页面，访问 / 与 /accounts 全是 404。
+cd web && npm install && npm run build && cd ..
+rm -rf internal/web/web_dist && cp -r web/out internal/web/web_dist
+git checkout internal/web/web_dist/.gitkeep     # 该文件必须保留
+
+# 2) 构建后端（此时才把前端产物 embed 进去）
 go build -o chatgpt2api ./cmd/server
 CHATGPT2API_AUTH_KEY=dev-secret ./chatgpt2api --addr :8000
 ```
+
+> `npm run build` 会读仓库根的 `VERSION` 注入前端版本号（`web/scripts/build.mjs`）；
+> 绕开它直接调 `next build` 会让界面上的版本号显示成 `0.0.0`。
 
 > 源码运行请用 **`:8000`**：前端 dev server 硬编码指向 `http://127.0.0.1:8000`
 > （`web/src/constants/common-env.ts`）。Docker 那套（容器 8080 / 对外 3000）
 > 是另一套端口，两者互不影响。
 
-前端热重载：
+前端热重载（改前端不必重编译 Go）：
 
 ```bash
 cd web && npm install && npm run dev
@@ -382,7 +395,8 @@ CHATGPT2API_WEB_DIST=$PWD/web/out CHATGPT2API_AUTH_KEY=dev ./chatgpt2api --addr 
 ### 跑测试
 
 ```bash
-go test ./...                                 # 687 个：单元 + golden + 路由对齐
+go test ./...                                 # 全量：单元 + golden + 路由对齐
+cd web && npm test && npm run typecheck        # 前端
 go test -race ./...                           # 竞态检测
 go test -tags live ./internal/upstream/ -v    # 真实上游握手（需外网）
 ```
@@ -591,11 +605,13 @@ environment:
 > | 键 | 代码默认 | 模板值 |
 > |:--|:--|:--|
 > | `image_retention_minutes` | 1440（1 天） | **21600**（15 天） |
-> | `auto_remove_invalid_accounts` | false | **true** |
 > | `image_remove_conversation_after_result` | false | **true** |
 > | `backup.interval_minutes` | 360 | **1440** |
 >
 > 想用代码默认就删掉对应行，或直接改成你要的值。
+>
+> `auto_remove_invalid_accounts` 从 2.2.3 起模板值改为 false：账号被判为
+> 不可恢复时会转「禁用」而不是删除，删除意味着号池数据永久丢失。
 
 ### 图片也能存到 Cloudflare R2 吗
 

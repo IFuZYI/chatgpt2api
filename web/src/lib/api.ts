@@ -903,11 +903,6 @@ export async function fetchSub2APIImportJob(serverId: string) {
 
 // ── Upstream proxy ────────────────────────────────────────────────
 
-export type ProxySettings = {
-  enabled: boolean;
-  url: string;
-};
-
 export type ProxyTestResult = {
   ok: boolean;
   status: number;
@@ -926,17 +921,6 @@ export type ClearanceTestResult = {
   error: string | null;
   runtime: ProxyRuntimeStatus;
 };
-
-export async function fetchProxy() {
-  return httpRequest<{ proxy: ProxySettings }>("/api/proxy");
-}
-
-export async function updateProxy(updates: { enabled?: boolean; url?: string }) {
-  return httpRequest<{ proxy: ProxySettings }>("/api/proxy", {
-    method: "POST",
-    body: updates,
-  });
-}
 
 export async function testProxy(url?: string) {
   return httpRequest<{ result: ProxyTestResult }>("/api/proxy/test", {

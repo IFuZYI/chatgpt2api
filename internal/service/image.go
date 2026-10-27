@@ -417,35 +417,6 @@ func (s *ImageService) cleanupExpiredByModTime(retention time.Duration) int {
 	return removed
 }
 
-// cleanupExpiredByDate 旧的日期判断路径，保留供 startDate/endDate 端点复用。
-func (s *ImageService) cleanupExpiredByDateLegacy() int {
-	days := s.cfg.ImageRetentionDays()
-	if days <= 0 {
-		return 0
-	}
-	// 保留期内的图不删。
-	//
-	// ListItems 的判据是 `day > endDate` 才过滤掉（image.go 里比较字符串），
-	// 也就是 `day <= endDate` 的图会被返回并删除。所以 endDate 必须是
-	// **保留期第一天的前一天**，否则保留期当天的图会被误删。
-	//
-	// 实测踩到：retention=30 时，恰好 30 天前的图被删了 ——
-	// cutoff 落在今天同一时刻，那天的日期 == endDate，被当成「已过期」。
-	//
-	// 减去 1 天让 endDate = 保留期首日 - 1，语义变成「严格早于保留期首日才删」。
-	cutoff := time.Now().AddDate(0, 0, -days-1)
-	endDate := cutoff.Format("2006-01-02")
-	// allMatching 必须是 true：DeleteImages 只在 allMatching 时按日期
-	// 构建 targets，传 false 且 paths=nil 会让 targets 为空 ——
-	// 循环体一次都不执行，removed 恒为 0（即清理完全空转）。
-	result := s.DeleteImages(nil, "", endDate, true)
-	removed := 0
-	if n, ok := result["removed"].(int); ok {
-		removed = n
-	}
-	return removed
-}
-
 // ListResponse 复刻 /api/images 的返回：items + 按日期分组。
 func (s *ImageService) ListResponse(baseURL, startDate, endDate string) map[string]any {
 	// 保留期清理走 CleanupExpiredImages（同时处理远端/索引/缩略图）。

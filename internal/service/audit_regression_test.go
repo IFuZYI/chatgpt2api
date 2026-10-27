@@ -225,10 +225,12 @@ func TestProxyClientSupportsSOCKS5AndHTTP(t *testing.T) {
 func TestHTTPClientClosesIdleConnections(t *testing.T) {
 	var mu sync.Mutex
 	var opened, closed int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// 必须用 NewUnstartedServer：服务器一旦启动，Config 就被服务端
+	// goroutine 读取，此时再赋值 ConnState 是数据竞争（-race 会直接报错，
+	// 实测 -count=10 复现）。先配置、后 Start 才是安全顺序。
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok")
 	}))
-	defer srv.Close()
 	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -239,6 +241,8 @@ func TestHTTPClientClosesIdleConnections(t *testing.T) {
 			closed++
 		}
 	}
+	srv.Start()
+	defer srv.Close()
 	if err := withDirectHTTPClient(5*time.Second, func(c *http.Client) error {
 		for i := 0; i < 2; i++ {
 			resp, err := c.Get(srv.URL)
@@ -289,6 +293,8 @@ func TestRecordedErrorsAreRedactedAtPersistenceLayer(t *testing.T) {
 	svc.RecordTokenRefreshError("at-1", leaky)
 	svc.recordRefreshError("at-1", leaky)
 	svc.recordReloginFailure("at-1", "code", leaky)
+	// 第 4 个落盘点：失效观察会用原始错误文本覆盖 last_refresh_error。
+	svc.RecordInvalidTokenSeen("at-1", "refresh", leaky, false)
 	a := svc.GetAccount("at-1")
 	for _, field := range []string{"last_token_refresh_error", "last_refresh_error", "last_relogin_error"} {
 		if strings.Contains(stringValue(a[field]), "S3cretPw") {
@@ -500,5 +506,91 @@ func TestReloginConcurrencyIsActuallyLimited(t *testing.T) {
 	}
 	if peak == 0 {
 		t.Error("没有任何登录被执行")
+	}
+}
+
+// 刷新去重必须按「账号身份」——与重登同构的回归点。
+//
+// token 轮换建立别名（at-old → at-new）后同一账号有两个字符串。
+// 按字符串去重时，手工刷新持 "at-old"、watcher tick 持 "at-new"，
+// 两个守卫都能拿到 → 同一账号并发刷新 → 一次 401 被记两次 invalid_count
+// （正是 beginRefresh 注释声称要防的那个 bug）。
+func TestRefreshDedupResolvesAlias(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-old", "type": "free", "status": StatusNormal, "quota": 5},
+	})
+	// 建立别名：at-old → at-new
+	if !svc.ApplyReloginTokens("at-old", map[string]string{"access_token": "at-new", "refresh_token": "rt"}) {
+		t.Fatal("轮换失败")
+	}
+
+	if _, ok := svc.beginRefresh("at-old"); !ok {
+		t.Fatal("首次占位应成功")
+	}
+	if _, ok := svc.beginRefresh("at-new"); ok {
+		t.Error("同一账号的两个 token 字符串都拿到刷新权 → 并发刷新")
+	}
+	svc.endRefresh(svc.ResolveAccessToken("at-old"))
+	// 释放后应能重新占用
+	if _, ok := svc.beginRefresh("at-new"); !ok {
+		t.Error("释放后应能重新占用")
+	}
+}
+
+// 一轮刷新里传入同一账号的两个 token 字符串，只能处理一次。
+func TestRefreshDedupsAliasesWithinOneCall(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-old", "type": "free", "status": StatusNormal, "quota": 5},
+	})
+	if !svc.ApplyReloginTokens("at-old", map[string]string{"access_token": "at-new", "refresh_token": "rt"}) {
+		t.Fatal("轮换失败")
+	}
+	verified := 0
+	verify := func(ctx context.Context, token, event string) (Account, error) {
+		verified++
+		return Account{"status": StatusNormal, "quota": 5, "access_token": token}, nil
+	}
+	svc.RefreshAccounts(context.Background(), []string{"at-old", "at-new"}, "", verify)
+	if verified != 1 {
+		t.Errorf("同一账号被刷新 %d 次，应为 1 次", verified)
+	}
+}
+
+// 手动重登的契约边界：
+//   - 上游明确回 account_deactivated → 标禁用（终局事实，任何路径都一样）
+//   - 其它失败（如密码错）→ 只报结果，绝不判死
+//
+// 审计发现原来的契约注释写的是「手动绝不改状态为禁用」，与实现对不上；
+// 测试也只覆盖了 invalid_password 那条分支。
+func TestManualReloginDisablesOnlyOnDeactivated(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		code    string
+		wantDis bool
+	}{
+		{"deactivated 是终局事实", PasswordLoginAccountDeactivated, true},
+		{"密码错不判死（操作员可能正要补凭据）", PasswordLoginInvalidPassword, false},
+		{"缺 2FA 密钥不判死", PasswordLoginNeedTOTP, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newTestAccountService(t, []map[string]any{
+				{"access_token": "at-1", "email": "a@example.test", "password": "pw",
+					"type": "free", "status": StatusAbnormal, "quota": 0},
+			})
+			login := func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
+				return nil, &PasswordLoginError{Code: tc.code, Message: "失败"}
+			}
+			svc.InitReloginProgress("pid", 1)
+			svc.ReloginAccounts(context.Background(), []string{"at-1"}, "pid", login)
+
+			a := svc.GetAccount("at-1")
+			if a == nil {
+				t.Fatal("账号丢失")
+			}
+			gotDisabled := stringValue(a["status"]) == StatusDisabled
+			if gotDisabled != tc.wantDis {
+				t.Errorf("status = %q, wantDisable=%v", stringValue(a["status"]), tc.wantDis)
+			}
+		})
 	}
 }

@@ -278,7 +278,7 @@ func StreamConversationWithHints(
 			return nil, nil, fmt.Errorf("access_token is required for image endpoints")
 		}
 		parts := make([]any, 0, len(images)+1)
-		for index, image := range images {
+		for _, image := range images {
 			payloadBytes, decodeErr := base64.StdEncoding.DecodeString(image[0])
 			if decodeErr != nil {
 				continue
@@ -294,7 +294,6 @@ func StreamConversationWithHints(
 				"height":        ref["height"],
 				"size_bytes":    ref["file_size"],
 			})
-			_ = index
 		}
 		if len(parts) > 0 {
 			payload["messages"] = []any{map[string]any{

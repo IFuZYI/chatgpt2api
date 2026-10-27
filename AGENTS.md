@@ -15,12 +15,16 @@
 完整流程：
 
 ```bash
-cd web && npm run build
+cd web && npm run build        # 内部走 scripts/build.mjs，会注入 VERSION
 cd .. && rm -rf internal/web/web_dist && cp -r web/out internal/web/web_dist
 git checkout internal/web/web_dist/.gitkeep     # 该文件必须保留
 go build -o chatgpt2api ./cmd/server
 # 然后重启用户实际访问的那个服务
 ```
+
+> `npm run build` 现在由 `web/scripts/build.mjs` 包装：它读仓库根的
+> `VERSION` 注入 `NEXT_PUBLIC_APP_VERSION`。直接调 `next build` 会让
+> 界面上的版本号显示成 `0.0.0`（2.2.3 修复）。
 
 **在临时实例（`--base-dir /tmp/xxx`）上验证不等于交付完成** ——
 它证明代码正确，不证明用户侧生效。两件事都要做。
@@ -156,3 +160,65 @@ PID=$(ss -lntp | grep ":18099" | grep -oP 'pid=\K[0-9]+' | head -1)
 写新测试前先 `head -2` 看邻居文件用哪个，别混用。
 
 来源：`.learnings/ERRORS.md#ERR-20261026-002`
+
+---
+
+## 状态机与并发（新增于 2.2.3 审计后）
+
+### 6. 状态不变量必须加在**每个写入点**
+
+只加在「判断处」等于没加：`RemoveInvalidToken` 曾被 `RecordInvalidTokenSeen`
+的返回值驱动，而它自己没有禁用保护 —— 一次日常的「刷新全池」就能把禁用号
+降级甚至删除。
+
+- 加完保护后，用 `grep 'status.*=.*Status'` 把所有写入点列出来逐个确认。
+- 测试要用**真实触发路径**的种子数据：首版测试用新账号做种子，落进了
+  「新号宽限」分支而**假通过**。
+- 状态可用性判定用**白名单**（`isSchedulableStatus`），不要用黑名单 ——
+  黑名单会让任何未识别的值（外部导入的 `banned`/`expired`）被当作可用号。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-009`
+
+### 7. 去重键必须是「实体身份」；释放用 defer 且传 begin 返回的键
+
+`beginRelogin(token)` 曾用原始 token 当键 —— token 轮换建立别名后，
+同一账号有两个字符串，两条路径各持一个就能并发双登录。
+
+- 先 `resolveTokenLocked` 解析成规范身份再当键。
+- `end*` 必须用 `begin*` **返回的键**（期间可能轮换），并用 `defer` 释放
+  （手动调用在 `continue`/panic 路径会漏，泄漏后该账号永久无法处理）。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-010`
+
+### 8. 凭据脱敏放在**唯一出境点**（落盘/序列化）
+
+`redactURLCredentials` 早就存在，但只被「测试代理」按钮调用 ——
+代理密码经 `url.Parse` 的错误文本进入 `accounts.json`，再由
+`GET /api/accounts` 返回、在详情弹窗里可复制。
+
+- 脱敏不放在错误产生处（第三方库的错误文本你控制不了它带什么），
+  放在落盘/序列化这一唯一出境点。
+- 已有脱敏工具要查**调用点数量**：没被调用等于没有。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-011`
+
+### 9. 「保守默认」按可观测性判断，不按是否改变状态
+
+把未知错误码当 transient（注释写"保守，不误杀"）的实测后果是：账号永远卡在
+异常、每轮白跑、无人知道原因 —— 那不是保守，是把故障藏起来。
+
+- 改成激进默认（未知即终态）时必须同时给：**留痕字段**、
+  **人工恢复出口**、**二次确认**（防一轮上游故障批量误杀）。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-012`
+
+### 10. CI 必须覆盖前端与容器
+
+2.2.1/2.2.2 的「刷新页面崩溃」能漏出去，是因为 CI 只跑 Go ——
+`items` 字段被移除后没人验证前端编译产物。
+
+- `test.yml` 现在有 `web` job（npm test / typecheck / build）与
+  `docker-smoke` job（构建镜像 + `/health` 探活）。改前端或 Dockerfile
+  时必须保持这两个 job 绿色。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-013`

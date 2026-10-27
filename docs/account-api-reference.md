@@ -61,6 +61,15 @@
 | `last_token_refresh_at` | string\|null | 最后一次 RT 换 AT 成功时间（keepalive 锚点） |
 | `last_token_refresh_error` | string\|null | 最后一次 RT 续期失败原因 |
 | `last_token_refresh_error_at` | string\|null | 上述时间 |
+| `last_relogin_code` | string\|null | 最后一次密码重登的错误码（见[枚举](#6-枚举值)），排查依据 |
+| `last_relogin_error` | string\|null | 最后一次重登失败原因（已脱敏，不含代理密码） |
+| `last_relogin_error_at` | string\|null | 上述时间 |
+| `disabled_reason` | string\|null | 转「禁用」的原因（错误码），人工解禁前一直保留 |
+| `disabled_at` | string\|null | 转「禁用」的时间 |
+| `disabled_detail` | string\|null | 转「禁用」时的上游原文（截断 300 字符，已脱敏） |
+
+> `last_*_error` / `disabled_detail` 里的代理 URL 凭据会被打码成
+> `scheme://[REDACTED]@host`。落盘层统一脱敏，不依赖各调用点自觉。
 
 ### 完整样例（`GET /api/accounts/detail` 的返回，含凭据原文）
 
@@ -483,14 +492,33 @@ https://user:pass@proxy.example.com:8443
 
 ### `status` —— 账号状态
 
-**写入时不校验**（实测传 `bogus` 也会原样存储）。但只有下面 4 个值有实际语义：
+**写入时不校验**（实测传 `bogus` 也会原样存储）。但只有下面 4 个值有实际语义，
+且**调度侧用白名单判定**：只有 `正常` 与 `限流` 可被选中，其它任何值
+（含拼错的、外部号池的 `banned`/`expired`）都不会参与调度。
 
-| 值 | 含义 | watcher 会刷新吗 |
-|:--|:--|:--|
-| `正常` | 可用 | ✅ |
-| `限流` | 额度耗尽（`quota == 0`） | ✅ |
-| `异常` | token 失效或多次失败 | ✅ 按 `invalid_count` 指数退避 |
-| `禁用` | 人工停用 | ❌ |
+| 值 | 含义 | 会自动维护吗 | 能人工恢复吗 |
+|:--|:--|:--|:--|
+| `正常` | 可用 | ✅ | — |
+| `限流` | 额度耗尽（`quota == 0`） | ✅ | — |
+| `异常` | token 失效，等待恢复 | ✅ 按 `invalid_count` 指数退避重试 | ✅ |
+| `禁用` | **自动路径已判死的终态** | ❌ | ✅ 唯一出口 |
+
+### `last_relogin_code` —— 重登失败原因
+
+| 值 | 自动路径动作 |
+|:--|:--|
+| `account_deactivated` | 禁用（上游明说账号已停用/删除） |
+| `invalid_password` / `invalid_username_or_password` | 禁用（凭据已失效） |
+| `no_password_in_account` / `no_email_in_account` | 禁用（自动路径无从发起登录） |
+| `need_totp` / `need_verification_code` | 禁用（本地缺 2FA 密钥 / 读不了邮箱） |
+| 未知码 | 禁用，但需**连续两次同一个码**才确认（防一轮上游故障打掉整池） |
+| `unsupported_country_region_territory` / `rate_limit_exceeded` / `invalid_state` / `no_auth_code` | 保持「异常」继续重试（环境问题，不是账号的问题） |
+
+`禁用` 不等于「封号」——封号只是最常见的成因。密码错、缺 `password`/`totp_secret`
+同样会落到禁用。禁用后不再刷新、不再 keepalive、不再自动重登；只能通过面板的
+「尝试恢复异常账号」解禁（补上缺失凭据后重登成功即恢复）。
+
+详见 [账号生命周期](./account-lifecycle.md)。
 
 刷新时 `status` 会被上游结果**覆盖**（`quota == 0` → `限流`，否则 `正常`），
 所以手工设成 `正常` 并不会让一个失效账号真的恢复 —— 那需要重新登录。
@@ -592,10 +620,10 @@ JBSWY3DPEHPK3PXP
 | 导入时 | 正常导入，不报错 |
 | 首次刷新 | 正常（AT 还有效，不需要 2FA） |
 | **AT 失效后自动重登** | 失败，`need_totp`：「该账号开启了 TOTP 两步验证，但账号里没有 totp_secret」 |
-| 结果 | 账号停在「异常」，**无法自动恢复** |
+| 结果 | 账号转为「禁用」（`disabled_reason: "need_totp"`），停止自动重试 |
 
 所以：**只要账号开了 2FA，导入时就必须带 `totp_secret`**，否则这个账号是一次性的
-（AT 用完就废）。
+（AT 用完就废）。补救方式：补上 `totp_secret` 后在面板点「尝试恢复」即可解禁。
 
 ### 只有密码、没有 TOTP 的账号
 

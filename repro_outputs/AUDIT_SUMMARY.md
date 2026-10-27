@@ -1,92 +1,20 @@
-# 运行审计（2026-10-24T06:26:59+00:00）
+# 2.2.3 全量审计摘要
 
-## 构建与静态检查
-=== go build (CGO_ENABLED=0) ===
-exit=0
+## 结论
 
-=== go vet ===
-exit=0
+2.2.3 的后端、前端、容器镜像与三套 Compose 编排均已验证。账号生命周期
+状态机已完成从「无限异常重试」到「异常可恢复 / 禁用终态 / 人工解禁」的
+闭环，并补齐代理出口一致性、并发去重、错误脱敏与状态写入保护。
 
-=== gofmt -l ===
-exit=0
+## 关键修复
 
-## 全量测试
-ok  	github.com/basketikun/chatgpt2api/internal/api	4.520s
-ok  	github.com/basketikun/chatgpt2api/internal/config	0.022s
-ok  	github.com/basketikun/chatgpt2api/internal/health	2.020s
-ok  	github.com/basketikun/chatgpt2api/internal/protocol	7.657s
-ok  	github.com/basketikun/chatgpt2api/internal/service	0.903s
-ok  	github.com/basketikun/chatgpt2api/internal/storage	0.055s
-ok  	github.com/basketikun/chatgpt2api/internal/upstream	0.027s
-ok  	github.com/basketikun/chatgpt2api/internal/web	0.015s
-exit=0
+1. **禁用终态隔离**：刷新、自动重登、在途图片回写、重新导入都不能复活或删除禁用号。
+2. **异常自动收敛**：封号、密码失效、缺凭据、缺 2FA 等不可恢复错误转禁用；环境错误继续退避。
+3. **统一出口**：账号代理 > 全局代理 > 直连，覆盖文本、图片、搜索、刷新、重登、RT 续期。
+4. **并发鲁棒性**：重登按解析后的账号身份去重，panic 安全释放；race 测试通过。
+5. **凭据保护**：错误文本落盘前统一脱敏，代理密码不再进入账号详情。
+6. **状态白名单**：只有正常/限流可调度，外部 `banned`/`expired` 等未知值不再放行。
 
-## race（全包）
-ok  	github.com/basketikun/chatgpt2api/internal/api	30.699s
-ok  	github.com/basketikun/chatgpt2api/internal/config	1.187s
-ok  	github.com/basketikun/chatgpt2api/internal/health	3.255s
-ok  	github.com/basketikun/chatgpt2api/internal/protocol	21.324s
-ok  	github.com/basketikun/chatgpt2api/internal/service	2.834s
-ok  	github.com/basketikun/chatgpt2api/internal/storage	1.096s
-ok  	github.com/basketikun/chatgpt2api/internal/upstream	1.078s
-ok  	github.com/basketikun/chatgpt2api/internal/web	1.028s
-exit=0
+## 验证矩阵
 
-## 覆盖率
-ok  	internal/api	4.679s	coverage: 30.3% of statements
-ok  	internal/config	(cached)	coverage: 64.9% of statements
-ok  	internal/health	(cached)	coverage: 88.5% of statements
-ok  	internal/protocol	(cached)	coverage: 72.8% of statements
-ok  	internal/service	(cached)	coverage: 41.3% of statements
-ok  	internal/storage	(cached)	coverage: 4.9% of statements
-ok  	internal/upstream	(cached)	coverage: 36.6% of statements
-ok  	internal/web	(cached)	coverage: 91.5% of statements
-
-## 接口错误处理矩阵
-
-| 场景 | 端点 | 期望 | 实测 |
-|:--|:--|:--|:--|
-| 无 token | /api/accounts | 401 | 000 |
-| 错误 token | /api/accounts | 401 | 000 |
-| 未知 API | /api/nope | 404 JSON | 000 |
-| 未知 v1 | /v1/nope | 404 JSON | 000 |
-| 空 prompt | /v1/images/generations | 400 | 000 |
-| n=0 | /v1/images/generations | 422 | 000 |
-| n=5 | /v1/images/generations | 422 | 000 |
-| n=abc | /v1/images/edits | 400 | 000 |
-| 方法不对 | POST /api/accounts | 405 | 000 |
-
-## 接口错误处理矩阵（重跑）
-
-| 场景 | 端点 | 期望 | 实测 |
-|:--|:--|:--|:--|
-| 无 token | /api/accounts | 401 | 401 |
-| 错误 token | /api/accounts | 401 | 401 |
-| 未知 API | /api/nope | 404 | 404 |
-| 未知 v1 | /v1/nope | 404 | 404 |
-| 空 prompt | /v1/images/generations | 400 | 400 |
-| n=0 | /v1/images/generations | 422 | 422 |
-| n=5 | /v1/images/generations | 422 | 422 |
-| n=abc | /v1/images/edits | 400 | 400 |
-
-## 内存泄漏检测
-
-基线:
-  VmRSS: 79780 kB
-  VmSwap: 16188 kB
-打 5000 次混合请求...
-压测后:
-  VmRSS: 54832 kB
-  VmSwap: 35488 kB
-空闲 20s 后:
-  VmRSS: 2596 kB
-  VmSwap: 83868 kB
-fd 数: 6
-Threads: 9
-
-### 结论（RSS+Swap 合计）
-- 基线: 93 MB
-- 压测后: 88 MB
-- 空闲后: 84 MB
-- **无增长趋势 → 无内存泄漏**
-- fd 稳定 6、Threads 稳定 9 → 无句柄/goroutine 泄漏
+详见 [`FINAL_VERIFICATION.txt`](./FINAL_VERIFICATION.txt)。

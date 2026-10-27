@@ -23,8 +23,8 @@
 - **异常** = 还有救（补凭据、等上游恢复、密码重登）
 - **禁用** = 自动路径已确认救不回来，只能人工处理
 
-「禁用」**不等价于封号**。封号只是它最常见的成因；密码错、缺凭据
-（自动路径永远无法修复）同样会落到禁用或需人工标记。
+「禁用」**不等价于封号**。封号只是它最常见的成因；密码错、缺凭据、
+缺 2FA 密钥（自动路径永远无法修复）同样会落到禁用。
 
 ---
 
@@ -50,10 +50,10 @@
                                               │
               ┌───────────────────────────────┼──────────────────────────┐
               │                               │                          │
-        重登成功                        确定性失败                  非确定性失败
+        重登成功                     不可恢复失败                 环境类失败
               │                               │                          │
         正常 + 清零                      禁用（终态）              保持异常，继续退避
-        invalid_count / 失败标记        + disabled_reason          （限流/地区/网络）
+        invalid_count / 失败标记        + disabled_reason          （地区/限流/网络）
 ```
 
 **关键不变量**：
@@ -216,12 +216,8 @@ MFA 才回 403）。因此判定抽成 `accountDeactivatedSignals(code, message)
 
 ### 6.2 隔离
 
-`isAutoMaintainable(account)` 是唯一判定，排除：
-
-- `status == 禁用`
-- `needs_manual_reason` 非空（缺凭据，自动重试永远不会成功）
-
-被排除在：`ListExpiringAccessTokens`、`ListRefreshTokenKeepaliveTokens`、
+`isAutoMaintainable(account)` 是唯一判定：`status == 禁用` 的账号
+不参与任何自动维护。被排除在：`ListExpiringAccessTokens`、`ListRefreshTokenKeepaliveTokens`、
 `ListAbnormalTokens`、`ListMaintainableTokens`（整池刷新）。
 
 ### 6.3 人工恢复（禁用的唯一解禁通道）
@@ -230,7 +226,7 @@ MFA 才回 403）。因此判定抽成 `accountDeactivatedSignals(code, message)
 
 这是刻意的配套设计：既然不可恢复的账号会转禁用，就必须保证禁用后仍能
 人工救回 —— 否则补上 2FA 密钥或密码后，账号会永远出不来。恢复成功会
-清空 `disabled_*` 与 `needs_manual_*`，并重置失效计数。
+清空 `disabled_*`，并重置失效计数。
 
 ---
 
@@ -276,7 +272,6 @@ MFA 才回 403）。因此判定抽成 `accountDeactivatedSignals(code, message)
 | `last_invalid_at` | 退避锚点；**成功时清空** |
 | `last_refresh_error(_at)` | 最近一次刷新失败原因 |
 | `last_relogin_error(_at)` / `last_relogin_code` | 最近一次重登失败（原实现完全不落盘） |
-| `needs_manual_reason(_at)` | 需人工介入的原因（缺凭据等） |
 | `disabled_reason` / `disabled_at` / `disabled_detail` | 禁用判定依据 |
 | `last_token_refresh_at` | keepalive 3 天锚点 |
 

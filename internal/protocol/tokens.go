@@ -162,24 +162,6 @@ func tileRates(model string) (int, int) {
 	}
 }
 
-func tileTokens(width, height int, model, detail string) int {
-	baseTokens, perTile := tileRates(model)
-	if detail == "low" {
-		return baseTokens
-	}
-	scale := math.Min(1.0, 2048/math.Max(float64(width), float64(height)))
-	resizedWidth := float64(width) * scale
-	resizedHeight := float64(height) * scale
-	shortSide := math.Min(resizedWidth, resizedHeight)
-	if shortSide > 0 {
-		adjust := tileHighShortSide / shortSide
-		resizedWidth *= adjust
-		resizedHeight *= adjust
-	}
-	tiles := int(math.Ceil(resizedWidth/tileSize)) * int(math.Ceil(resizedHeight/tileSize))
-	return baseTokens + tiles*perTile
-}
-
 // CountImageInputTokens 复刻 count_image_input_tokens。
 //
 // ⚠️ 注意：Python 版**忽略传入的 model**，永远用常量 IMAGE_INPUT_TOKEN_MODEL

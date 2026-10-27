@@ -336,15 +336,6 @@ func (s *AccountService) saveCumulativeTotal() {
 	_ = writeFileString(s.cumulativeFile(), fmt.Sprintf("%d", s.cumulativeTotal))
 }
 
-func (s *AccountService) bumpCumulative(delta int) {
-	s.cumulativeMu.Lock()
-	s.cumulativeTotal += delta
-	total := s.cumulativeTotal
-	s.cumulativeMu.Unlock()
-	_ = total
-	s.saveCumulativeTotal()
-}
-
 // normalizeAccount 复刻 Python 的 _normalize_account。
 // 返回 nil 表示这条记录无法修复（缺 access_token）。
 func normalizeAccount(item map[string]any) Account {
@@ -881,19 +872,10 @@ func (s *AccountService) ListExpiringAccessTokens() []string {
 
 // isAutoMaintainable 判断账号是否还应参与任何自动维护（刷新/keepalive/重登）。
 //
-// 两个排除项：
-//   - 禁用：自动路径已判死，只能人工恢复
-//   - 需人工（needs_manual_reason 非空）：缺凭据之类，自动重试永远不会成功
-//
+// 只看「禁用」这一个终态：它表示自动路径已判死，只能人工恢复。
 // 注意「异常」不在排除列表里 —— 异常号恰恰需要自动维护来尝试恢复。
 func isAutoMaintainable(account Account) bool {
-	if stringValue(account["status"]) == StatusDisabled {
-		return false
-	}
-	if strings.TrimSpace(stringValue(account["needs_manual_reason"])) != "" {
-		return false
-	}
-	return true
+	return stringValue(account["status"]) != StatusDisabled
 }
 
 // ProxyFor 返回该 access_token 应该使用的出口代理。
@@ -979,11 +961,6 @@ func (s *AccountService) ListAbnormalTokens() []string {
 	out := make([]string, 0)
 	for token, account := range s.accounts {
 		if stringValue(account["status"]) != StatusAbnormal {
-			continue
-		}
-		// 需人工的账号不再自动重试：缺凭据的号每次重试都会立刻返回
-		// no_password，纯浪费且会让用户以为系统在努力。
-		if strings.TrimSpace(stringValue(account["needs_manual_reason"])) != "" {
 			continue
 		}
 		if !s.abnormalRetryDueLocked(account, now) {
@@ -1107,14 +1084,6 @@ func tokenExpiresIn(token string) *int {
 	return &remaining
 }
 
-func tokenNeedsRefresh(token string, force bool) bool {
-	if force {
-		return true
-	}
-	remaining := tokenExpiresIn(token)
-	return remaining != nil && *remaining <= accessTokenRefreshSkewSeconds
-}
-
 func tokenIssuedAt(token string) *time.Time {
 	iat := int64(intValue(decodeJWTPayload(token)["iat"]))
 	if iat <= 0 {
@@ -1218,14 +1187,6 @@ func (s *AccountService) recentRefreshTokenKeepaliveErrorLocked(account Account,
 		return true
 	}
 	return now.Sub(*lastError) < time.Duration(refreshKeepaliveErrorBackoff)*time.Second
-}
-
-func (s *AccountService) recentTokenRefreshErrorLocked(account Account) bool {
-	lastError := parseAccountTime(account["last_token_refresh_error_at"])
-	if lastError == nil {
-		return false
-	}
-	return time.Since(*lastError) < time.Duration(tokenRefreshErrorBackoff)*time.Second
 }
 
 // newUUID 复刻 Python 的 uuid4().hex。

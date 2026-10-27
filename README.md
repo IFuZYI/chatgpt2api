@@ -7,6 +7,7 @@
 <p align="center">
   <a href="./README.en.md">English</a> ·
   <a href="./docs/account-api.md">账号接口</a> ·
+  <a href="./docs/account-lifecycle.md">账号生命周期</a> ·
   <a href="./docs/deployment.md">部署文档</a> ·
   <a href="./docs/adr/">架构决策</a> ·
   <a href="./CHANGELOG.md">更新日志</a>
@@ -16,7 +17,7 @@
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-687%20passing-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-passing-brightgreen">
 </p>
 
 ---
@@ -179,10 +180,18 @@ mv config.example.json config.json && $EDITOR config.json
 git clone https://github.com/IFuZYI/chatgpt2api.git
 cd chatgpt2api
 
-# web_dist 里有 .gitkeep 占位，不构建前端也能编译。
+# 1) 构建前端（前端是 embed 进二进制的）
+cd web && npm install && npm run build && cd ..
+rm -rf internal/web/web_dist && cp -r web/out internal/web/web_dist
+git checkout internal/web/web_dist/.gitkeep
+
+# 2) 构建后端
 go build -o chatgpt2api ./cmd/server
 CHATGPT2API_AUTH_KEY=dev-secret ./chatgpt2api --addr :8000
 ```
+
+> 跳过第 1 步**也能编译通过**（`web_dist/.gitkeep` 是占位文件），但二进制里
+> 没有任何前端页面 —— 访问 `/` 与 `/accounts` 全是 404。
 
 > 源码运行请用 **`:8000`**：前端 dev server 硬编码指向 `http://127.0.0.1:8000`
 > （见 `web/src/constants/common-env.ts`）。Docker 那套（容器 8080 / 对外 3000）
@@ -227,7 +236,7 @@ docker compose -f docker-compose.warp.yml up -d --build
 | Docker（本地构建） | `docker-compose.local.yml` | 改了代码想直接跑 | 构建期 embed | `./data` 卷 | `docker compose up -d --build` |
 | WARP 代理 | `docker-compose.warp.yml` | 上游被 Cloudflare 拦 | 构建期 embed | `./data` 卷 | `docker compose -f ... up -d --build` |
 | 单二进制 | Releases 下载 | 无 Docker 环境、边缘设备 | 编译期 embed | 当前目录 `data/` | 替换文件后重启 |
-| 源码运行 | `go build` | 开发调试 | `CHATGPT2API_WEB_DIST` | 当前目录 `data/` | 重新编译 |
+| 源码运行 | `go build` | 开发调试 | embed 或 `CHATGPT2API_WEB_DIST` | 当前目录 `data/` | 重新编译 |
 
 `docker-compose.local.yml` 与默认 compose 的区别：它用 `build:` 从本地源码构建
 （而不是拉 GHCR 镜像），默认端口 `8000`（不是 3000），默认存储后端 `sqlite`

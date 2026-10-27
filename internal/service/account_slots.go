@@ -72,13 +72,6 @@ func (s *AccountService) slotFor(token string) chan struct{} {
 	return created
 }
 
-func (s *AccountService) dropSlot(token string) {
-	s.slotsMu.Lock()
-	delete(s.slots, token)
-	s.slotsMu.Unlock()
-	s.inflight.Delete(token)
-}
-
 // readyCandidateTokensLocked 返回所有「就绪」账号（状态正常、有额度、匹配筛选）。
 func (s *AccountService) readyCandidateTokensLocked(excluded map[string]bool, opts SlotOptions) []string {
 	out := make([]string, 0, len(s.accounts))

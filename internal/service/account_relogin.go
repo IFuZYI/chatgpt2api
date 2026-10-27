@@ -122,10 +122,14 @@ func classifyReloginFailure(code string) reloginFailureClass {
 //
 // 手动与自动的差异（progressID 为空即自动路径）：
 //
-//	手动：只做登录、只报结果，绝不改状态为「禁用」—— 人工点按钮时
-//	      不应该因为一次失败就把账号判死。
-//	自动：按 classifyReloginFailure 升级 —— 确定性失败标禁用，
-//	      缺凭据标 needs_manual 并停止重试。
+//	手动：只做登录、只报结果，**只有一种情况会改状态**——上游明确回
+//	      `account_deactivated`（账号已被停用/删除）。那是终局事实，
+//	      人工重登也不可能有别的结果，标「禁用」比留下一个永远救不回的
+//	      「异常」更诚实。其余任何失败（密码错、缺 2FA…）都只报结果，
+//	      绝不判死 —— 操作员可能正准备补凭据，那次点击不该把号摘掉。
+//	自动：按 classifyReloginFailure 升级 —— 不可恢复的失败转「禁用」，
+//	      且只有账号已被判为「异常」时才生效（仍在正常/限流的账号
+//	      只是续期失败，不该被摘出调度池）。
 func (s *AccountService) ReloginAccounts(
 	ctx context.Context,
 	tokens []string,
@@ -418,9 +422,6 @@ func (s *AccountService) applyReloginTokens(oldToken string, issued map[string]s
 	merged["last_invalid_at"] = nil
 	merged["last_refresh_error"] = nil
 	merged["last_refresh_error_at"] = nil
-	// 恢复即清除「需人工」标记：凭据已经齐了。
-	merged["needs_manual_reason"] = nil
-	merged["needs_manual_at"] = nil
 	merged["last_relogin_error"] = nil
 	merged["last_relogin_error_at"] = nil
 	merged["last_relogin_code"] = nil

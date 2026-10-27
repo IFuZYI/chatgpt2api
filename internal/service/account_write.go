@@ -598,6 +598,7 @@ func (s *AccountService) RefreshAccounts(
 ) map[string]any {
 	unique := make([]string, 0, len(tokens))
 	seen := map[string]bool{}
+	refreshKeys := make([]string, 0, len(tokens))
 	for _, token := range tokens {
 		trimmed := strings.TrimSpace(token)
 		if trimmed == "" || seen[trimmed] {
@@ -609,17 +610,22 @@ func (s *AccountService) RefreshAccounts(
 		// 两轮并发跑同一个 token 时，一次上游失效会被两条路径各记一次
 		// invalid_count，账号更快被判定失效（实测 invalid_count=2）。
 		// 用一个按账号的在飞标记去重，代价是那一轮跳过它 —— 下一轮还会刷。
-		if !s.beginRefresh(trimmed) {
+		// seen 按**解析后的身份**记录，所以同一账号的两个 token 字符串
+		// （旧别名 + 新规范 token）在本轮只会被处理一次。
+		refreshKey, acquired := s.beginRefresh(trimmed)
+		if !acquired {
 			continue
 		}
-		seen[trimmed] = true
+		seen[refreshKey] = true
+		refreshKeys = append(refreshKeys, refreshKey)
 		unique = append(unique, trimmed)
 	}
 	// 无论从哪条路径返回，都要释放已占住的刷新权。
 	// 漏放会让账号永久卡在 refreshing 里 —— 之后再也刷不了它。
+	// 释放用 beginRefresh 返回的键（token 可能在刷新过程中轮换）。
 	defer func() {
-		for _, token := range unique {
-			s.endRefresh(token)
+		for _, key := range refreshKeys {
+			s.endRefresh(key)
 		}
 	}()
 	if len(unique) == 0 {
@@ -861,24 +867,37 @@ func (s *AccountService) KeepaliveRefreshTokens(
 	return map[string]any{"refreshed": refreshed, "relogined": relogined, "errors": errorsOut}
 }
 
-// beginRefresh 尝试占住一个账号的刷新权，返回 false 表示已有另一轮在刷它。
-func (s *AccountService) beginRefresh(token string) bool {
+// beginRefresh 尝试占住一个账号的刷新权，返回 (键, 是否拿到)。
+//
+// 键必须是**解析后的账号身份**，不能是原始 token 字符串。
+//
+// 回归点（审计发现，与 beginRelogin 同构）：token 轮换会建立别名
+// （at-old → at-new），同一账号因此有两个字符串。按字符串索引时，
+// 手工刷新持 "at-old"、watcher tick 持 "at-new"，两个守卫都能拿到 ——
+// 同一账号被并发刷新，一次 401 被记两次 `invalid_count`
+// （正是本函数注释声称要防的那个 bug），且旧 token 的 worker 可能
+// 基于一个已失效的 token 把健康账号标异常甚至删除。
+func (s *AccountService) beginRefresh(token string) (string, bool) {
+	key := s.ResolveAccessToken(token)
+	if key == "" {
+		key = strings.TrimSpace(token)
+	}
 	s.refreshingMu.Lock()
 	defer s.refreshingMu.Unlock()
 	if s.refreshing == nil {
 		s.refreshing = map[string]bool{}
 	}
-	if s.refreshing[token] {
-		return false
+	if s.refreshing[key] {
+		return key, false
 	}
-	s.refreshing[token] = true
-	return true
+	s.refreshing[key] = true
+	return key, true
 }
 
-// endRefresh 释放刷新权。
-func (s *AccountService) endRefresh(token string) {
+// endRefresh 释放刷新权。必须传 beginRefresh **返回的那个键**（期间可能轮换）。
+func (s *AccountService) endRefresh(key string) {
 	s.refreshingMu.Lock()
-	delete(s.refreshing, token)
+	delete(s.refreshing, key)
 	s.refreshingMu.Unlock()
 }
 
@@ -1095,13 +1114,9 @@ func (s *AccountService) applyRefreshedAccount(oldToken, resolvedToken string, i
 	//
 	// 没有这一条，禁用号只要还带 refresh_token 且 AT 临近过期，
 	// 就会被 watcher 的 expiring 列表拉去刷新，成功后自动复活成「正常」。
-	// 同理 needs_manual 的号不该因为一次成功的元信息查询就丢掉标记。
 	if stringValue(current["status"]) == StatusDisabled {
 		merged["status"] = StatusDisabled
 		merged["quota"] = 0
-	}
-	if reason := strings.TrimSpace(stringValue(current["needs_manual_reason"])); reason != "" {
-		merged["needs_manual_reason"] = reason
 	}
 	// 上游刷新成功即清掉上一次的刷新错误。
 	merged["last_refresh_error"] = nil
@@ -1113,9 +1128,8 @@ func (s *AccountService) applyRefreshedAccount(oldToken, resolvedToken string, i
 	// invalid_count 仍停在 8，下一轮失败立刻又跳回 6 小时退避 ——
 	// 表现为「恢复了又马上变回异常且再也不动」。
 	//
-	// 与 ApplyReloginTokens 的清理保持一致，但这里不清 disabled_* 与
-	// needs_manual_*：那两类由各自的语义管理（禁用号根本不会走到这里，
-	// 见上方 status 保护）。
+	// 与 ApplyReloginTokens 的清理保持一致，但不碰 disabled_*：
+	// 禁用号根本不会走到这里（见上方 status 保护）。
 	merged["invalid_count"] = 0
 	merged["last_invalid_at"] = nil
 	merged["access_token"] = resolved

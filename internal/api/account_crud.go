@@ -286,8 +286,6 @@ func (d *Deps) registerAccountCRUD(r *gin.Engine) {
 // parseAccountCreateBody 复刻 Python 的入参归一化：
 // tokens 是字符串数组，accounts 是对象数组，两者可同时存在，token 去重。
 func parseAccountCreateBody(body map[string]any) ([]string, []map[string]any, *HTTPError) {
-	rawTokens, tokensIsList := body["tokens"]
-	_ = rawTokens
 	if value, exists := body["tokens"]; exists && value != nil {
 		if _, ok := value.([]any); !ok {
 			if _, ok := value.([]string); !ok {
@@ -303,8 +301,6 @@ func parseAccountCreateBody(body map[string]any) ([]string, []map[string]any, *H
 			}
 		}
 	}
-	_ = tokensIsList
-
 	accounts := make([]map[string]any, 0)
 	if rawAccounts, ok := body["accounts"].([]any); ok {
 		for _, item := range rawAccounts {

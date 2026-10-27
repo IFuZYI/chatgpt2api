@@ -159,9 +159,8 @@ func (d *Deps) RegisterSettingsRoutes(r *gin.Engine) {
 		c.JSON(http.StatusOK, gin.H{"result": result})
 	})
 
-	// 前端 api.ts 里 fetchProxy/updateProxy 指向 /api/proxy，但这两个函数只被
-	// 两个没有任何地方 import 的孤儿组件使用（实测），真实编辑入口是
-	// config-card.tsx 的输入框 → POST /api/settings。这里不补路由（见计划书修正 1），
-	// 保持与 Python 版相同的 404/405 行为。
-	_ = strings.TrimSpace
+	// /api/proxy（GET/POST）**刻意不实现**：真实编辑入口是设置页的
+	// config-card.tsx → POST /api/settings。历史上曾有两个未被引用的
+	// 前端组件指向这里，那些组件与对应的 api.ts 辅助函数已在 2.2.3 清理。
+	// 保留 404/405 行为与 Python 版一致。
 }

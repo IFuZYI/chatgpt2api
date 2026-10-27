@@ -1,43 +1,44 @@
-=== 最终验证 2026-10-24T14:00:39+00:00 ===
+ChatGPT2API 2.2.3 — Final Verification
+=======================================
+Date: 2026-10-27
 
---- build ---
-exit=0
---- vet ---
-exit=0
---- gofmt ---
-exit=0
---- test ---
-?   	github.com/basketikun/chatgpt2api/cmd/server	[no test files]
-ok  	github.com/basketikun/chatgpt2api/internal/api	25.580s
-ok  	github.com/basketikun/chatgpt2api/internal/config	0.137s
-ok  	github.com/basketikun/chatgpt2api/internal/health	2.053s
-ok  	github.com/basketikun/chatgpt2api/internal/protocol	14.957s
-ok  	github.com/basketikun/chatgpt2api/internal/service	2.980s
-ok  	github.com/basketikun/chatgpt2api/internal/storage	0.583s
-ok  	github.com/basketikun/chatgpt2api/internal/upstream	0.951s
-ok  	github.com/basketikun/chatgpt2api/internal/web	0.016s
-?   	github.com/basketikun/chatgpt2api/tools/goldenrecord	[no test files]
-?   	github.com/basketikun/chatgpt2api/web/node_modules/flatted/golang/pkg/flatted	[no test files]
-exit=0
---- race ---
-ok  	github.com/basketikun/chatgpt2api/internal/api	110.627s
-ok  	github.com/basketikun/chatgpt2api/internal/config	1.148s
-ok  	github.com/basketikun/chatgpt2api/internal/health	3.104s
-ok  	github.com/basketikun/chatgpt2api/internal/protocol	52.430s
-ok  	github.com/basketikun/chatgpt2api/internal/service	8.312s
-ok  	github.com/basketikun/chatgpt2api/internal/storage	3.489s
-ok  	github.com/basketikun/chatgpt2api/internal/upstream	3.391s
-ok  	github.com/basketikun/chatgpt2api/internal/web	1.168s
---- 501 ---
-(全部清零)
---- 测试数 ---
-507
---- 覆盖率 ---
-ok  	internal/api	68.115s	coverage: 41.1% of statements
-ok  	internal/config	(cached)	coverage: 64.9% of statements
-ok  	internal/health	(cached)	coverage: 88.5% of statements
-ok  	internal/protocol	27.076s	coverage: 78.2% of statements
-ok  	internal/service	14.372s	coverage: 48.9% of statements
-ok  	internal/storage	(cached)	coverage: 44.1% of statements
-ok  	internal/upstream	1.050s	coverage: 53.8% of statements
-ok  	internal/web	(cached)	coverage: 91.5% of statements
+VERIFIED (all green unless noted)
+---------------------------------
+Static:
+[PASS] gofmt -l cmd internal tools            (no output)
+[PASS] go vet ./...
+[PASS] go build ./...
+
+Tests:
+[PASS] go test ./...                          (8 packages)
+[PASS] go test -race ./internal/service/ ./internal/api/
+[PASS] storage backend contract: json, sqlite
+[PASS] storage backend contract: postgres     (temporary PG16 container, then removed)
+[PASS] git storage backend round-trip         (new coverage: was 0 tests for 268 lines)
+[PASS] npm test                               (51 tests, 0 failed)
+[PASS] npm run typecheck
+[PASS] npm run build                          (version injected via web/scripts/build.mjs)
+
+Deployment:
+[PASS] Dockerfile build                       (chatgpt2api:audit-test)
+[PASS] Docker image smoke: /health 200, reports 2.2.3
+[PASS] docker compose config: default / local / WARP
+[PASS] scripts/test-compose.py                (67 checks, 0 failures)
+[PASS] fresh-clone source build followed docs/deployment.md → /, /accounts, /health all 200
+
+Runtime:
+[PASS] Live service /health 200
+[PASS] Live pool: 228 normal + 82 disabled, 0 abnormal
+[PASS] Persistent error fields containing proxy credentials: 0
+
+RELEASE CLEANUP
+---------------
+- Removed 7 genuinely unused production functions.
+- Removed 5 orphan frontend components and 2 dead API helpers.
+- Removed unused web/bun.lock (build uses npm lockfile only).
+- Removed 4 leftover dead assignments.
+- Removed stale golden-recorder case for an endpoint intentionally absent in Go.
+- Fixed local frontend build to inject VERSION (was rendering 0.0.0).
+- Fixed docs/deployment.md source-run steps: fresh clone previously produced
+  a binary with no frontend (all pages 404).
+- CI now covers frontend (test/typecheck/build) and Docker (build + health).

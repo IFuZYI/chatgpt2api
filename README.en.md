@@ -6,6 +6,8 @@
 
 <p align="center">
   <a href="./README.md">中文</a> ·
+  <a href="./docs/account-api.md">Account API</a> ·
+  <a href="./docs/account-lifecycle.md">Account lifecycle</a> ·
   <a href="./docs/deployment.md">Deployment</a> ·
   <a href="./docs/adr/">Architecture decisions</a> ·
   <a href="./CHANGELOG.md">Changelog</a>
@@ -15,7 +17,7 @@
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-687%20passing-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-passing-brightgreen">
 </p>
 
 ---
@@ -191,11 +193,18 @@ Requires **Go 1.27+** and **Node 22+**.
 git clone https://github.com/IFuZYI/chatgpt2api.git
 cd chatgpt2api
 
-# web_dist contains a .gitkeep placeholder, so this compiles without building
-# the frontend first.
+# 1) Build the frontend (it is embedded into the Go binary)
+cd web && npm install && npm run build && cd ..
+rm -rf internal/web/web_dist && cp -r web/out internal/web/web_dist
+git checkout internal/web/web_dist/.gitkeep
+
+# 2) Build the backend
 go build -o chatgpt2api ./cmd/server
 CHATGPT2API_AUTH_KEY=dev-secret ./chatgpt2api --addr :8000
 ```
+
+> Skipping step 1 **still compiles** (`web_dist/.gitkeep` is a placeholder),
+> but the binary then contains no frontend at all: `/` and `/accounts` both 404.
 
 > Use **`:8000`** for source runs: the frontend dev server hardcodes
 > `http://127.0.0.1:8000` (see `web/src/constants/common-env.ts`). The Docker
@@ -237,7 +246,7 @@ proxy_runtime defaults into `config.json`.
 |:--|:--|:--|:--|:--|
 | Docker Compose | Production self-hosting | Embedded in image | `./data` volume | `docker compose pull` |
 | Single binary | No Docker, edge devices | Embedded at build | `data/` in CWD | Replace file, restart |
-| From source | Development | `CHATGPT2API_WEB_DIST` | `data/` in CWD | Rebuild |
+| From source | Development | Embedded, or `CHATGPT2API_WEB_DIST` | `data/` in CWD | Rebuild |
 
 ---
 

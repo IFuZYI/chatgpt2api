@@ -208,14 +208,6 @@ func strOr(value any, fallback string) string {
 	return fallback
 }
 
-func trimOr(value, fallback string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return fallback
-	}
-	return trimmed
-}
-
 // trimSlashesOr 复刻 Python 的 `str(...).strip().strip("/") or fallback`。
 func trimSlashesOr(value, fallback string) string {
 	trimmed := strings.Trim(strings.TrimSpace(value), "/")

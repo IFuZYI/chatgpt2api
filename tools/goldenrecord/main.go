@@ -224,9 +224,12 @@ func cases(authKey string) []Case {
 		{Name: "openai_400_chat_no_messages", Method: "POST", Path: "/v1/chat/completions",
 			Headers: jsonAdmin, Body: `{}`, Compare: CompareJSON, Pending: pendingM3},
 
-		// ---- 设置与第三方 ----
+		// ---- 设置 ----
 		{Name: "admin_settings", Method: "GET", Path: "/api/settings", Headers: admin, Compare: CompareJSON},
-		{Name: "third_party_apps", Method: "GET", Path: "/api/third-party-apps", Headers: admin, Compare: CompareJSON},
+		// `/api/third-party-apps` **刻意不录**：Go 版有意删除该端点
+		// （Python 78 条路由 → 77 条），从 Python 录会得到 200、
+		// Go 返回 404 —— 这个用例永远无法对等，登记它只会让人以为有覆盖。
+		// 路由数量由 TestRouteParity 守卫，见 docs/archive-python-backend.md。
 
 		// ---- 账号与密钥（空号池）----
 		{Name: "admin_accounts_empty", Method: "GET", Path: "/api/accounts", Headers: admin, Compare: CompareJSON},
