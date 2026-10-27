@@ -658,6 +658,18 @@ R2 是**备份**用的（见下节），不是图片热存储。图片热存储�
 
 内置备份会把配置与数据打包上传到 Cloudflare R2。
 
+> **部署到新环境前先自检备份链路**：R2 客户端有真实往返测试
+> （上传 → 下载 → 内容比对 → 删除），默认跳过，用任意 S3 兼容端点开启：
+>
+> ```bash
+> TEST_S3_ENDPOINT=http://127.0.0.1:9000 \
+> TEST_S3_ACCESS_KEY=... TEST_S3_SECRET_KEY=... TEST_S3_BUCKET=... \
+>   go test ./internal/service/ -run TestR2ClientLiveRoundTrip -v
+> ```
+>
+> 值得跑一次：SigV4 签名、canonical request、Host 头任何一处不对，
+> 单测都发现不了，只有真实端点会回 403。
+
 ```json
 {
   "backup": {

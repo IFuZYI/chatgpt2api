@@ -464,3 +464,32 @@ VERIFICATION AFTER ROUND 12
 [PASS] warning fires for sqlite backend with orphan accounts.json
 [PASS] warning does not fire for the json backend
 [PASS] 310-account round-trip fingerprint match, including after restart
+
+ROUND 13 — BACKUP CHAIN (real S3 round-trip)
+--------------------------------------------
+Existing backup tests covered only scheduling and snapshot construction — the
+upload/download path that actually loses data had never been executed against
+a real endpoint, so a SigV4 mistake could not be caught.
+
+[ADDED] TestR2ClientLiveRoundTrip — opt-in via TEST_S3_* env vars; performs
+        upload → download → byte comparison → delete against any S3-compatible
+        endpoint. Skipped by default so CI stays hermetic.
+
+[FIXED] Running it against MinIO immediately returned HTTP 403.
+        Root cause: `host()` hardcoded `<accountID>.r2.cloudflarestorage.com`
+        while `overrideBase` only replaced the endpoint URL. SigV4 includes the
+        host header in the canonical request, so a mismatched Host is rejected.
+        In other words `overrideBase` was half-finished — any attempt to point
+        the client at MinIO / LocalStack / another S3 provider would 403.
+        Fixed by deriving the host from overrideBase when set.
+        After the fix the full round-trip passes against MinIO.
+
+Docs: docs/deployment.md backup section now tells operators to run this
+self-check before deploying to a new environment.
+
+VERIFICATION AFTER ROUND 13
+---------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages; live S3 test skipped by default)
+[PASS] TestR2ClientLiveRoundTrip against MinIO: upload/download/delete all OK
+[PASS] MinIO container and image removed afterwards
