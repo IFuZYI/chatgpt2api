@@ -84,3 +84,37 @@ GIT PUBLICATION
           use "Run workflow" (both release.yml and docker-publish.yml declare
           workflow_dispatch). No API token is available in this environment to
           dispatch them programmatically.
+
+ADDITIONAL AUDIT (round 2)
+--------------------------
+[FIXED] image_timeout_retry_secs had no validation at all.
+        The setting drives the frontend's "keep waiting" button, which sends it
+        as extra_timeout_secs to /api/image-tasks/:id/resume-poll (the backend
+        rejects <5 or >120). Saving -999 was accepted and persisted, so every
+        subsequent "keep waiting" click returned 400 with no visible cause.
+        Now clamped to [5,120] on read AND normalized on write; 4 tests added
+        and verified to fail against the old implementation.
+[FIXED] TestHTTPClientClosesIdleConnections mutated srv.Config.ConnState after
+        httptest.NewServer had already started the server — a data race that
+        surfaced under `-race -count=10`. Switched to NewUnstartedServer.
+
+SECURITY SWEEP
+--------------
+[PASS] All 10 probed admin endpoints return 401 without a key.
+[PASS] Write endpoints (/api/settings, /api/accounts, /api/images/delete,
+       /api/backups/run) return 401 unauthenticated.
+[PASS] Path traversal: /files/../../etc/passwd does NOT leak the file
+       (returns the SPA shell); encoded variants return 404 JSON.
+       Guard resolves symlinks and enforces pathWithin(root, full).
+[PASS] SSRF surface limited to admin-only endpoints (proxy test, CPA/sub2api
+       base_url) — acceptable for an admin who can already set the proxy.
+[PASS] Unknown /api/* paths return 404 JSON, not the SPA HTML.
+
+RELEASE ARTIFACTS (built locally, matching release.yml spec)
+-----------------------------------------------------------
+6 platforms built with -trimpath -s -w and BuildVersion injected:
+  linux/amd64, linux/arm64, linux/armv7, darwin/amd64, darwin/arm64, windows/amd64
+Artifacts + SHA256SUMS.txt staged outside the repo at:
+  /home/chatgpt2api-release-v2.2.3/
+linux/amd64 artifact verified at runtime: /, /health and an authenticated API
+all return 200 and it reports version 2.2.3 without a VERSION file.
