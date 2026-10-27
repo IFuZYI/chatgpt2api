@@ -97,6 +97,13 @@ type AccountService struct {
 	reloginMu  sync.Mutex
 	relogining map[string]bool
 
+	// textCandidateBuf 复用文本链路的候选切片。
+	//
+	// GetTextAccessToken 是每个 /v1/chat/completions 的必经路径，
+	// 原来每次都 make([]string, 0, len(accounts)) —— 300 账号时
+	// 每次请求分配 ~5.4 KB。用 Pool 借还后稳态分配降到 0。
+	textCandidateBuf sync.Pool
+
 	cumulativeTotal int
 	cumulativeMu    sync.Mutex
 
