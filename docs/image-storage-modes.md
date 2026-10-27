@@ -138,6 +138,9 @@ MKCOL 是 5 次而不是 3 次，因为路径是
 `chatgpt2api/images`（`webdav_root_path` 两层）+ `2026/10/24`（三层）= 5 层目录，
 每层一次 MKCOL。
 
+> 这张表的请求次数由 `TestStorageModeRequestCountsMatchDocumentedTable`
+> 钉住（改实现导致次数变化会直接失败），耗时列只作量级参考。
+
 > **优化提示**：`webdav_root_path` 每多一层目录，就多一次 MKCOL。
 > 如果你的 WebDAV 服务端延迟高，把 root path 设浅一点（比如 `images`）能省请求。
 > 同一天的第二张图仍会重复 MKCOL —— 代码没有「目录已存在」的缓存，

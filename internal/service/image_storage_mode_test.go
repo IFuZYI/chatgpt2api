@@ -3,6 +3,7 @@ package service
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -31,6 +32,7 @@ type webdavRecorder struct {
 	mu          sync.Mutex
 	puts        int
 	gets        int
+	mkcols      int           // MKCOL 次数 —— docs/image-storage-modes.md 的实测表引用了它
 	putStatus   int           // 非 0 时 PUT 直接返回该状态码（模拟远端 5xx）
 	putDelay    time.Duration // 非 0 时 PUT 先 sleep（模拟远端慢）
 	contentType string        // 最后一次 PUT 的 Content-Type
@@ -45,6 +47,8 @@ func (r *webdavRecorder) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		r.mu.Lock()
 		switch req.Method {
+		case "MKCOL":
+			r.mkcols++
 		case http.MethodPut:
 			r.puts++
 			r.contentType = req.Header.Get("Content-Type")
@@ -620,5 +624,78 @@ func TestDeleteImagesLocalOnlySkipsWebDAV(t *testing.T) {
 	}
 	if localImageExists(t, svc, rel) {
 		t.Error("local file should be removed")
+	}
+}
+
+// docs/image-storage-modes.md 的「实测对比」表断言了三种模式各自的
+// MKCOL / PUT 请求次数。这条测试把那张表钉住 —— 数字对不上说明文档
+// 或实现有一方漂了（例如有人给 ensureDirs 加了目录缓存，MKCOL 会减少）。
+//
+// 表格（50ms 延迟的假 WebDAV，root_path = chatgpt2api/images）：
+//
+//	模式      MKCOL  PUT
+//	local       0     0
+//	webdav      5     1
+//	both        5     1（后台）
+//
+// MKCOL 是 5 次而非 3 次：root_path 两层（chatgpt2api/images）+
+// 日期三层（YYYY/MM/DD）= 5 层，每层一次。
+func TestStorageModeRequestCountsMatchDocumentedTable(t *testing.T) {
+	cases := []struct {
+		mode      string
+		wantMKCOL int
+		wantPUT   int
+	}{
+		{"local", 0, 0},
+		{"webdav", 5, 1},
+		{"both", 5, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			recorder := newWebDAVRecorder()
+			server := httptest.NewServer(recorder.handler())
+			defer server.Close()
+
+			svc, _ := newImageStorageFixture(t, tc.mode, server.URL)
+
+			if _, _, err := svc.SaveImageBytes(testPNG(t, 2, 2), "http://host"); err != nil {
+				t.Fatalf("SaveImageBytes(%s): %v", tc.mode, err)
+			}
+			// both 模式的 PUT 在后台 goroutine 里：Close 会等 uploadWG 归零。
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := svc.Close(ctx); err != nil {
+				t.Fatalf("等待后台上传超时: %v", err)
+			}
+
+			recorder.mu.Lock()
+			gotMKCOL, gotPUT := recorder.mkcols, recorder.puts
+			recorder.mu.Unlock()
+
+			if gotMKCOL != tc.wantMKCOL {
+				t.Errorf("MKCOL 次数 = %d, 文档表格写 %d", gotMKCOL, tc.wantMKCOL)
+			}
+			if gotPUT != tc.wantPUT {
+				t.Errorf("PUT 次数 = %d, 文档表格写 %d", gotPUT, tc.wantPUT)
+			}
+		})
+	}
+}
+
+// local 模式完全不碰远端（文档「写入」一节的核心结论）。
+func TestLocalModeNeverTouchesWebDAV(t *testing.T) {
+	recorder := newWebDAVRecorder()
+	server := httptest.NewServer(recorder.handler())
+	defer server.Close()
+
+	svc, _ := newImageStorageFixture(t, "local", server.URL)
+	if _, _, err := svc.SaveImageBytes(testPNG(t, 2, 2), "http://host"); err != nil {
+		t.Fatal(err)
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if recorder.mkcols != 0 || recorder.puts != 0 || recorder.gets != 0 {
+		t.Errorf("local 模式不该有任何远端请求，实际 MKCOL=%d PUT=%d GET=%d",
+			recorder.mkcols, recorder.puts, recorder.gets)
 	}
 }
