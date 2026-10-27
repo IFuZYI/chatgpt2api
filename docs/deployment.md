@@ -29,6 +29,7 @@
 - [存储后端](#存储后端)
 - [图片存储](#图片存储)
 - [备份](#备份)
+- [发布流程（维护者）](#发布流程维护者)
 - [升级与回滚](#升级与回滚)
 - [安全加固](#安全加固)
 - [排障](#排障)
@@ -719,6 +720,39 @@ R2 是**备份**用的（见下节），不是图片热存储。图片热存储�
 > 也可以只开手动：关掉 `enabled`，在面板里点「立即备份」。
 
 ---
+
+## 发布流程（维护者）
+
+> 本仓库是 [`basketikun/chatgpt2api`](https://github.com/basketikun/chatgpt2api)
+> 的 fork，版本号独立演进（上游最新 v1.7.0，本 fork 已到 v2.2.3）。
+
+打 tag 会触发 `.github/workflows/release.yml`（跨平台二进制 + GitHub Release）
+与 `docker-publish.yml`（多架构镜像）。
+
+**一次成功，不要反复重推 tag。** 实测教训：2026-10-26 一天内推了 37 次
+workflow 运行（多个 tag 反复 `--force` 更新），触发了 GitHub 对 fork 的
+Actions 用量保护，此后所有工作流被暂停，提示：
+
+> Workflows are not currently being run on this fork due to the scale of
+> GitHub Actions usage. A repository maintainer can choose to re-enable these.
+
+恢复方式：仓库 **Settings → Actions → 允许所有 actions 运行**，然后在
+Actions 页面手动 Run workflow（两个工作流都支持 `workflow_dispatch`）。
+
+发布前自检（避免 tag 推上去才发现构建失败）：
+
+```bash
+go test ./... && go vet ./... && gofmt -l cmd internal tools
+cd web && npm test && npm run typecheck && npm run build && cd ..
+go build -o /tmp/probe ./cmd/server                 # 后端能编译
+docker build -t probe:test .                        # 镜像能构建
+for f in docker-compose*.yml; do docker compose -f "$f" config -q; done
+python3 scripts/test-compose.py
+```
+
+全部通过后再打 tag、推一次。若 Actions 仍被暂停，用本地构建的产物手动
+创建 Release（见 [`release-notes-2.2.3.md`](./release-notes-2.2.3.md)
+末尾的步骤）。
 
 ## 升级与回滚
 
