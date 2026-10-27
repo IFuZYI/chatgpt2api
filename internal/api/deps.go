@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/IFuZYI/chatgpt2api/internal/config"
 	"github.com/IFuZYI/chatgpt2api/internal/protocol"
@@ -55,6 +56,9 @@ type Deps struct {
 	// PasswordLoginClient 为密码重登构造一个认证会话（带 TLS 指纹的上游客户端）。
 	// 未注入时重登会逐条报 password_login_not_configured，而不是假装成功。
 	PasswordLoginClient service.PasswordLoginClientFactory
+
+	// startedAt 供 /api/metrics 计算运行时长。
+	startedAt time.Time
 }
 
 // Identity 是认证后的调用者身份，字段与 Python 的 require_identity 返回值一致。

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,6 +17,11 @@ import (
 //  3. FastAPI 对「路径不存在 + 方法也不对」返回 405 + Allow 头，Gin 返回 404。
 //     这是已知发散，golden 里标 intentional-divergence。
 func NewRouter(d *Deps) *gin.Engine {
+	// 兜底：测试与部分调用方直接构造 Deps，不经过 main。
+	// 零值 time.Time 会让 uptime 算成「从公元 1 年至今」，指标直接失真。
+	if d.startedAt.IsZero() {
+		d.startedAt = time.Now()
+	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -31,6 +37,7 @@ func NewRouter(d *Deps) *gin.Engine {
 	d.registerChatCompletions(r)
 	d.registerImageGeneration(r)
 	d.registerRemainingRoutes(r)
+	d.registerMetricsRoutes(r)
 	d.registerIntegrationRoutes(r)
 
 	spa := func(c *gin.Context) {
