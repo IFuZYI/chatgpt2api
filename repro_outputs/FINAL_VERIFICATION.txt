@@ -1030,3 +1030,45 @@ VERIFICATION AFTER ROUND 26
 [PASS] gofmt / go vet / go build / go test ./...   (8 packages)
 [PASS] 0 broken links
 [PASS] release artifacts rebuilt from a clean tree at the tagged commit
+
+ROUND 27 — CHANGELOG COMPLETENESS
+---------------------------------
+[FIXED] The CHANGELOG's 2.2.3 section described only the original batch of work.
+  None of the later audit rounds were recorded — including `GET /api/metrics`,
+  which is a new user-visible feature. A reader would conclude 2.2.3 contained
+  just the account-lifecycle and retention changes.
+
+  Added a "全量审计补充（2.2.3 定稿前）" section grouped by
+  new / security / fixes / performance / reproducible build, covering:
+    - GET /api/metrics (admin-only) and scripts/build-release.sh
+    - security: /health no longer leaks absolute paths; R2 SigV4 Host fix;
+      Next.js 16.2.3 → 16.4.3 (npm audit clean)
+    - fixes: image_timeout_retry_secs validation; storage-backend switch
+      warning; Dockerfile HEALTHCHECK; --init-proxy-config --base-dir;
+      panic recovery in the progress sweeper; background task timeout; image
+      page polling leak; unhandledrejection on local save; directory fsync;
+      PNG file-handle leak
+    - performance: three optimisations with before/after numbers (verified
+      identical to docs/performance.md)
+    - reproducible builds: web/go.mod module boundary; release script refusing
+      a dirty tree
+  Section size: 101 → 174 lines.
+
+  docs/release-notes-2.2.3.md (the GitHub Release body) gained the Docker
+  liveness, --base-dir and reproducible-build items; it already covered
+  metrics, path redaction, npm audit, performance and observability.
+
+  Cross-checked the quoted performance numbers against docs/performance.md:
+  43.8→39.9 µs, 67.2→60.5 µs, 80.3→55.9 µs appear in both.
+
+PROCESS NOTE
+  Because Go embeds vcs.revision into the binary, every commit changes the
+  artifact bytes. The release package is therefore rebuilt as the FINAL step
+  after the last commit, and the tag is moved to that same commit, so the
+  artifacts' embedded revision always equals the tag's commit.
+
+VERIFICATION AFTER ROUND 27
+---------------------------
+[PASS] gofmt / go vet / go build / go test ./...   (8 packages)
+[PASS] CHANGELOG and release notes: code fences balanced, 0 broken links
+[PASS] performance figures consistent between CHANGELOG and docs/performance.md
