@@ -493,3 +493,36 @@ VERIFICATION AFTER ROUND 13
 [PASS] go test ./...            (8 packages; live S3 test skipped by default)
 [PASS] TestR2ClientLiveRoundTrip against MinIO: upload/download/delete all OK
 [PASS] MinIO container and image removed afterwards
+
+ROUND 14 — WEBDAV STORAGE CHAIN (real server)
+----------------------------------------------
+Existing WebDAV tests all ran against a hand-written `webdavFake`. A fake can
+diverge from a real server on exactly the things production hits:
+  - MKCOL on an existing collection returns 405 (fake may return 201)
+  - PUT requires each parent collection to exist
+  - URL segment escaping (spaces / non-ASCII / parentheses)
+
+[ADDED] Two opt-in tests (TEST_WEBDAV_URL):
+        - TestWebDAVLiveRoundTrip — filename with spaces and Chinese
+          characters, Put → Get → Delete, content compared byte-for-byte.
+        - TestWebDAVLiveOverwriteIsIdempotent — a second Put must overwrite,
+          not error (real WebDAV answers 204/200, not 201).
+
+RESULT against a real Apache WebDAV container (bytemark/webdav): both pass.
+So the implementation's MKCOL/PUT/GET/DELETE and segment escaping are correct
+against a real server — the fake was not hiding a defect here.
+
+(Contrast: the backup chain's equivalent real-endpoint test DID catch a bug —
+the SigV4 host mismatch returning 403. Running both kinds is what makes the
+"verified" claim meaningful.)
+
+Docs: docs/deployment.md now tells operators to run both self-checks
+(R2/S3 and WebDAV) before deploying to a new environment.
+
+VERIFICATION AFTER ROUND 14
+---------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages; live WebDAV tests skipped by default)
+[PASS] TestWebDAVLiveRoundTrip + TestWebDAVLiveOverwriteIsIdempotent against
+       real Apache WebDAV: both pass
+[PASS] WebDAV container and image removed afterwards

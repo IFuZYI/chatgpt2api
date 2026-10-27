@@ -670,6 +670,15 @@ R2 是**备份**用的（见下节），不是图片热存储。图片热存储�
 > 值得跑一次：SigV4 签名、canonical request、Host 头任何一处不对，
 > 单测都发现不了，只有真实端点会回 403。
 
+> **WebDAV 图片存储同理**：有真实服务往返测试（Put → Get → Delete，
+> 含带空格与中文的文件名）。默认跳过，用任意 WebDAV 端点开启：
+>
+> ```bash
+> TEST_WEBDAV_URL=http://127.0.0.1:8080 \
+> TEST_WEBDAV_USER=... TEST_WEBDAV_PASS=... \
+>   go test ./internal/service/ -run TestWebDAVLive -v
+> ```
+
 ```json
 {
   "backup": {
