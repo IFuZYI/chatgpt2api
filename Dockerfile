@@ -76,5 +76,25 @@ EXPOSE 8080
 
 # data/ 与 config.json 由 compose 挂载，且必须对 uid 65532 可写。
 # 首次启动若目录为空，服务会自行创建 config.json 与数据文件。
+
+# HEALTHCHECK 必须显式声明。
+#
+# distroless/static 里没有 curl / wget / nc，所以只能用二进制自带的
+# --healthcheck 子命令（见 internal/health/health.go）。
+#
+# 审计发现：`internal/health` 包和部署文档都写着「容器 healthcheck 用
+# --healthcheck」，但 Dockerfile 里**从来没有这条指令** —— 实测构建出的
+# 镜像 Config.Healthcheck 是 null，`docker ps` 永远显示 "healthy"，
+# 进程卡死（事件循环堵住、号池全挂）也不会被任何监控发现。
+#
+# 参数说明：
+#   --start-period=20s  首次启动要读账号池、建索引，给足预热时间，
+#                       否则冷启动会被判成 unhealthy 并触发重启循环。
+#   --interval=30s      探活频率。
+#   --timeout=5s        单次探活超时（--healthcheck 内部也是 5s）。
+#   --retries=3         连续 3 次失败才标 unhealthy，避免抖动误判。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["/app/chatgpt2api", "--healthcheck"]
+
 ENTRYPOINT ["/app/chatgpt2api"]
 CMD ["--addr", ":8080"]
