@@ -748,3 +748,44 @@ VERIFICATION AFTER ROUND 20
 [PASS] gofmt / go vet / go build
 [PASS] go test ./...            (8 packages)
 [PASS] both new guards fail when the drift they target is introduced
+
+ROUND 21 — DOCUMENTED FILE REFERENCES
+------------------------------------
+Audited docs/account-lifecycle.md, docs/archive-python-backend.md and the
+ADRs, then systematically extracted every repository file path mentioned in
+user-facing markdown (101 distinct paths) and checked each one.
+
+FIXED 1 — a stale test-file reference. docs/account-lifecycle.md's test
+  inventory named `retry_policy_test.go`, which no longer exists: it was folded
+  into `audit_regression_test.go` during the 2.2.3 audit and the doc was not
+  updated. A reader following the pointer would find nothing. Corrected the
+  name and expanded the coverage description.
+
+FIXED 2 — ambiguous count. archive-python-backend.md said the archive branch
+  "contains all 99 files", easily read as "the branch has 99 files". The branch
+  actually holds 497 files; 99 is the count of the Python implementation itself
+  (96 .py + .python-version + pyproject.toml + uv.lock). Reworded and verified
+  the arithmetic.
+
+[ADDED] TestDocumentedTestFilesExist — every `*_test.go` named in user-facing
+  markdown must exist on disk. Verified by renaming the reference to a
+  fabricated file: the test fails and names both the file and the document.
+  Scope is deliberately Go-only: the Python filenames in ADR-0003/0009/0010 and
+  archive-python-backend.md are historical, describing the pre-rewrite state or
+  the archived implementation on another branch, and are correctly framed there.
+
+CHECKED AND RULED OUT (no change needed) — recorded so the same ground is not
+re-covered next round:
+  * ADR-0003 explicitly frames its Python test references as the pre-rewrite
+    baseline ("24 of them were already red before the rewrite").
+  * archive-python-backend.md's "78 routes in the Python api/ layer" — counted
+    the decorators on the archive branch: exactly 78.
+  * Runtime data files (accounts.json, data/image_index.json, …) are created at
+    runtime and correctly absent from git.
+
+VERIFICATION AFTER ROUND 21
+---------------------------
+[PASS] 0 broken links
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] new guard fails when a fabricated test filename is referenced
