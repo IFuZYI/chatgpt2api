@@ -183,3 +183,42 @@ VERIFICATION AFTER ROUND 3
 [PASS] next build + embed + restart; / and /health both 200
 [PASS] Request body limit enforced: 29 MB body → 413
 [PASS] 6-platform release artifacts rebuilt with SHA256SUMS
+
+ROUND 4 — RESOURCE LEAK & DURABILITY FIXES
+------------------------------------------
+[FIXED] Image page polling kept running after the component unmounted.
+        runConversationQueue uses `while (true)` whose only exits are
+        "no loading tasks" or "10 consecutive errors". Leaving the page did
+        not stop it: it kept hitting /api/image-tasks every 2 s until the task
+        finished, and since React 18 no longer warns about setState after
+        unmount the leak was completely silent. Added unmountedRef checked at
+        the top of each iteration; 2 frontend tests lock the cancel contract.
+[FIXED] PNG re-encode closed its file handle explicitly after png.Decode.
+        png.Decode can panic on malformed input, skipping the Close — a batch
+        compression of hundreds of images could then hit "too many open files".
+        Changed to defer source.Close().
+[FIXED] JSON storage never fsynced the parent directory after rename.
+        POSIX rename only updates the directory entry in memory; on power loss
+        the old file can be gone and the new one not yet durable — i.e. the
+        entire account pool disappears. tmp.Sync() only covers file contents.
+        Added a best-effort directory fsync (ignored when the filesystem
+        returns EINVAL, as rename already succeeded). SQLite backend needs no
+        change: it defaults to synchronous=FULL.
+
+RESOURCE AUDIT (clean)
+----------------------
+[PASS] File handles: every os.Open/Create is closed (one converted to defer).
+[PASS] HTTP response bodies: all closed via defer.
+[PASS] Channels: every non-signal channel is buffered; no blocked-send leaks.
+[PASS] Frontend timers: 12 setInterval / 26 clearInterval, listeners 4/4.
+[PASS] JSON writes: tmp + fsync + rename + chmod 0600 (+ dir fsync now).
+
+VERIFICATION AFTER ROUND 4
+--------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] go test -race ./internal/service/ ./internal/api/
+[PASS] npm test                 (56 tests)
+[PASS] npm run typecheck
+[PASS] next build + embed + restart; / and /health both 200
+[PASS] 6-platform release artifacts rebuilt with SHA256SUMS
