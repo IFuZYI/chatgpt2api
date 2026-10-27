@@ -870,3 +870,57 @@ VERIFICATION AFTER ROUND 23
 [PASS] gofmt / go vet / go build
 [PASS] go test ./...            (8 packages)
 [PASS] request-count guard passes and fails on drift
+
+ROUND 24 — ADR NUMBERS VS REALITY
+---------------------------------
+Audited the 14 ADRs (700 lines) — the largest previously-unchecked body of
+documentation. Verified their concrete claims against code and the archive
+branch, and found three drifts.
+
+FIXED 1 — ADR-0014 contradicted the code. It said reloginMaxConcurrency=2;
+  the constant is 1. Git history shows the cause: commit d07374f introduced the
+  constant as 2 and wrote that into the ADR; my audit commit 2fbc889 changed it
+  to 1 (ReloginAccounts is a plain serial for-loop, so 2 described a concurrency
+  that never existed, and the old test only asserted "constant within (0,10]",
+  giving a false impression of verified throttling) — but I did not update the
+  ADR. Corrected, with the reasoning now recorded in both places.
+
+FIXED 2 — ADR-0009's test surface was stale: 561 claimed vs 776 actual
+  top-level Test functions; the per-package breakdown was low across the board
+  (service 153→269, config 11→49, storage 8→17). Rewritten as a
+  "at rewrite / after the 2.2.3 audit" comparison, with the counting method
+  stated (top-level Test functions, not `go test -v` cases — the latter include
+  subtests and run ~1.4×).
+
+FIXED 3 — same ADR's coverage figures were stale: api 42.0→48.7%,
+  config 64.9→80.7%, service 53.0→61.3%, storage 44.1→61.0%. Same two-column
+  treatment, plus a note that api/config are structurally low (route
+  registration and handlers are covered by golden cases, not by line coverage)
+  and are not judged on line coverage alone.
+
+FIXED 4 — ADR-0001's "17,642 lines" was not reproducible. Measured with the
+  documented basis (api/ + services/ + utils/ + main.py .py lines on the
+  archive branch) it is 17,651 — a 9-line difference from the measurement
+  point. Rewrote it to state the basis so a reader can recompute.
+
+All four now say they are snapshots with the measurement command, rather than
+presenting a moving number as a constant.
+
+ALSO VERIFIED, NO CHANGE NEEDED:
+  * ADR-0006 (plain SHA-256 hex, no salt/iteration, compared with hmac.Equal) —
+    confirmed in `internal/service/auth*.go`: `sha256.Sum256` and three
+    `hmac.Equal` call sites, no pbkdf2/bcrypt/argon2.
+  * ADR-0007 (image_inflight as an atomic per-token counter; no time.AfterFunc
+    watchdog) — confirmed: `inflight sync.Map // token -> *atomic.Int64` and
+    zero occurrences of `time.AfterFunc` in non-test code.
+  * ADR-0006's time format `2006-01-02 15:04:05` — in use.
+  * ADR-0003's Python test references — correctly framed as the pre-rewrite
+    baseline.
+
+VERIFICATION AFTER ROUND 24
+---------------------------
+[PASS] 0 broken links
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] every numeric claim in the ADRs either verified or rewritten to state
+       its measurement basis
