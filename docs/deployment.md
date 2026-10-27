@@ -750,9 +750,24 @@ for f in docker-compose*.yml; do docker compose -f "$f" config -q; done
 python3 scripts/test-compose.py
 ```
 
-全部通过后再打 tag、推一次。若 Actions 仍被暂停，用本地构建的产物手动
-创建 Release（见 [`release-notes-2.2.3.md`](./release-notes-2.2.3.md)
-末尾的步骤）。
+全部通过后再打 tag、推一次。
+
+### 本地构建发布产物
+
+Actions 被暂停时用 [`scripts/build-release.sh`](../scripts/build-release.sh)
+构建 6 个平台的产物 + 校验和（与 `release.yml` 的矩阵和 ldflags 一致）：
+
+```bash
+./scripts/build-release.sh              # 输出到 ./dist-release
+```
+
+**脚本会拒绝在脏工作区上构建**。Go 会把版本控制信息编进二进制
+（`vcs.modified` / 模块版本 `+dirty`），工作区里多一个未提交文件就会让
+产物自称 dirty、且两次构建字节不同 —— 既误导用户，也无法复现。先 commit
+再构建；只想本地试构建时加 `--allow-dirty`。
+
+产物就绪后上传到对应 tag 的 GitHub Release
+（正文模板见 [`release-notes-2.2.3.md`](./release-notes-2.2.3.md)）。
 
 ## 升级与回滚
 
