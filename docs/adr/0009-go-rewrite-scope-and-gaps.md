@@ -71,16 +71,38 @@ ADR-0003 的 golden 也以 Python 行为准。详见 `docs/archive-python-backen
 
 ## 测试面
 
-561 个 Go 测试：
-- `internal/protocol` 225（SSE、缓存、token 计费、Anthropic、图片轮询/池、mask 合成）
-- `internal/service` 153（备份加密双向 OpenSSL 兼容、R2 SigV4、WebDAV、OAuth PKCE、密码登录/重登、标签并发）
-- `internal/api` 90（golden 用例、路由对齐、流式错误、n 校验、任务格式）
-- `internal/upstream` 65（PoW 跨语言 golden、sentinel fnv1a golden、TOTP RFC 向量）
-- `internal/config` 11（归一化、默认值、cookie 保留）
-- `internal/storage` 8（json/sqlite 后端契约）
-- `internal/web` 5（embed、SPA fallback、路径穿越防护）
-- `internal/health` 4
+**这是快照，不是常量**：数字随开发增长，下文按「顶层 `Test` 函数」口径统计
+（`grep -c '^func Test'`），与 `go test -v` 报告的用例数不同（后者含子测试，
+约 1.4 倍）。
 
-覆盖率（语句）：web 91.5% / health 88.5% / protocol 78.2% / config 64.9% / upstream 55.8% / service 53.0% / storage 44.1% / api 42.0%。
+| 包 | 重写时 | 2.2.3 审计后 | 覆盖内容 |
+|:--|--:|--:|:--|
+| `internal/protocol` | 225 | 230 | SSE、缓存、token 计费、Anthropic、图片轮询/池、mask 合成 |
+| `internal/service` | 153 | 269 | 备份加密双向 OpenSSL 兼容、R2 SigV4、WebDAV、OAuth PKCE、密码登录/重登、标签并发、账号生命周期 |
+| `internal/api` | 90 | 130 | golden 用例、路由对齐、流式错误、n 校验、任务格式、文档一致性 |
+| `internal/upstream` | 65 | 72 | PoW 跨语言 golden、sentinel fnv1a golden、TOTP RFC 向量 |
+| `internal/config` | 11 | 49 | 归一化、默认值、cookie 保留、保留期单位迁移 |
+| `internal/storage` | 8 | 17 | json/sqlite 后端契约、git 后端、目录 fsync |
+| `internal/web` | 5 | 5 | embed、SPA fallback、路径穿越防护 |
+| `internal/health` | 4 | 4 | 探针 |
+| **合计** | **561** | **776** | |
+
+语句覆盖率（`go test -cover ./internal/...`，同样是快照）：
+
+| 包 | 重写时 | 2.2.3 审计后 |
+|:--|--:|--:|
+| `internal/web` | 91.5% | 91.5% |
+| `internal/health` | 88.5% | 88.5% |
+| `internal/config` | 64.9% | **80.7%** |
+| `internal/protocol` | 78.2% | 78.5% |
+| `internal/service` | 53.0% | **61.3%** |
+| `internal/storage` | 44.1% | **61.0%** |
+| `internal/upstream` | 55.8% | 55.6% |
+| `internal/api` | 42.0% | **48.7%** |
+
+`internal/api` 与 `internal/config` 偏低是结构性的：前者大量代码是路由
+注册与 handler，靠 golden 用例覆盖（不计入行覆盖）；后者有若干只在特定
+环境变量组合下才走到的分支。两者都用集成/契约测试补足，不以行覆盖率
+为唯一指标。
 
 live 测试（`-tags live`）单独跑，只记录上游状态不设失败断言（ADR-0008 的教训）。

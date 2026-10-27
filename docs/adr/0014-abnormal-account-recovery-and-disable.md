@@ -59,9 +59,17 @@
 6. **退避带 full jitter**（下半区间 `[delay/2, delay]`），保住
    「失败越多等越久」的语义，同时消除同批账号的重合点。
 
-7. **重登并发保护**：`beginRelogin`/`endRelogin` 做账号级去重，
-   `reloginMaxConcurrency=2` 限制全局并发。没有它时，刷新收尾与
-   keepalive 收尾会同时对同一账号发起密码登录。
+7. **重登并发保护**：`beginRelogin`/`endRelogin` 做账号级去重（键是
+   `resolveTokenLocked` 解析出的规范身份，不是 token 字符串），
+   `reloginMaxConcurrency=1` 表达「串行」。
+   没有去重时，刷新收尾与 keepalive 收尾会同时对同一账号发起密码登录。
+
+   > **修正（2.2.3 审计）**：这个常量原本写 2，但 `ReloginAccounts` 是纯
+   > 串行 `for` 循环，从来没有并发 —— 常量与实际行为不符，而
+   > `TestReloginConcurrencyLimited` 只断言「常量落在 (0,10] 区间」，
+   > 给人「限流已验证」的错觉。现改为 1 并如实描述为串行；代价是
+   > 300 个号一轮约 15 分钟。若将来引入并发，必须同时实现信号量，
+   > 并让测试断言**真实峰值**而不是常量取值。
 
 ## 被否掉的备选
 

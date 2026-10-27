@@ -1,6 +1,8 @@
 # 用 Go 全量替换 Python 后端，不做绞杀者并行
 
-Python 版后端 17,642 行，唯一出站身份来源是 `data/accounts.json` 号池。绞杀者模式（Go 起新端口，Nginx 按路径分流到 Python）能让存量部署零风险，但会让两个进程同时持有并写同一份号池状态——`account_service` 的槽位/限流/刷新逻辑有 30+ 处锁区间，两进程并发写会产生偶发数据损坏，且损坏不可复现。状态单写者是不可协商的正确性要求，所以选择一次性全量替换：新建 `cmd/server` + `internal/`，Python 版靠 git 历史保留，不并行跑。代价是切换瞬间没有回退路径，缓解手段是 golden 基线（ADR-0003）在切换前就证明行为等价。
+Python 版后端约 17,650 行（口径：归档分支上 `api/` + `services/` +
+`utils/` + `main.py` 的 `.py` 行数，实测 17,651；不含 `test/` 与 `scripts/`），
+唯一出站身份来源是 `data/accounts.json` 号池。绞杀者模式（Go 起新端口，Nginx 按路径分流到 Python）能让存量部署零风险，但会让两个进程同时持有并写同一份号池状态——`account_service` 的槽位/限流/刷新逻辑有 30+ 处锁区间，两进程并发写会产生偶发数据损坏，且损坏不可复现。状态单写者是不可协商的正确性要求，所以选择一次性全量替换：新建 `cmd/server` + `internal/`，Python 版靠 git 历史保留，不并行跑。代价是切换瞬间没有回退路径，缓解手段是 golden 基线（ADR-0003）在切换前就证明行为等价。
 
 ## Considered Options
 
