@@ -831,3 +831,42 @@ VERIFICATION AFTER ROUND 22
 [PASS] all four doc-consistency guards pass, and each fails when its drift is
        introduced (verified for the route count, endpoint path, test filename
        and ADR count guards)
+
+ROUND 23 — IMAGE STORAGE MODES: LOCKING THE MEASURED TABLE
+---------------------------------------------------------
+Audited docs/image-storage-modes.md (336 lines). Its "实测对比" table asserts
+the MKCOL / PUT request counts per storage mode:
+
+    mode     MKCOL  PUT
+    local      0     0
+    webdav     5     1
+    both       5     1 (background)
+
+Nothing guarded those numbers, so adding a directory cache to ensureDirs
+(MKCOL would drop 5 → 3) or changing the async path would silently make the
+doc wrong.
+
+[ADDED] TestStorageModeRequestCountsMatchDocumentedTable (three sub-cases) and
+        TestLocalModeNeverTouchesWebDAV. Measured counts match the doc exactly
+        for all three modes. To make the assertion possible, webdavRecorder now
+        counts MKCOL (it previously counted only PUT/GET).
+        Verified the guard fails on drift: changing the expected value to 3
+        produces "MKCOL 次数 = 5, 文档表格写 3".
+
+ALSO VERIFIED, NO CHANGE NEEDED (recorded so this ground is not re-covered):
+  * The doc's explanation that MKCOL is 5 rather than 3 (two root_path
+    segments + three date segments) is correct — root_path "chatgpt2api/images"
+    gives 2, YYYY/MM/DD gives 3.
+  * "A second image on the same day still repeats every MKCOL — there is no
+    directory cache" — confirmed in ensureDirs: it issues MKCOL for every
+    segment unconditionally on every call, tolerating 405 as "already exists".
+  * The timing column (1ms / 307ms / 2ms) depends on the machine and the fake
+    server's injected delay. It is already qualified in the doc; added a note
+    under the table that the counts are test-locked while timings are
+    order-of-magnitude only.
+
+VERIFICATION AFTER ROUND 23
+---------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] request-count guard passes and fails on drift
