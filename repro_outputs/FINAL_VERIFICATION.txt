@@ -1112,3 +1112,35 @@ VERIFICATION AFTER ROUND 28
 [PASS] gofmt / go vet / go build / go test ./...   (8 packages)
 [PASS] removing the `edit` rule surfaces no new files
 [PASS] 27 golden fixtures = 27 subtests
+
+ROUND 29 — PROMOTING THE SESSION'S SYSTEMIC LESSONS
+--------------------------------------------------
+The audit produced two lessons that recurred across rounds 19–28. They were
+recorded only in the local, gitignored .learnings/, so collaborators and future
+sessions could not see them. Promoted both to AGENTS.md (now 16 rules):
+
+  Rule 15 — summary documents drift silently; give machine-checkable claims a
+    guard test. Documents field evidence from six files where a claim had gone
+    stale (README route/ADR counts, ADR-0009 test count and coverage,
+    ADR-0014's reloginMaxConcurrency, ADR-0001's line count, feature-status
+    counts and model list, the CHANGELOG missing 26 rounds of changes, and the
+    glossary missing three core concepts), lists the six guard tests now in
+    place, and states the approach for claims that cannot be machine-checked:
+    document the measurement basis and mark it as a snapshot.
+
+  Rule 16 — verify before asserting "this is a bug". Records the two occasions
+    this session where a diff/count-based judgement was wrong and empirical
+    checks disproved it (the has_* / *_set field naming turned out to be two
+    intentional conventions, and the "99 files" count was correct once the
+    scope was understood). The rule: run the real command or query the real
+    endpoint first; off-by-one counts are usually a scope difference, and
+    naming inconsistencies are usually deliberate.
+
+Note: the Hindsight knowledge base is unavailable in this environment
+(no API token configured), so the repo-local AGENTS.md and .learnings/ are the
+only durable memory channels.
+
+VERIFICATION AFTER ROUND 29
+---------------------------
+[PASS] gofmt / go vet / go build / go test ./...   (8 packages)
+[PASS] AGENTS.md at 16 rules; every rule cites its source

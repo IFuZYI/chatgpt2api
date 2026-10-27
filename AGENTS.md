@@ -285,3 +285,51 @@ npm install」，并且会编译测试一段我们没写过、也不控制的代
 
 新增目录若既不属 Go、又可能被 `./...` 扫到，照此处理。
 
+### 15. 汇总性文档会静默过期 —— 给可机械验证的断言加守护测试
+
+**每一份「汇总性」文档都在和现实赛跑，而且输了不会有人告诉你。**
+2.2.3 审计中在六份文档里各发现过至少一处过期断言：
+
+| 文档 | 过期内容 |
+|:--|:--|
+| `README.md` / `README.en.md` | 「79 条路由」（实为 80）、「13 条 ADR」（实为 14） |
+| `docs/adr/0009` | 测试数 561（实为 776）、覆盖率全项偏低 |
+| `docs/adr/0014` | `reloginMaxConcurrency=2`（代码是 1） |
+| `docs/adr/0001` | Python 行数 17,642（实测 17,651，且未写口径） |
+| `docs/feature-status.md` | 「77 条路由」、「上游文本模型 11 个」（实为 13） |
+| `CHANGELOG.md` | 2.2.3 段缺后续 26 轮全部改动（含新增的 `/api/metrics`） |
+| `GLOSSARY.md` | 缺 Token 别名等 3 个核心概念 |
+
+**做法**：凡是能被机械核对的断言（数量、路径、文件名），就写一条守护测试
+而不是靠人记。本仓库现有：
+
+```
+TestRouteCountMatchesDocumentedNumber    路由数量
+TestDocumentedEndpointsExist             文档提到的端点路径真实存在
+TestDocumentedTestFilesExist             文档点名的测试文件存在
+TestADRCountMatchesDocumentedNumber      README 声明的 ADR 数量
+TestStorageModeRequestCountsMatchDocumentedTable  存储模式请求次数表
+TestReleaseScriptMatchesWorkflow         本地脚本与 CI 的平台矩阵一致
+```
+
+**无法机械核对的断言**（性能实测、覆盖率、行数）则写明**测量口径与命令**，
+并标注「这是快照」，让读者能自己复算 —— 比追着一个漂移的数字改更有用。
+
+来源：本次 2.2.3 审计第 19–28 轮。`docs/performance.md`、`docs/account-lifecycle.md`
+是「写清口径」的正面例子。
+
+### 16. 先验证再断言，尤其是「这里有个 bug」
+
+本次审计中我两次凭 diff/计数就判定「文档错了」，实测后都发现自己错了：
+
+- 以为 `account-api-reference.md` 把脱敏字段名写错（文档写 `has_password`，
+  列表接口返回 `password_set`）。查详情接口才发现**两个端点确实用两套命名**，
+  文档各自写对了 —— 真正的问题是**没人提示两者不同**。
+- 以为 `archive-python-backend.md` 的「99 个文件」是错的（分支有 497 个）。
+  实测构成后确认 99 正是「Python 实现本身」的准确数字（96 `.py` +
+  `.python-version` + `pyproject.toml` + `uv.lock`），只是措辞有歧义。
+
+**做法**：判定「文档/代码错了」之前，先跑一次真实命令或查一次真实接口。
+计数差 1 往往是口径不同；命名不一致往往是有意为之。
+
+来源：本次审计第 19、21、24 轮。
