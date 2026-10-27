@@ -666,3 +666,37 @@ VERIFICATION AFTER ROUND 18
 [PASS] gofmt / go vet / go build
 [PASS] go test ./...            (8 packages)
 [PASS] corrected rollback procedure produces a working binary
+
+ROUND 19 — DOCUMENTATION DRIFT SWEEP (two docs never audited before)
+-------------------------------------------------------------------
+Audited docs/configuration.md and docs/feature-status.(en.)md, which earlier
+rounds had not touched. Four drifts found:
+
+1. configuration.md "common misunderstandings" table said only 9 kinds of keys
+   accept environment variables; the table itself now lists 12.
+2. The same file's worked example claimed /api/settings still shows the code
+   default "30" after setting CHATGPT2API_IMAGE_RETENTION_DAYS — retention
+   moved to minutes, so the default is 1440. Re-verified empirically: the env
+   var IS ignored (claim correct), but the value is 1440, and the doc now also
+   explains the primary key name and legacy-key migration.
+3. feature-status claimed "77 HTTP routes"; the real count is 80.
+4. docs/feature-status.en.md is named .en but its content is Chinese
+   (92 of 118 lines contain CJK). Consequence: the English README's
+   "Feature status" row sent readers to a Chinese document. Renamed to
+   docs/feature-status.md and updated all three references (README.md,
+   README.en.md, docs/deployment.md); the English README row now states
+   "document is in Chinese". Verified no other .en.md file is mislabelled
+   (README.en.md is genuinely English).
+
+Also reworked the "11 upstream text models" list into a snapshot table: the
+live count is now 13 (upstream added two alpha placeholders). A dynamically
+fetched list should not be documented as a whitelist, so the section now tells
+readers to judge "are models missing?" by the COUNT, not by name-by-name
+comparison.
+
+VERIFICATION AFTER ROUND 19
+---------------------------
+[PASS] 0 broken links across all markdown
+[PASS] no stale references to the old filename anywhere
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
