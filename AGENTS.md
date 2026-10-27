@@ -222,3 +222,43 @@ PID=$(ss -lntp | grep ":18099" | grep -oP 'pid=\K[0-9]+' | head -1)
   时必须保持这两个 job 绿色。
 
 来源：`.learnings/LEARNINGS.md#LRN-20261027-013`
+
+### 11. 改配置单位必须迁移旧值
+
+把 `image_retention_days`（天）改成 `image_retention_minutes`（分钟）时，
+若只读新键并落到默认值，`image_retention_days: 30` 会被当成「没配置」→
+变成 1440 分钟 = **1 天**，用户原本保留 30 天的图会在一天内被删光。
+
+- 单位变更 = 数据迁移，不是改个键名。
+- 读的时候：无新键则用旧值 ×换算系数；写的时候：换算成新键并删旧键；
+  旧键仍以派生值出现在响应里（外部脚本不受影响）。
+- 边界要写清：90 分钟向上取整为 1 天，不能算成 0 天。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-003`（配置单位）
+
+### 12. 测试自己也可能有竞态：`httptest` 要先配置再 Start
+
+`httptest.NewServer` 会立即启动服务，此后 `srv.Config` 由服务端 goroutine
+读取 —— 再赋值 `srv.Config.ConnState` 就是数据竞争。单跑能过，
+`-race -count=10` 必炸。
+
+- 需要在 server 上做任何配置时用 `httptest.NewUnstartedServer` →
+  配置 → `srv.Start()`。
+- 新增带并发/网络交互的测试后，用 `-count=10`（必要时加 `-race`）压一遍。
+  「单跑通过」不能证明测试没有竞态。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-014`
+
+### 13. 工作区可能被并发会话修改
+
+本机曾同时运行另一个 agent 会话，它对同一仓库执行了会清除未跟踪文件的
+操作，删掉了 `internal/service/socks_dialer.go` 与 7 个测试文件，
+并反复 `git stash/pop` 导致编辑被回滚。
+
+- 发现「刚写的文件不见了」时，先 `git status` + 检查文件 mtime，
+  不要假设是自己写错。
+- 重要改动尽早 `git add`（staged 内容不会被 `git clean` 删掉），
+  并把 diff 备份到仓库外。
+- 与他人并行工作时用隔离 worktree 验证，不要共享同一个工作区。
+
+来源：`.learnings/LEARNINGS.md#LRN-20261027-004`（并发工作区）
