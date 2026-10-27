@@ -40,6 +40,17 @@ func main() {
 	flag.Parse()
 
 	if *initProxyConfig {
+		// --base-dir 优先：直接跑二进制时用户指定的目录必须生效。
+		// 未指定时才回退到 CHATGPT2API_CONFIG_FILE / /app/config.json
+		// （容器里 init-config 服务显式设了该环境变量）。
+		if *baseDir != "" {
+			path := filepath.Join(*baseDir, "config.json")
+			if _, err := config.InitProxyRuntimeAt(path); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
 		os.Exit(config.RunInitProxyRuntime())
 	}
 

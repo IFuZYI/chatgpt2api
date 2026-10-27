@@ -49,6 +49,15 @@ func RunInitProxyRuntime() int {
 	return 0
 }
 
+// InitProxyRuntimeAt 按显式路径合并 proxy_runtime 默认值。
+//
+// 与 RunInitProxyRuntime 的区别：路径由调用方给定，不再只看
+// CHATGPT2API_CONFIG_FILE / 硬编码 /app/config.json —— 这样
+// `--base-dir` 才能生效（直接跑二进制时不会写错位置）。
+func InitProxyRuntimeAt(path string) (bool, error) {
+	return InitProxyRuntime(path)
+}
+
 // InitProxyRuntime 把环境变量推导出的 WARP/FlareSolverr proxy_runtime 默认值
 // 幂等合并进 configPath，返回是否发生了写入。
 func InitProxyRuntime(configPath string) (bool, error) {
