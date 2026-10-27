@@ -262,3 +262,26 @@ PID=$(ss -lntp | grep ":18099" | grep -oP 'pid=\K[0-9]+' | head -1)
 - 与他人并行工作时用隔离 worktree 验证，不要共享同一个工作区。
 
 来源：`.learnings/LEARNINGS.md#LRN-20261027-004`（并发工作区）
+
+### 14. Godir 的 `./...` 会吃掉 `web/node_modules`
+
+Go 的 `./...` **不能**排除 `node_modules`，而 npm 依赖树里可能有 Go 源码
+（实测：`flatted` 包含一个 `golang/` 目录）。
+
+后果：从仓库根跑 `go list ./...` 的包数取决于文件系统状态 ——
+
+```
+有 web/node_modules → 11 个包（多出 flatted 的第三方包）
+没有                → 10 个包
+```
+
+也就是说 `go test ./...` / `go vet ./...` 的结果取决于「你跑没跑过
+npm install」，并且会编译测试一段我们没写过、也不控制的代码（它随 npm
+依赖版本变化）。
+
+修法：在 `web/` 放一个**最小 `go.mod`**（内容只有 module + go 两行）
+作为模块边界标记。`./...` 到此为止，行为与 node_modules 是否存在无关。
+对 Next.js / npm / Docker 构建均无影响（它们不读 go.mod）。
+
+新增目录若既不属 Go、又可能被 `./...` 扫到，照此处理。
+
