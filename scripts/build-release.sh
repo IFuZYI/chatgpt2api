@@ -11,6 +11,13 @@
 #   scripts/build-release.sh --allow-dirty [目录]  允许在不干净的工作区上构建
 #
 # 产物命名与 release.yml 完全一致，可直接上传到 GitHub Release。
+#
+# 脚本会**自己构建前端**再编译后端（与 release.yml 的 Build frontend +
+# Stage frontend 两步对应）。这一步不能省：前端是 //go:embed all:web_dist
+# 编进二进制的，而 internal/web/web_dist/ 在仓库里只有 .gitkeep 占位
+# （其余被 gitignore）—— 全新克隆上直接 go build 会得到一个**没有前端、
+# 访问 / 与 /accounts 全 404** 的二进制。脚本因此先构建前端，并在编译前
+# 断言 index.html 真的存在。
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,6 +61,33 @@ MSG
     git status --short >&2
     exit 1
   fi
+fi
+
+# ── 前端：构建 + 暂存进 embed 目录 ────────────────────────────────
+#
+# 顺序与 release.yml 一致：先 frontend，再 stage，最后 go build。
+# 少了这步会产出没有前端的二进制（实测：全新克隆直接跑本脚本，
+# / 与 /accounts 都返回 404）。
+echo "构建前端（注入 VERSION=${version}）"
+if [ ! -d web/node_modules ]; then
+  ( cd web && npm ci --no-audit --no-fund )
+fi
+( cd web && npm run build )
+
+rm -rf internal/web/web_dist
+mkdir -p internal/web/web_dist
+cp -r web/out/. internal/web/web_dist/
+
+# 断言真的暂存进去了。这一步是防「npm run build 静默产出空目录」之类，
+# 比等到用户发现 404 再排查便宜得多。
+if [ ! -s internal/web/web_dist/index.html ]; then
+  echo "前端暂存失败：internal/web/web_dist/index.html 不存在或为空" >&2
+  echo "（这会让发布产物的 / 与 /accounts 全部 404）" >&2
+  exit 1
+fi
+# 顺带确认版本号真的注入了（build.mjs 读仓库根 VERSION）。
+if ! grep -rqs "$version" internal/web/web_dist/_next/static/chunks/; then
+  echo "警告：前端产物里找不到版本串 ${version}，界面可能显示 0.0.0" >&2
 fi
 
 rm -rf "$out_dir"
