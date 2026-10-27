@@ -72,6 +72,13 @@
 - `config.example.json` 的 `auto_remove_invalid_accounts` 由 `true` 改为 `false`：
   照抄模板意味着账号被判不可恢复时直接删号。
 - CI 新增前端（test/typecheck/build）与 Docker（构建 + `/health` 探活）任务。
+- **`Dockerfile` 补上 `HEALTHCHECK`**：此前 compose 配了探活、唯独镜像本身没有，
+  直接 `docker run` 时进程卡死也不会被标记为 unhealthy。
+- **`--init-proxy-config` 现在尊重 `--base-dir`**：此前只认
+  `CHATGPT2API_CONFIG_FILE`，否则硬编码 `/app/config.json`。
+- **本地发布脚本 `scripts/build-release.sh`**：与 CI 同矩阵构建 6 平台产物，
+  并拒绝在脏工作区上构建（Go 会把 VCS 信息编进二进制，脏工作区产出的包
+  会自称 `dirty` 且字节不可复现）。六平台产物两次构建字节一致。
 
 ### 升级注意
 

@@ -93,6 +93,79 @@
   账号出口代理」；`account-api-reference.md` 更正「禁用 = 人工停用」的旧描述，
   并补上 `last_relogin_*`、`disabled_*` 字段与重登错误码表。
 
+### 全量审计补充（2.2.3 定稿前）
+
+发布前又做了一轮逐文件审计，以下是这轮补上的内容。
+
+#### 新增
+
++ **`GET /api/metrics`（仅 admin）。** 返回 goroutine 数、堆大小、GC 次数与
+  总停顿、运行时长、Go 版本、CPU 数与号池统计。此前**没有任何运行期指标** ——
+  goroutine/文件描述符泄漏、堆增长只能靠外部 `ps` 猜。
+  刻意不挂 `net/http/pprof`：它的 `/debug/pprof/profile` 会让进程 CPU 跑满，
+  暴露到管理面需要额外的限流与超时设计。
++ `scripts/build-release.sh`：本地构建 6 平台发布产物 + 校验和，
+  与 CI 的 `release.yml` 同一套矩阵与 ldflags（有守护测试防漂移）。
+
+#### 安全
+
++ **未鉴权的 `/health` 不再返回服务器绝对路径。** 此前
+  `storage.backend.file_path` 原样输出 `/home/<user>/chatgpt2api/data/accounts.json`
+  —— 任何访问者都能据此定位部署目录、判断是否容器、推断宿主机用户名。
+  现在只保留文件名与 `*_exists` 布尔。号池规模（Python 版就公开的运营指标）保留。
++ **备份链路修复 R2 的 Host 头。** `overrideBase` 只改了 endpoint 没改 host，
+  而 SigV4 的 canonical request 里 host 参与签名 —— 指向任何 S3 兼容服务
+  （MinIO / LocalStack / 第三方）都会 403。用真实 MinIO 往返测试发现。
++ **升级 Next.js 16.2.3 → 16.4.3**，`npm audit` 归零（此前 1 critical / 2 high）。
+  前端是静态导出，多数服务端类公告不可达，属纵深防御。
+
+#### 修复
+
++ **`image_timeout_retry_secs` 缺少校验。** 保存 `-999` 会被接受并持久化，
+  此后每次「继续等待」都 400。现在读时钳制到 `[5,120]`、写时归一化。
++ **切换存储后端时静默显示空号池。** 每个后端只读自己那份存储，切换
+  **不会迁移数据**；此前日志只有一行正常的 "Initializing storage backend"
+  —— 用户看到 0 个账号会以为号池被清空。现在启动时检测到「当前后端为空、
+  但 `data/accounts.json` 有账号」会打印三条明确警告（指向文件与迁移步骤）。
+  刻意不自动导入：把 JSON 灌进数据库是有副作用的破坏性操作。
++ **`Dockerfile` 缺少 `HEALTHCHECK`。** `internal/health` 与文档都写着容器用
+  `--healthcheck` 探活，三套 compose 也都配了，唯独 Dockerfile 没有 ——
+  实测构建出的镜像 `Config.Healthcheck` 是 `null`，直接 `docker run` 时
+  进程卡死也不会被发现。
++ **`--init-proxy-config` 忽略 `--base-dir`。** 只认 `CHATGPT2API_CONFIG_FILE`，
+  否则硬编码 `/app/config.json`：直接跑二进制时会静默写错位置。
++ **进度清理后台循环缺少 panic 恢复。** Go 中未捕获的 goroutine panic 会终止
+  **整个进程**；`watcher`/清理/备份三个常驻循环都有保护，只有它漏了。
+  清理与备份调度器原本 `_ = recover()` 静默吞掉 panic，现在会记日志。
++ **后台图片任务无超时。** 上游 TCP 挂起时任务永不结束、账号槽位永久被占，
+  最终整池无号可用。补 30 分钟兜底超时。
++ **生图页轮询在组件卸载后仍持续请求**（每 2 秒一次，直到任务结束）。
++ **会话本地保存失败变成 unhandledrejection**：用户既没看到提示，也不知道
+  编辑没保存。
++ **JSON 存储补上父目录 fsync**：断电时不再可能「旧文件已消失、新文件未落盘」
+  —— 那会丢掉整个号池。文件 fsync 不能替代目录 fsync。
++ **PNG 重编码改用 `defer` 关闭文件句柄**：解码畸形 PNG 时 panic 会跳过显式
+  `Close`，批量压缩会撞上 "too many open files"。
+
+#### 性能
+
++ 文本选号热路径去掉每请求的 slice 分配（`sync.Pool` 池化候选切片）：
+  300 账号下 `43.8 µs / 5400 B / 1 alloc` → `39.9 µs / 2 B / 0 alloc`。
++ 图片轮转去掉重复 slice 分配：`67.2 µs / 12.5 KB` → `60.5 µs / 9.8 KB`。
++ 图片取号写锁改为读锁：并行吞吐 80.3 µs → **55.9 µs（−30%）**。
+  详见 `docs/performance.md`。
+
+#### 构建可复现
+
++ **`web/go.mod` 模块边界标记。** Go 的 `./...` 不能排除 `node_modules`，
+  而 npm 依赖树里可能有 Go 源码（实测 `flatted` 带一个 `golang/` 目录）——
+  导致 `go test ./...` 的包数取决于「有没有跑过 `npm install`」（11 或 10），
+  并会编译测试一段我们不控制的第三方代码。
++ **本地发布脚本拒绝脏工作区。** Go 会把 VCS 信息编进二进制，工作区里多一个
+  未提交文件就会让产物自称 `vcs.modified=true`、模块版本带 `+dirty`，
+  且两次构建字节不同。
++ 六平台产物两次构建字节一致；已验证产物的 `vcs.revision` 与 tag 指向的提交相同。
+
 ### 契约变更
 
 + `GET /api/settings` 新增 `image_retention_minutes`；
