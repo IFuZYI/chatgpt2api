@@ -261,3 +261,50 @@ VERIFICATION AFTER ROUND 5
 [PASS] go test ./...            (8 packages)
 [PASS] next build + embed + restart; /health 200
 [PASS] 6-platform release artifacts rebuilt with SHA256SUMS
+
+ROUND 6 — PERFORMANCE BASELINE & OPTIMISATION
+--------------------------------------------
+Added benchmarks for the four hot paths (text token pick, image slot acquire,
+ProxyFor, maintainable-token listing) at 10/100/300/1000 account scales, plus
+parallel variants to expose lock contention.
+
+Optimisations (all verified by before/after measurement):
+
+1. Text token pick — pooled candidate slice (was: one allocation per request)
+     43825 ns/op  5400 B/op  1 allocs/op
+   → 39911 ns/op     2 B/op  0 allocs/op
+   Critical detail: the buffer MUST be `clear`ed before returning it to the
+   pool. `s[:0]` only zeroes the length; the backing array keeps the token
+   strings alive and the pool pins the previous pool's tokens forever. The
+   first version of this change missed that and was caught by
+   TestTextCandidateBufferClearedOnPut (reverting `clear` reproduces
+   "底层数组[0] 仍持有 secret-token").
+
+2. Image slot rotation — removed a double slice allocation
+   (`append(append([]string{}, ...), ...)` allocated twice)
+     67169 ns/op  12508 B/op  5 allocs/op
+   → 60472 ns/op   9819 B/op  4 allocs/op
+
+3. Image slot acquire — write lock downgraded to read lock
+   `acquireSlot` guarded a READ-ONLY traversal with s.mu.Lock(), serialising
+   every concurrent acquire. Measured parallel-slower-than-serial
+   (80.3 µs parallel vs 60.5 µs serial) — the classic write-lock symptom.
+   After RLock: parallel 55.9 µs (−30%). `cursor` is atomic.Uint64, so
+   incrementing under RLock is safe.
+
+Deliberately NOT optimised (documented in docs/performance.md):
+- readyCandidateTokensLocked is not pooled — it runs under the lock and
+  buffer borrowing across the locked region is hard to reason about.
+- ListMaintainableTokens is not indexed — it runs once per watcher tick
+  (default 5 min); 89 µs is irrelevant.
+
+New: docs/performance.md records the numbers, the reproduction commands, the
+optimisations with their evidence, and the reasoning for what was left alone.
+
+VERIFICATION AFTER ROUND 6
+--------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] go test -race ./internal/service/ ./internal/api/
+[PASS] next build + embed + restart; /health 200
+[PASS] Benchmarks reproduce with the documented commands
