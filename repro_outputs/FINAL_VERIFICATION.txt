@@ -570,3 +570,30 @@ Objective 4 — commit and release:
             cannot call the REST API). A maintainer must either re-enable
             Actions and run the Release workflow, or create the release
             manually from docs/release-notes-2.2.3.md.
+
+ROUND 16 — DOCUMENTATION DRIFT
+-----------------------------
+Three documentation drifts found by scanning rather than reading:
+
+1. README claimed "79 routes (GET 31 / POST 43 / DELETE 5)"; the actual count
+   is 80 (GET 32) — the /api/metrics endpoint added last round made it stale.
+2. Both README language versions were missing the /api/metrics row in the
+   admin endpoint table.
+3. Neither README linked docs/performance.md — the document existed but was
+   unreachable from the entry point.
+
+[ADDED] TestRouteCountMatchesDocumentedNumber — asserts the live router's
+        method counts equal the numbers README declares, and tells the reader
+        to update both language versions when it fails. Verified by setting the
+        expected total to 79: the test fails with
+        "路由数 = 80 (GET 32 / POST 43 / DELETE 5)，README 声明 79".
+
+This class of drift is silent: adding a route never fails a test, so the only
+person who notices is whoever reads the docs and finds them wrong.
+
+VERIFICATION AFTER ROUND 16
+---------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] route-count guard passes against the real router
+[PASS] both READMEs list /api/metrics and link docs/performance.md
