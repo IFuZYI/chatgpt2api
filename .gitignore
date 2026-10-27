@@ -29,7 +29,6 @@ data
 # 那是 golden 测试的输入夹具，缺了它 TestGoldenParity 在全新克隆里直接失败
 # （read golden config.json: no such file or directory）。
 /config.json
-edit
 
 docker-compose-local.yml
 .claude/settings.local.json
