@@ -223,6 +223,33 @@ func (s *Store) ImageRetentionDays() int {
 	return (minutes + 1439) / 1440
 }
 
+// ImageTimeoutRetrySecs 是「图片超时后继续等待」的默认时长（秒）。
+//
+// 由前端设置页使用：用户点「继续等待」时，前端把它作为 extra_timeout_secs
+// 发给 /api/image-tasks/:id/resume-poll，后端再校验一次 [5,120]。
+//
+// 这里也必须钳制到同一区间：否则设置页能存 -999 或 100000，保存时不报错，
+// 但用户点「继续等待」时那次请求会被后端 400 拒绝 —— 一个"设置成功但功能
+// 不可用"的静默失效。审计实测确认过这个值原先完全没校验。
+func (s *Store) ImageTimeoutRetrySecs() int {
+	parsed, ok := intOr(s.raw("image_timeout_retry_secs"), 30)
+	if !ok {
+		parsed = 30
+	}
+	return clampInt(parsed, 5, 120)
+}
+
+// clampInt 把 value 钳制到 [min,max]。
+func clampInt(value, min, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
 func (s *Store) ImagePollTimeoutSecs() int {
 	return positiveIntOr(s.raw("image_poll_timeout_secs"), 120, 1)
 }
@@ -442,6 +469,7 @@ func (s *Store) Get() map[string]any {
 	// 旧键继续输出派生值：外部脚本可能还在读它。
 	// 写入时不落盘（见 Update 的迁移逻辑）。
 	out["image_retention_days"] = s.ImageRetentionDays()
+	out["image_timeout_retry_secs"] = s.ImageTimeoutRetrySecs()
 	out["image_poll_timeout_secs"] = s.ImagePollTimeoutSecs()
 	out["image_poll_interval_secs"] = s.ImagePollIntervalSecs()
 	out["image_poll_initial_wait_secs"] = s.ImagePollInitialWaitSecs()
@@ -489,6 +517,17 @@ func (s *Store) Update(patch map[string]any) (map[string]any, error) {
 	delete(next, legacyRetentionDaysKey)
 	if raw, present := next["image_retention_minutes"]; present {
 		next["image_retention_minutes"] = positiveIntOr(raw, imageRetentionMinutesDefault, 1)
+	}
+
+	// 数值型设置写入时归一化：读取侧已钳制，但落盘也该存合法值 ——
+	// 否则 config.json 里会留下 -999 这种脏值，其它消费者（脚本、备份、
+	// 未来的代码）读到的是原始值而不是 API 返回的归一化值。
+	if raw, ok := next["image_timeout_retry_secs"]; ok {
+		parsed, valid := intOr(raw, 30)
+		if !valid {
+			parsed = 30
+		}
+		next["image_timeout_retry_secs"] = clampInt(parsed, 5, 120)
 	}
 
 	if _, ok := next["backup"]; ok {
