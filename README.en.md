@@ -8,6 +8,7 @@
   <a href="./README.md">中文</a> ·
   <a href="./docs/account-api.md">Account API</a> ·
   <a href="./docs/account-lifecycle.md">Account lifecycle</a> ·
+  <a href="./docs/performance.md">Performance</a> ·
   <a href="./docs/deployment.md">Deployment</a> ·
   <a href="./docs/adr/">Architecture decisions</a> ·
   <a href="./CHANGELOG.md">Changelog</a>
@@ -587,7 +588,7 @@ from the same owner reuses the task.
 
 ### Admin surface
 
-**79 routes** total (GET 31 / POST 43 / DELETE 5). The authoritative list is the
+**80 routes** total (GET 32 / POST 43 / DELETE 5). The authoritative list is the
 `*_routes.go` files under [`internal/api/`](./internal/api/). Common groups:
 
 | Group | Prefix |
@@ -600,6 +601,7 @@ from the same owner reuses the task.
 | Integrations | `/api/cpa/pools/*`, `/api/sub2api/servers/*` |
 | User keys | `/api/auth/users` (admin only) |
 | Logs | `/api/logs` (admin only) |
+| Metrics | `/api/metrics` (admin only; goroutines, heap, GC, uptime, pool stats) |
 
 ---
 

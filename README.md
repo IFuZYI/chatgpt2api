@@ -8,6 +8,7 @@
   <a href="./README.en.md">English</a> ·
   <a href="./docs/account-api.md">账号接口</a> ·
   <a href="./docs/account-lifecycle.md">账号生命周期</a> ·
+  <a href="./docs/performance.md">性能基准</a> ·
   <a href="./docs/deployment.md">部署文档</a> ·
   <a href="./docs/adr/">架构决策</a> ·
   <a href="./CHANGELOG.md">更新日志</a>
@@ -555,7 +556,7 @@ curl "http://localhost:3000/v1/editable-file-tasks?ids=my-task-1" \
 
 ### 管理面
 
-共 **79 条路由**（GET 31 / POST 43 / DELETE 5）。完整清单以
+共 **80 条路由**（GET 32 / POST 43 / DELETE 5）。完整清单以
 [`internal/api/`](./internal/api/) 下的路由注册文件为准。常用几组：
 
 | 组 | 端点前缀 |
@@ -568,6 +569,7 @@ curl "http://localhost:3000/v1/editable-file-tasks?ids=my-task-1" \
 | 集成 | `/api/cpa/pools/*`、`/api/sub2api/servers/*` |
 | 用户密钥 | `/api/auth/users`（仅 admin） |
 | 日志 | `/api/logs`（仅 admin） |
+| 指标 | `/api/metrics`（仅 admin；goroutine 数、堆、GC、运行时长、号池统计） |
 
 ---
 

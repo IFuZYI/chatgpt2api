@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -200,4 +201,43 @@ func joinLines(items []string) string {
 		out += item
 	}
 	return out
+}
+
+// 路由总数必须与 README 的声明一致。
+//
+// 为什么需要：README 的管理面章节写着「共 N 条路由（GET a / POST b /
+// DELETE c）」。这个数字在加 /api/metrics 之后就过时了（79 → 80），
+// 而没有任何测试会发现 —— 文档漂移是静默的。
+//
+// 改路由时如果这条测试失败，请同步更新 README.md 与 README.en.md
+// 的「管理面 / Admin surface」章节。
+func TestRouteCountMatchesDocumentedNumber(t *testing.T) {
+	deps := newTestDeps(t)
+	router := newTestRouter(t, deps)
+
+	var get, post, del int
+	for _, r := range router.Routes() {
+		switch r.Method {
+		case http.MethodGet:
+			get++
+		case http.MethodPost:
+			post++
+		case http.MethodDelete:
+			del++
+		}
+	}
+	total := get + post + del
+
+	// README 声明的数字（两版必须一致）。
+	const (
+		wantTotal = 80
+		wantGet   = 32
+		wantPost  = 43
+		wantDel   = 5
+	)
+	if total != wantTotal || get != wantGet || post != wantPost || del != wantDel {
+		t.Errorf("路由数 = %d (GET %d / POST %d / DELETE %d)，README 声明 %d (GET %d / POST %d / DELETE %d)\n"+
+			"请同步更新 README.md 与 README.en.md 的「管理面」章节",
+			total, get, post, del, wantTotal, wantGet, wantPost, wantDel)
+	}
 }
