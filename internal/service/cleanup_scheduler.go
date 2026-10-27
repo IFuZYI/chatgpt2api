@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -80,8 +81,12 @@ func (s *ImageCleanupScheduler) run() {
 // tick 执行一轮检查 + 清理。
 func (s *ImageCleanupScheduler) tick() {
 	defer func() {
-		// 单轮失败不能杀死循环（Python 也是 try/except 吞掉）。
-		_ = recover()
+		// 单轮失败不能杀死循环（Python 也是 try/except 吞掉），
+		// 但**必须留下痕迹**：静默吞掉会让「清理再也不跑」变成
+		// 一个无人知晓的故障（磁盘慢慢被图片填满）。
+		if recovered := recover(); recovered != nil {
+			fmt.Printf("[image-cleanup] tick panicked, recovered: %v\n", recovered)
+		}
 	}()
 
 	if s.actions.CleanupOldImages != nil {

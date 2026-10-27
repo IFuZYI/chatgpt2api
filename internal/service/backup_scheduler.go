@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -94,7 +95,11 @@ func (s *BackupScheduler) loop() {
 // panic 不能杀死循环：一次失败（比如状态文件损坏）不该让自动备份永久停摆。
 func (s *BackupScheduler) tick() {
 	defer func() {
-		_ = recover()
+		// 同 cleanup：吞掉 panic 可以，但必须留日志 ——
+		// 否则「自动备份再也不跑」完全不可见，等发现时已丢很久的数据。
+		if recovered := recover(); recovered != nil {
+			fmt.Printf("[backup-scheduler] tick panicked, recovered: %v\n", recovered)
+		}
 	}()
 
 	if s.options.Enabled == nil || !s.options.Enabled() {
