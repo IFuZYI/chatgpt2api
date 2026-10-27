@@ -112,14 +112,18 @@ const (
 	refreshKeepaliveErrorBackoff   = 6 * 60 * 60
 	refreshTokenKeepaliveBatchSize = 3
 	tokenRefreshErrorBackoff       = 5 * 60
-	// reloginMaxConcurrency 限制同时进行的密码登录数。
+	// reloginMaxConcurrency 是密码登录的并发上限，当前实现为**串行**（=1）。
 	//
-	// 为什么必须限制：密码登录是账号维度最强的风控信号。一次对全池
-	// 发起登录（实测号池 300+ 账号）会在几分钟内产生数百次 authorize
-	// 请求，且全部来自同一批出口 IP —— 这是最典型的自动化特征。
-	// 取 2 是保守值：串行太慢（一次 2~3 秒，300 个号要 15 分钟），
-	// 太高则失去限流意义。
-	reloginMaxConcurrency = 2
+	// 密码登录是账号维度最强的风控信号：一次对全池发起登录会在几分钟内
+	// 产生数百次 authorize 请求，且全部来自同一批出口 IP。
+	//
+	// 取值说明（审计修正）：这个常量原本写 2，但 ReloginAccounts 是纯
+	// 串行 for 循环，从未有并发 —— 常量与实际行为不符，而
+	// TestReloginConcurrencyLimited 只断言"常量在 (0,10] 区间"，
+	// 给人"限流已验证"的错觉。现在改为 1 并如实描述：
+	// 串行是最保守的限流，代价是 300 个号约需 15 分钟。
+	// 若将来引入并发，必须同步实现信号量并让测试断言真实峰值。
+	reloginMaxConcurrency = 1
 )
 
 const (

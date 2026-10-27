@@ -195,8 +195,9 @@ func (s *AccountService) ReloginAccounts(
 				"token": anonymizeToken(token),
 				"error": message,
 			})
-			// 缺邮箱 = 自动路径无从发起登录 = 永远救不回来 → 自动路径禁用。
-			s.disableReloginUnrecoverable(token, PasswordLoginNoEmail, message, automatic)
+			// 缺邮箱 = 自动路径无从发起登录。但只有在账号**已被判定不可用**
+			// （异常）时才判死 —— 见 disableReloginUnrecoverable 的说明。
+			s.disableReloginUnrecoverable(token, PasswordLoginNoEmail, message, automatic, account)
 			s.UpdateReloginProgress(progressID, token, "跳过", message)
 			continue
 		}
@@ -208,7 +209,7 @@ func (s *AccountService) ReloginAccounts(
 				"error": message,
 			})
 			// 缺密码同理。
-			s.disableReloginUnrecoverable(token, PasswordLoginNoPassword, message, automatic)
+			s.disableReloginUnrecoverable(token, PasswordLoginNoPassword, message, automatic, account)
 			s.UpdateReloginProgress(progressID, token, "跳过", message)
 			continue
 		}
@@ -227,7 +228,12 @@ func (s *AccountService) ReloginAccounts(
 		//
 		// 跳过时不记 error —— 不是失败，只是「另一轮正在处理它」。
 		// 记成错误会让用户看到一条并不存在的故障。
-		if !s.beginRelogin(token) {
+		// 记录登录前的状态：用于区分
+		//   (a) 人工点「尝试恢复」——登录前就是禁用，成功应解禁
+		//   (b) 登录进行中被别人禁用——成功不得撤销那个禁用
+		wasDisabledBeforeLogin := stringValue(account["status"]) == StatusDisabled
+		reloginKey, acquired := s.beginRelogin(token)
+		if !acquired {
 			s.UpdateReloginProgress(progressID, token, "跳过", "该账号正在重登中")
 			continue
 		}
@@ -244,7 +250,7 @@ func (s *AccountService) ReloginAccounts(
 			// relogining[token] 永久为 true —— 该账号此后**再也无法重登**。
 			// 而且这条泄漏是静默的：watcher tick 有 recover，进程不会崩，
 			// 只有那个账号悄悄失去恢复能力。
-			defer s.endRelogin(token)
+			defer s.endRelogin(reloginKey)
 			return login(ctx, proxyURL, email, password, totpSecret)
 		}()
 		if loginErr != nil {
@@ -282,6 +288,16 @@ func (s *AccountService) ReloginAccounts(
 					s.UpdateReloginProgress(progressID, token, "异常", loginErr.Error())
 					continue
 				}
+				// 只有账号已经不可用（异常）时才判死；仍在正常/限流的账号
+				// 只是"续期失败"，不该被摘出调度池（见函数注释）。
+				if automatic && stringValue(account["status"]) != StatusAbnormal {
+					errorsOut = append(errorsOut, map[string]any{
+						"token": anonymizeToken(token),
+						"error": loginErr.Error() + "（账号仍在可用状态，仅记录不改状态）",
+					})
+					s.UpdateReloginProgress(progressID, token, "异常", loginErr.Error())
+					continue
+				}
 				s.disableAccount(token, code, loginErr.Error())
 				errorsOut = append(errorsOut, map[string]any{
 					"token": anonymizeToken(token),
@@ -298,7 +314,7 @@ func (s *AccountService) ReloginAccounts(
 			continue
 		}
 
-		if !s.ApplyReloginTokens(token, issued) {
+		if !s.applyReloginTokens(token, issued, wasDisabledBeforeLogin) {
 			message := "account_missing_during_relogin: 登录成功但账号已不在号池（可能被并发删除）"
 			errorsOut = append(errorsOut, map[string]any{
 				"token": anonymizeToken(token),
@@ -330,6 +346,19 @@ func (s *AccountService) ReloginAccounts(
 // access_token 可能轮换，旧 token 记进别名表，让前端手里的旧值仍能解析。
 // 返回 false 表示号池里已经找不到这个账号。
 func (s *AccountService) ApplyReloginTokens(oldToken string, issued map[string]string) bool {
+	// 公开入口默认按「非解禁场景」处理：如果账号在登录期间被禁用，
+	// 不撤销那个禁用。人工解禁走 applyReloginTokens(..., true)。
+	return s.applyReloginTokens(oldToken, issued, false)
+}
+
+// applyReloginTokens 是带"登录前状态"的版本。
+//
+// wasDisabledBeforeLogin=true 表示这是**人工解禁**：账号本来就是禁用
+// （操作员点「尝试恢复」），成功后就该回到「正常」。
+// false 表示这是一次普通恢复尝试：若账号在登录期间被别人禁用，
+// 那是新的、更晚的决定，成功回写不得撤销它（否则人工禁用被静默抹掉，
+// 且 disabled_reason 一起消失，排查时毫无痕迹）。
+func (s *AccountService) applyReloginTokens(oldToken string, issued map[string]string, wasDisabledBeforeLogin bool) bool {
 	newToken := strings.TrimSpace(issued["access_token"])
 	if newToken == "" {
 		return false
@@ -355,7 +384,14 @@ func (s *AccountService) ApplyReloginTokens(oldToken string, issued map[string]s
 		merged["id_token"] = idToken
 	}
 	merged["source_type"] = SourcePassword
-	merged["status"] = StatusNormal
+	disabledDuringLogin := !wasDisabledBeforeLogin && stringValue(current["status"]) == StatusDisabled
+	if disabledDuringLogin {
+		// 登录期间被禁用：只更新凭据，保留禁用状态与原因。
+		merged["status"] = StatusDisabled
+		merged["quota"] = 0
+	} else {
+		merged["status"] = StatusNormal
+	}
 
 	// 重登成功即重置 keepalive 状态。
 	//
@@ -388,9 +424,11 @@ func (s *AccountService) ApplyReloginTokens(oldToken string, issued map[string]s
 	merged["last_relogin_error"] = nil
 	merged["last_relogin_error_at"] = nil
 	merged["last_relogin_code"] = nil
-	merged["disabled_reason"] = nil
-	merged["disabled_at"] = nil
-	merged["disabled_detail"] = nil
+	if !disabledDuringLogin {
+		merged["disabled_reason"] = nil
+		merged["disabled_at"] = nil
+		merged["disabled_detail"] = nil
+	}
 
 	account := normalizeAccount(merged)
 	if account == nil {
@@ -461,8 +499,20 @@ func (s *AccountService) disableAccount(token, reason, detail string) {
 // 手动路径（automatic=false）不动状态：用户点按钮时可能正准备补凭据，
 // 此时把号判死会切断唯一的修复路径。手动路径仍会记 last_relogin_code，
 // 面板上能看到原因。
-func (s *AccountService) disableReloginUnrecoverable(token, reason, detail string, automatic bool) {
+func (s *AccountService) disableReloginUnrecoverable(token, reason, detail string, automatic bool, account Account) {
 	if !automatic {
+		return
+	}
+	// 关键限定：只有**已被判定不可用**（异常）的账号才适用"不可恢复→禁用"。
+	//
+	// 回归点（审计发现）：KeepaliveRefreshTokens 对 RT 被拒的账号会调用
+	// 自动重登，而那些账号此刻通常是「正常」且 AT 仍然有效、额度还在。
+	// 如果因为"本地没存密码"就把它们禁用，等于把一个还能用十天的健康号
+	// 摘出调度池 —— 实测确认过这条（status 正常、quota 50、AT 有效 → 禁用）。
+	//
+	// 仍在正常/限流的账号，失败只记录、不改状态；等 AT 真的过期、账号被
+	// 判为异常后，再走这里的禁用逻辑。
+	if account != nil && stringValue(account["status"]) != StatusAbnormal {
 		return
 	}
 	s.disableAccount(token, reason, detail)

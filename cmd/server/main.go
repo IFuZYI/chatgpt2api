@@ -143,8 +143,12 @@ func main() {
 	}
 	// 密码重登的认证会话：Python 版 _login_with_password 用 impersonate="chrome110"，
 	// 这里对齐同档 TLS profile。每个账号一次新会话（见 runRelogin）。
-	deps.PasswordLoginClient = func() (service.PasswordLoginTransport, error) {
-		client, err := upstream.NewClient(upstream.ClientConfig{Impersonate: "chrome110", ProxyURL: cfg.Proxy()})
+	//
+	// proxyURL 由 service 层按账号解析后传入（账号代理 > 全局代理 > 直连）。
+	// 这里**不能**自己读 cfg.Proxy()：那会让配了账号代理的号在重登时
+	// 从全局出口出去 —— 对上游就是一次 IP 跳变，正是风控要抓的特征。
+	deps.PasswordLoginClient = func(proxyURL string) (service.PasswordLoginTransport, error) {
+		client, err := upstream.NewClient(upstream.ClientConfig{Impersonate: "chrome110", ProxyURL: proxyURL})
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +221,9 @@ func main() {
 		// 返回完整三件套而不是只返回 access_token —— 上游每次换 AT 都会轮换
 		// refresh_token（实测 196 → 211 字符），只取 AT 会把新 RT 丢掉。
 		//
-		// 不走账号代理：refresh_token 交换在 auth.openai.com，与号池出口无关。
+		// 出口：由 service 层按账号解析后传入（账号代理 > 全局代理 > 直连）。
+		// 早期实现是裸 http.Client（只吃环境变量），等于让 RT 续期从一个
+		// 不受控的出口发出 —— 与账号平时的出口可能完全不同。
 		service.RefreshAccessToken,
 	)
 

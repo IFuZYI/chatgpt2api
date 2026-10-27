@@ -1171,22 +1171,40 @@ func (s *AccountService) recordRefreshError(token, message string) {
 // 重登 —— 两者都会把 token 放进 ReloginAccounts。并发登录会各自生成
 // 一套 AT/RT，后写入的覆盖先写入的，另一套当场作废；对上游而言则是
 // "同一账号在极短时间内从同一出口完成两次完整登录"，是最强的风控信号。
-func (s *AccountService) beginRelogin(token string) bool {
+func (s *AccountService) beginRelogin(token string) (string, bool) {
+	// 必须按**解析后的账号身份**做键，不能按原始 token 字符串。
+	//
+	// 回归点（审计发现）：token 轮换会建立别名（at-old → at-new），于是
+	// 同一个账号有两个字符串。按字符串索引时，watcher 的 keepalive 路径
+	// 持有 "at-old"、刷新收尾的自动重登持有 "at-new"，两个守卫都能拿到 ——
+	// 同一账号被并发发起两次密码登录 + 两次 TOTP，正是最强风控信号。
+	//
+	// 先解析再取 reloginMu（不嵌套在 reloginMu 内拿 mu），避免引入新的
+	// 锁序（本仓库已有的不变量是 mu → slotsMu）。
+	key := s.ResolveAccessToken(token)
+	if key == "" {
+		key = strings.TrimSpace(token)
+	}
 	s.reloginMu.Lock()
 	defer s.reloginMu.Unlock()
 	if s.relogining == nil {
 		s.relogining = map[string]bool{}
 	}
-	if s.relogining[token] {
-		return false
+	if s.relogining[key] {
+		return key, false
 	}
-	s.relogining[token] = true
-	return true
+	s.relogining[key] = true
+	return key, true
 }
 
-// endRelogin 释放重登权。必须与 beginRelogin 成对调用。
-func (s *AccountService) endRelogin(token string) {
+// endRelogin 释放重登权。必须与 beginRelogin 成对调用，
+// 且必须传 beginRelogin **返回的那个 key**。
+//
+// 为什么不能重新解析 token：登录成功会轮换 token 并建立别名，
+// 此时再解析 "at-old" 会得到 "at-new"，删的就是一个不存在的键 ——
+// 原键永久残留，该账号再也无法重登。所以 key 由调用方持有。
+func (s *AccountService) endRelogin(key string) {
 	s.reloginMu.Lock()
-	delete(s.relogining, token)
+	delete(s.relogining, key)
 	s.reloginMu.Unlock()
 }

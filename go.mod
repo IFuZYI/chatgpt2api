@@ -5,12 +5,15 @@ go 1.27
 require (
 	github.com/bogdanfinn/fhttp v0.7.1
 	github.com/bogdanfinn/tls-client v1.17.1
+	github.com/gin-gonic/gin v1.12.0
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/pkoukk/tiktoken-go-loader v0.0.2
+	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
+	golang.org/x/net v0.60.0
 	modernc.org/sqlite v1.61.0
 )
 
@@ -35,7 +38,6 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
-	github.com/gin-gonic/gin v1.12.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
@@ -72,8 +74,6 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect

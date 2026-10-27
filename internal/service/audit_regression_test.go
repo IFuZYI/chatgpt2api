@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/IFuZYI/chatgpt2api/internal/upstream"
 )
 
 // ---- 退避抖动 ----
@@ -79,13 +81,14 @@ func TestReloginDedupResolvesAlias(t *testing.T) {
 	if !svc.ApplyReloginTokens("at-old", map[string]string{"access_token": "at-new", "refresh_token": "rt"}) {
 		t.Fatal("轮换失败")
 	}
-	if !svc.beginRelogin("at-old") {
+	key, ok := svc.beginRelogin("at-old")
+	if !ok {
 		t.Fatal("首次占位应成功")
 	}
-	if svc.beginRelogin("at-new") {
+	if _, ok := svc.beginRelogin("at-new"); ok {
 		t.Error("同一账号的两个 token 字符串都拿到重登权 → 并发双登录")
 	}
-	svc.endRelogin("at-old")
+	svc.endRelogin(key)
 }
 
 func TestReloginDedupsAliasesWithinOneCall(t *testing.T) {
@@ -118,10 +121,11 @@ func TestReloginReleasesSlotOnPanic(t *testing.T) {
 				panic("upstream blew up")
 			})
 	}()
-	if !svc.beginRelogin("at-1") {
+	key, ok := svc.beginRelogin("at-1")
+	if !ok {
 		t.Fatal("panic 后重登占用位泄漏")
 	}
-	svc.endRelogin("at-1")
+	svc.endRelogin(key)
 }
 
 // ---- 代理绑定 ----
@@ -352,5 +356,149 @@ func TestUnknownCodeRequiresSecondConfirmation(t *testing.T) {
 	svc.ReloginAccounts(context.Background(), []string{"at-1"}, "", login)
 	if got := stringValue(svc.GetAccount("at-1")["status"]); got != StatusDisabled {
 		t.Errorf("status = %q, 同一未知码第二次出现应确认并禁用", got)
+	}
+}
+
+// 必须允许写成正常。两者靠"登录前的状态"区分。
+func TestReloginDoesNotReviveDisableAppliedDuringLogin(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-1", "email": "a@example.test", "password": "pw",
+			"type": "free", "status": StatusAbnormal, "quota": 0},
+	})
+	// 登录开始（此时状态是异常，不是禁用）
+	login := func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
+		// 登录进行中，另一个操作员把这个号禁用了
+		svc.UpdateAccount("at-1", Account{"status": StatusDisabled, "quota": 0}, true)
+		return map[string]string{"access_token": "at-1", "refresh_token": "rt"}, nil
+	}
+	svc.InitReloginProgress("pid", 1)
+	svc.ReloginAccounts(context.Background(), []string{"at-1"}, "pid", login)
+
+	a := svc.GetAccount("at-1")
+	if got := stringValue(a["status"]); got != StatusDisabled {
+		t.Errorf("status = %q, 登录期间的人工禁用被成功回写撤销了", got)
+	}
+}
+
+// I4: keepalive 的 RT 被拒不能让「仍在可用」的账号被判死。
+//
+// 场景：账号 status=正常、AT 仍有效、quota 还有额度，只是 RT 死了且本地
+// 没存密码。KeepaliveRefreshTokens 会把 rejected token 交给自动重登，
+// 而自动重登对「缺凭据」直接禁用 —— 于是一个还能用 10 天的号被摘出调度池。
+//
+// 规则：**只有已经被判为不可用（异常）的账号才适用"不可恢复→禁用"**。
+// 仍在正常/限流的账号，失败只记错误，交给 AT 自然过期后的常规路径处理。
+
+// 仍在正常/限流的账号，失败只记错误，交给 AT 自然过期后的常规路径处理。
+func TestKeepaliveFailureDoesNotDisableHealthyAccount(t *testing.T) {
+	svc, cfg := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-1", "refresh_token": "rt-1", "type": "free",
+			"status": StatusNormal, "quota": 50},
+	})
+	if _, err := cfg.Update(map[string]any{"auto_relogin_after_refresh": true}); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetAutoRelogin(func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
+		return nil, &PasswordLoginError{Code: PasswordLoginNoPassword, Message: "缺密码"}
+	})
+	svc.KeepaliveRefreshTokens(context.Background(), []string{"at-1"},
+		func(ctx context.Context, proxyURL, refreshToken string) (map[string]string, error) {
+			return nil, &RefreshTokenRejectedError{StatusCode: 400, Detail: "invalid_grant"}
+		})
+
+	a := svc.GetAccount("at-1")
+	if a == nil {
+		t.Fatal("账号丢失")
+	}
+	if got := stringValue(a["status"]); got == StatusDisabled {
+		t.Error("仍在可用状态的账号被 keepalive 失败判死了")
+	}
+}
+
+// 测试用时间辅助：让「多久以前」可读且集中。
+func nowLocalOffsetHours(h int) string {
+	return time.Now().Local().Add(time.Duration(h) * time.Hour).Format(accountTimeLayout)
+}
+
+func nowLocalOffsetMinutes(m int) string {
+	return time.Now().Local().Add(time.Duration(m) * time.Minute).Format(accountTimeLayout)
+}
+
+func status401() error {
+	return upstream.NewStatusError(401, nil, "/backend-api/me failed: status=401")
+}
+
+// 手动「尝试恢复」必须仍能解开禁用（这是禁用的唯一出口）。
+//
+// 与 I3 配对：登录期间被别人禁用不得撤销，但"登录前就是禁用"的人工
+// 解禁必须成功 —— 两者靠登录前的状态区分，这条守住后一半。
+func TestManualReloginRecoversDisabledAccount(t *testing.T) {
+	svc, _ := newTestAccountService(t, []map[string]any{
+		{"access_token": "at-1", "email": "a@example.test", "password": "pw",
+			"type": "free", "status": StatusDisabled, "quota": 0,
+			"disabled_reason": "need_totp", "disabled_at": "2026-10-27 12:00:00"},
+	})
+	login := func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
+		return map[string]string{"access_token": "at-2", "refresh_token": "rt-2", "id_token": "id-2"}, nil
+	}
+	svc.InitReloginProgress("pid-1", 1)
+	if n := intValue(svc.ReloginAccounts(context.Background(), []string{"at-1"}, "pid-1", login)["relogined"]); n != 1 {
+		t.Fatalf("relogined = %d, 手动恢复应成功", n)
+	}
+	a := svc.GetAccount("at-2")
+	if got := stringValue(a["status"]); got != StatusNormal {
+		t.Errorf("status = %q, 手动恢复后应为正常", got)
+	}
+	if stringValue(a["disabled_reason"]) != "" {
+		t.Error("disabled_reason 未清空 —— 禁用痕迹残留会让排查者困惑")
+	}
+}
+
+// 重登并发必须真的受限（原实现里 reloginMaxConcurrency 是死常量，
+// 只有一条断言常量取值的假测试，给人"限流已验证"的错觉）。
+//
+// 为什么需要：密码登录是最强的风控信号。一次对全池（300+）发起登录
+// 会在几分钟内产生数百次 authorize 请求，全部来自同一批出口 IP ——
+// 典型的自动化特征。
+func TestReloginConcurrencyIsActuallyLimited(t *testing.T) {
+	svc, _ := newTestAccountService(t, nil)
+	items := make([]map[string]any, 0, 8)
+	for i := 0; i < 8; i++ {
+		items = append(items, map[string]any{
+			"access_token": "at-" + string(rune('a'+i)),
+			"email":        "u" + string(rune('a'+i)) + "@example.test",
+			"password":     "pw", "type": "free",
+			"status": StatusAbnormal, "quota": 0,
+		})
+	}
+	svc.AddAccountItems(items, nil)
+
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	login := func(ctx context.Context, proxyURL, email, password, totp string) (map[string]string, error) {
+		mu.Lock()
+		inFlight++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+		time.Sleep(30 * time.Millisecond) // 模拟登录耗时
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return map[string]string{"access_token": "at-new-" + email, "refresh_token": "rt"}, nil
+	}
+	tokens := make([]string, 0, 8)
+	for i := 0; i < 8; i++ {
+		tokens = append(tokens, "at-"+string(rune('a'+i)))
+	}
+	svc.InitReloginProgress("pid", len(tokens))
+	svc.ReloginAccounts(context.Background(), tokens, "pid", login)
+
+	if peak > reloginMaxConcurrency {
+		t.Errorf("峰值并发 %d 超过上限 %d", peak, reloginMaxConcurrency)
+	}
+	if peak == 0 {
+		t.Error("没有任何登录被执行")
 	}
 }
