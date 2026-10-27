@@ -789,12 +789,27 @@ docker compose down
 docker compose up -d --force-recreate app
 ```
 
-或源码方式回到旧 tag 重新编译：
+或源码方式回到旧 tag 重新编译 —— **前端步骤不能少**（前端是 embed 进
+二进制的，只 `go build` 会得到一个没有页面、全站 404 的二进制）：
 
 ```bash
 # 换成你要回滚到的 tag
-git fetch --tags && git checkout v2.0.0 && go build -o chatgpt2api ./cmd/server
+git fetch --tags && git checkout v2.0.0
+
+# 1) 构建前端并放进 embed 目录
+cd web && npm ci && npm run build && cd ..
+rm -rf internal/web/web_dist && cp -r web/out internal/web/web_dist
+git checkout internal/web/web_dist/.gitkeep
+
+# 2) 编译后端（-X 注入版本号，否则启动日志与 /version 显示 0.0.0）
+VERSION=$(cat VERSION)
+go build -trimpath -ldflags="-s -w -X github.com/IFuZYI/chatgpt2api/internal/config.BuildVersion=${VERSION}" \
+  -o chatgpt2api ./cmd/server
 ```
+
+> `-X` 那一行不是可选的：单二进制旁边通常没有 `VERSION` 文件，
+> `AppVersion()` 读不到文件就回退到编译期注入的 `BuildVersion`，
+> 两者都没有就是 `0.0.0`（实测确认）。
 
 数据回滚用升级前那个 tar 包。**注意**：数据格式向上兼容，但降级时若新版本
 引入过新字段，旧版本会忽略它们（不会崩），反之未必。
