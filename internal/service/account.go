@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,6 +234,7 @@ func NewAccountService(backend storage.Backend, cfg *config.Store, logs *LogServ
 	s.slotCond = sync.NewCond(&s.mu)
 	s.accounts = s.loadAccounts()
 	s.cumulativeTotal = s.loadCumulativeTotal()
+	s.warnIfSwitchedBackendHasOrphanData()
 	// 建立结构性签名基线：否则首次 saveAccountsLocked 会把「空串 → 真实签名」
 	// 当成一次结构性变化，白白自增一次版本号。
 	s.structuralSig = s.structuralSignatureLocked()
@@ -1265,4 +1267,36 @@ func (s *AccountService) bumpVersionLocked() {
 	}
 	s.structuralSig = signature
 	s.version.Add(1)
+}
+
+// warnIfSwitchedBackendHasOrphanData 在「当前后端是空池、但 data/ 里还躺着
+// 另一份非空账号文件」时给出明确警告。
+//
+// 为什么需要：切换 STORAGE_BACKEND 不会迁移数据（每个后端只读自己那份）。
+// 实测：310 个账号的 accounts.json 切到 sqlite 后 /api/accounts 返回 0 条 ——
+// 用户第一反应是「号池被清空了」，而日志里只有一行正常的 "Initializing
+// storage backend: sqlite"，没有任何提示。
+//
+// 这里不自动导入：自动把一个 JSON 文件灌进数据库是有副作用的破坏性操作，
+// 而且用户可能确实想从空库开始。只提示，把决定权留给操作者。
+func (s *AccountService) warnIfSwitchedBackendHasOrphanData() {
+	if s.storage == nil || s.cfg == nil || len(s.accounts) > 0 {
+		return
+	}
+	// 只在「非 json 后端」时检查：json 后端读的就是那个文件，空就是真空。
+	if _, isJSON := s.storage.(*storage.JSONBackend); isJSON {
+		return
+	}
+	path := filepath.Join(s.cfg.DataDir(), "accounts.json")
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var items []map[string]any
+	if json.Unmarshal(payload, &items) != nil || len(items) == 0 {
+		return
+	}
+	fmt.Printf("[storage] WARNING: 当前后端为空，但 %s 里有 %d 个账号。\n", path, len(items))
+	fmt.Printf("[storage] WARNING: 切换 STORAGE_BACKEND 不会自动迁移数据 —— 号池看起来是空的，旧数据仍在那个文件里。\n")
+	fmt.Printf("[storage] WARNING: 迁移方式见 docs/deployment.md 的「存储后端」一节（用 POST /api/accounts 导入）。\n")
 }

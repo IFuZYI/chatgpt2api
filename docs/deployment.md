@@ -516,6 +516,34 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
 | `postgres` | 外部 PostgreSQL | 需要外部备份或独立数据库 |
 | `git` | Git 私有仓库 | 想用 git 做版本化备份 |
 
+> [!WARNING]
+> **切换后端不会自动迁移已有数据。**
+>
+> 每个后端只读自己那一份存储：`json` 读 `data/accounts.json`，`sqlite`
+> 读 `data/accounts.db`，`postgres` 读数据库。切过去之后**号池看起来是空的**
+> （实测：310 个账号的 json 切到 sqlite 后 `/api/accounts` 返回 0 条）。
+> 旧数据没有丢，只是新后端读不到它。
+>
+> **迁移步骤**（以 json → sqlite 为例）：
+>
+> 1. **先备份**：`cp data/accounts.json data/accounts.json.bak`
+> 2. 用新后端启动服务（此时号池为空，属正常）
+> 3. 把旧数据导进去 —— 用管理接口，不要手改数据库：
+>
+>    ```bash
+>    # 旧 json 是数组；接口要 {"accounts": [...]}。token 数组同样支持。
+>    python3 -c "import json;d=json.load(open('data/accounts.json.bak'));\
+>      print(json.dumps({'accounts': d if isinstance(d,list) else d}))" > /tmp/seed.json
+>    curl -X POST http://127.0.0.1:8080/api/accounts \
+>      -H "Authorization: Bearer $CHATGPT2API_AUTH_KEY" \
+>      -H 'Content-Type: application/json' --data-binary @/tmp/seed.json
+>    ```
+> 4. 核对 `/api/accounts` 的条数与状态分布与旧库一致，再删备份。
+>
+> 注意 `auth_keys.json` 里的用户密钥也要重新导入（`POST /api/auth/users`），
+> 否则普通用户的 key 会全部失效。图片索引与任务记录**不随后端迁移**，
+> 它们固定在 `data/` 下的独立文件里。
+
 ### SQLite
 
 ```yaml
