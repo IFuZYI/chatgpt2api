@@ -308,3 +308,48 @@ VERIFICATION AFTER ROUND 6
 [PASS] go test -race ./internal/service/ ./internal/api/
 [PASS] next build + embed + restart; /health 200
 [PASS] Benchmarks reproduce with the documented commands
+
+ROUND 7 — OBSERVABILITY + SOAK TEST
+-----------------------------------
+[FEAT] Added GET /api/metrics (admin-only): goroutines, heap bytes/sys, stack,
+       GC count and total pause, uptime, Go version, CPU count, plus pool stats.
+       Previously the service had NO runtime metrics at all — goroutine leaks,
+       fd leaks and heap growth could only be guessed at from outside ps.
+       Deliberately did NOT mount net/http/pprof: /debug/pprof/profile pins the
+       CPU and would need its own rate limiting before being exposed.
+       startedAt is initialised defensively in NewRouter — a zero time.Time
+       makes uptime report 9223372036 s (test verified to fail on that).
+
+SOAK TEST (310 accounts, single instance)
+-----------------------------------------
+Sequential load, 200 requests:
+  goroutines 37 → 32 → 9      (settled back)
+  fd         17 → 14 → 6      (settled back)
+  heap       10.5 → 12.2 → 5.8 MB
+
+Concurrent load, 50 in-flight × 20 rounds:
+  heap peak 75.5 MB, goroutines 9, fd 6
+  After 2 minutes: heap 4.18 MB, GC count 544 → settled
+  RSS remained ~107-117 MB
+
+VERDICT: no leak. Heap, goroutines and file descriptors all return to
+baseline. RSS does not return to the OS — that is documented Go behaviour
+(the runtime retains the heap), and it is why .env.example and deployment.md
+now recommend setting GOMEMLIMIT when the container has a memory cap
+(e.g. 256M container → GOMEMLIMIT=200MiB), so the GC gets more aggressive
+near the limit instead of the container being OOM-killed.
+
+DOCS
+----
+- .env.example: GOMEMLIMIT guidance with the measured numbers.
+- docs/deployment.md: new "内存与长稳" section with the soak-test table,
+  the no-leak verdict, the RSS caveat, and how to read /api/metrics.
+
+VERIFICATION AFTER ROUND 7
+--------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] go test -race ./internal/api/
+[PASS] /api/metrics returns 401 without a key, 200 with admin
+[PASS] /health 200
+[PASS] 6-platform release artifacts rebuilt with SHA256SUMS
