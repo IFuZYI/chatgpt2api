@@ -80,6 +80,15 @@ func (c *R2Client) endpoint() string {
 }
 
 func (c *R2Client) host() string {
+	// overrideBase 存在时必须从它推导 host：SigV4 的 canonical headers 里
+	// host 参与签名，与实际请求的 Host 不一致就会被 S3 判 403。
+	// 原实现只改 endpoint 不改 host —— overrideBase 是半成品，任何指向
+	// S3 兼容服务（MinIO / LocalStack）的往返测试都会 403。
+	if c.overrideBase != "" {
+		if parsed, err := url.Parse(c.overrideBase); err == nil && parsed.Host != "" {
+			return parsed.Host
+		}
+	}
 	return c.AccountID + ".r2.cloudflarestorage.com"
 }
 
