@@ -981,3 +981,52 @@ VERIFICATION AFTER ROUND 25
 [PASS] go list ./... stable at 10 packages regardless of node_modules
 [PASS] 0 broken links
 [PASS] docker build ok, HEALTHCHECK present, --healthcheck executes
+
+ROUND 26 — STALE RELEASE ARTIFACTS + REPRODUCIBLE BUILDS
+-------------------------------------------------------
+[FIXED] The staged release artifacts were stale. Two production files changed
+  after the last rebuild — internal/service/account.go (the storage-backend
+  switch warning, round 12) and internal/service/r2_client.go (the overrideBase
+  host fix, round 13) — so the binaries on hand did not match tag v2.2.3.
+  Cause: rebuilding was a hand-typed 6-platform cross-compile loop, easy to
+  forget after a code change. Fixed by adding scripts/build-release.sh, which
+  mirrors release.yml's matrix and ldflags.
+
+BUILDING THE SCRIPT SURFACED TWO REAL DEFECTS:
+
+1. My first version parsed the target list with space-separated fields and a
+   quoted empty placeholder (`linux arm '' 7`); `read` folded `''` and `7` into
+   one variable and produced `chatgpt2api_2.2.3_linux_armv 7` — a filename with
+   a space, only on armv7. Switched to TAB-separated fields.
+
+2. Rebuilding naively nearly published binaries stamped "dirty". The script's
+   output had different checksums from the hand-built ones; diffing the
+   embedded build info showed the ONLY difference was Go's VCS stamping:
+       clean tree:  vcs.modified=false, mod ...51b18992848c
+       dirty tree:  vcs.modified=true,  mod ...51b18992848c+dirty
+   i.e. one uncommitted file makes the artifact claim it corresponds to no
+   commit, and makes two builds differ byte-for-byte. The script now REFUSES to
+   build from a dirty tree (--allow-dirty to override) instead of silently
+   producing such a package.
+
+RESULT
+  * 6/6 artifacts byte-identical across two consecutive builds (reproducible)
+  * VCS stamping now records the real commit
+  * All 6 checksums verify; linux/amd64 end-to-end: /, /accounts, /health all
+    200, startup log reports 2.2.3
+  * The binary demonstrably contains the round-12/13 fixes: running it with
+    STORAGE_BACKEND=sqlite over an orphaned data/accounts.json prints the three
+    warnings
+
+[ADDED] TestReleaseScriptMatchesWorkflow — keeps the local script's platform
+  matrix and ldflags in sync with release.yml. Verified by changing armv7 to
+  armv6: the test fails and prints both matrices.
+
+Docs: deployment.md's maintainer release section now documents the script and
+why a dirty tree is rejected.
+
+VERIFICATION AFTER ROUND 26
+---------------------------
+[PASS] gofmt / go vet / go build / go test ./...   (8 packages)
+[PASS] 0 broken links
+[PASS] release artifacts rebuilt from a clean tree at the tagged commit
