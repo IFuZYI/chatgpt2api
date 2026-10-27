@@ -46,8 +46,11 @@ func reencodePNG(path string) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
+	// defer 而不是显式 Close：png.Decode 对畸形 PNG 可能 panic
+	// （解码器内部越界），显式 Close 会被跳过 —— 批量压缩几百张图时
+	// 累积的 fd 泄漏会让进程撞上 "too many open files"。
+	defer source.Close()
 	decoded, err := png.Decode(source)
-	source.Close()
 	if err != nil {
 		return 0, false
 	}
