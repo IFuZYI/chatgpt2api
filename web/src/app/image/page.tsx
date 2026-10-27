@@ -495,6 +495,17 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     | { type: "all" }
     | null
   >(null);
+  // 卸载标志：runConversationQueue 里的 while 轮询每 2 秒发一次请求，
+  // 用户切走页面后原本会一直跑到任务完成（或连续 10 次错误）。
+  // React 18 起 setState-after-unmount 不再告警，所以这种泄漏是完全静默的。
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
   const [timeoutRetry, setTimeoutRetry] = useState<{
     conversationId: string;
     taskId: string;
@@ -1272,6 +1283,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         let consecutiveErrors = 0;
         const retryingTaskIdsRef = new Set<string>();
         while (true) {
+          // 组件已卸载：停止轮询，不再向后端发请求。
+          if (unmountedRef.current) {
+            return;
+          }
           const latestConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
           const latestTurn = latestConversation?.turns.find((turn) => turn.id === activeTurn.id);
           const loadingTaskIds =
