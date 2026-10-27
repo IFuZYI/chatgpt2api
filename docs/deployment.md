@@ -87,10 +87,10 @@
 | `security_opt` | `no-new-privileges:true` | 禁止 setuid/setgid 提权 |
 | `logging` | json-file, 10m × 3 | 限制日志大小（默认无限增长会写满磁盘） |
 
-这些约束由 `scripts/test-compose.py` 守卫（67 项检查）：
+这些约束由 `tools/composecheck` 守卫（67 项检查）：
 
 ```bash
-python3 scripts/test-compose.py
+go run ./tools/composecheck
 ```
 
 改 compose 后跑一遍 —— 它会检查每个 compose 的 init-data 是否 chown 了
@@ -747,7 +747,7 @@ cd web && npm test && npm run typecheck && npm run build && cd ..
 go build -o /tmp/probe ./cmd/server                 # 后端能编译
 docker build -t probe:test .                        # 镜像能构建
 for f in docker-compose*.yml; do docker compose -f "$f" config -q; done
-python3 scripts/test-compose.py
+go run ./tools/composecheck
 ```
 
 全部通过后再打 tag、推一次。
