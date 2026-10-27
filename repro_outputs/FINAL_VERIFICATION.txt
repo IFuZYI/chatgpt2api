@@ -424,3 +424,43 @@ VERIFICATION AFTER ROUND 11
 [PASS] gofmt / go vet / go build
 [PASS] go test ./...            (8 packages)
 [PASS] 6-platform release artifacts rebuilt with SHA256SUMS
+
+ROUND 12 — STORAGE BACKEND MIGRATION CHAIN
+------------------------------------------
+[FIXED] Switching STORAGE_BACKEND silently showed an empty pool with no hint.
+        Reproduced: 310 accounts in data/accounts.json, switch to
+        STORAGE_BACKEND=sqlite → /api/accounts returns 0 items, and the log
+        only shows the normal "Initializing storage backend: sqlite" line.
+        Each backend reads only its own store, so switching never migrates.
+        The old data is not lost — the new backend simply cannot see it — but
+        nothing said so, and the docs only explained how to switch.
+        Two fixes:
+          1. Startup detection: non-json backend + empty pool + non-empty
+             data/accounts.json → three explicit warnings naming the file,
+             explaining why the pool looks empty, and pointing at the
+             migration steps. Deliberately does NOT auto-import: pouring a
+             JSON file into a database is destructive and the operator may
+             genuinely want to start empty.
+          2. docs/deployment.md storage section now documents the migration
+             procedure (back up → start → POST /api/accounts → verify counts)
+             plus two easy-to-miss points: auth_keys must be re-imported
+             (otherwise every non-admin key stops working), and image index /
+             task records do NOT follow the backend.
+
+MIGRATION INTEGRITY VERIFIED (json → sqlite, 310 accounts)
+----------------------------------------------------------
+  import result          added=310 skipped=0
+  source fingerprint     5d5f6fb4c32d9545  (sha256 of sorted email/status/quota)
+  sqlite after import    5d5f6fb4c32d9545  ← identical
+  after restart          5d5f6fb4c32d9545  ← persistent
+
+So the documented procedure is lossless end to end; the gap was purely
+"nobody told the operator, and the service did not warn".
+
+VERIFICATION AFTER ROUND 12
+---------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] warning fires for sqlite backend with orphan accounts.json
+[PASS] warning does not fire for the json backend
+[PASS] 310-account round-trip fingerprint match, including after restart
