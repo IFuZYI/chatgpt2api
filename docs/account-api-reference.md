@@ -75,7 +75,22 @@
 
 > **注意**：列表类端点（`GET /api/accounts`、`POST /api/accounts` 等）返回的是
 > 脱敏版本 —— `password` / `totp_secret` / `refresh_token` / `id_token` /
-> `session_token` 被替换成 `*_set` 布尔值。只有**详情接口**给原文。
+> `session_token` 被替换成布尔值。只有**详情接口**给原文。
+>
+> ⚠️ **两个端点用的布尔字段名不一样，别混用**：
+>
+> | 凭据 | 列表类端点（`/api/accounts`） | 详情端点（`/api/accounts/detail`） |
+> |:--|:--|:--|
+> | `password` | `password_set` | `has_password` |
+> | `totp_secret` | `totp_secret_set` | `has_totp_secret` |
+> | `refresh_token` | `refresh_token_set` | `has_refresh_token` |
+> | `id_token` | `id_token_set` | `has_id_token` |
+> | `session_token` | `session_token_set` | `has_session_token` |
+>
+> 这是历史遗留的不一致（两处由不同函数生成：列表走
+> `maskAccountCredentials` 的 `field+"_set"`，详情走 `"has_"+field`）。
+> 前端每处各自按对应字段名读，所以一直没暴露；**新写客户端时最容易在这里
+> 拿到 `undefined`**。改名属于破坏性变更，暂不改，以文档消歧。
 
 ```json
 {
