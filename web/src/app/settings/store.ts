@@ -152,7 +152,13 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
   return {
     ...config,
     refresh_account_interval_minute: Number(config.refresh_account_interval_minute || 5),
-    image_retention_days: Number(config.image_retention_days || 30),
+    // 保留期单位是分钟（默认 1440 = 1 天）。
+    // 旧配置只有 image_retention_days，后端会迁移，这里也兜一层：
+    // 优先读新键，回落到 旧值*1440。
+    image_retention_minutes: Number(
+      config.image_retention_minutes
+        ?? (config.image_retention_days ? Number(config.image_retention_days) * 1440 : 1440),
+    ),
     image_poll_timeout_secs: Number(config.image_poll_timeout_secs || 120),
     image_account_concurrency: Number(config.image_account_concurrency || 3),
     image_settle_enabled: Boolean(config.image_settle_enabled !== false),
@@ -277,7 +283,7 @@ type SettingsStore = {
   removeBackup: (key: string) => Promise<void>;
   testBackup: () => Promise<void>;
   setRefreshAccountIntervalMinute: (value: string) => void;
-  setImageRetentionDays: (value: string) => void;
+  setImageRetentionMinutes: (value: string) => void;
   setImagePollTimeoutSecs: (value: string) => void;
   setImageAccountConcurrency: (value: string) => void;
   setImageSettleEnabled: (value: boolean) => void;
@@ -404,7 +410,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const data = await updateSettingsConfig({
         ...config,
         refresh_account_interval_minute: Math.max(1, Number(config.refresh_account_interval_minute) || 1),
-        image_retention_days: Math.max(1, Number(config.image_retention_days) || 30),
+        image_retention_minutes: Math.max(1, Number(config.image_retention_minutes) || 1440),
         image_poll_timeout_secs: Math.max(1, Number(config.image_poll_timeout_secs) || 120),
         image_account_concurrency: Math.max(1, Number(config.image_account_concurrency) || 3),
         image_settle_enabled: Boolean(config.image_settle_enabled !== false),
@@ -508,8 +514,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     });
   },
 
-  setImageRetentionDays: (value) => {
-    set((state) => state.config ? { config: { ...state.config, image_retention_days: value } } : {});
+  setImageRetentionMinutes: (value) => {
+    set((state) => state.config ? { config: { ...state.config, image_retention_minutes: value } } : {});
   },
 
   setImagePollTimeoutSecs: (value) => {

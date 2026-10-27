@@ -190,9 +190,37 @@ func (s *Store) RefreshAccountIntervalMinute() int {
 	return positiveIntOr(s.raw("refresh_account_interval_minute"), 5, 0)
 }
 
+// ImageRetentionMinutes 返回图片/任务产物的保留时长（分钟）。
+//
+// 单位从「天」改成「分钟」：天粒度无法表达「保留 6 小时」这类需求，
+// 而清理本身是按时间戳判断的，用分钟更自然。默认 1440 = 1 天。
+//
+// **迁移**：旧配置只有 `image_retention_days`。若直接读新键并落到默认，
+// `image_retention_days: 30` 会被当成「没配置」→ 变成 1440 分钟 = 1 天，
+// 用户原本保留 30 天的图会在一天内被删光。所以这里把旧值 ×1440 迁移过来。
+func (s *Store) ImageRetentionMinutes() int {
+	if minutes := positiveIntOr(s.raw("image_retention_minutes"), 0, 0); minutes > 0 {
+		return minutes
+	}
+	if days := positiveIntOr(s.raw("image_retention_days"), 0, 0); days > 0 {
+		return days * 1440
+	}
+	return imageRetentionMinutesDefault
+}
+
+// imageRetentionMinutesDefault = 1 天。
+const imageRetentionMinutesDefault = 1440
+
+// legacyRetentionDaysKey 是旧配置键名，仅在迁移时读取。
+const legacyRetentionDaysKey = "image_retention_days"
+
+// ImageRetentionDays 保留给仍按天计数的调用方（任务清理的旧接口）。
+//
+// 向上取整：保留 90 分钟时不能算成 0 天，否则调用方会当成「不清理」或
+// 「清理全部」，两者都不对。
 func (s *Store) ImageRetentionDays() int {
-	value := positiveIntOr(s.raw("image_retention_days"), 30, 1)
-	return value
+	minutes := s.ImageRetentionMinutes()
+	return (minutes + 1439) / 1440
 }
 
 func (s *Store) ImagePollTimeoutSecs() int {
@@ -410,6 +438,9 @@ func (s *Store) PublicProxyRuntimeSettings() map[string]any {
 func (s *Store) Get() map[string]any {
 	out := s.Snapshot()
 	out["refresh_account_interval_minute"] = s.RefreshAccountIntervalMinute()
+	out["image_retention_minutes"] = s.ImageRetentionMinutes()
+	// 旧键继续输出派生值：外部脚本可能还在读它。
+	// 写入时不落盘（见 Update 的迁移逻辑）。
 	out["image_retention_days"] = s.ImageRetentionDays()
 	out["image_poll_timeout_secs"] = s.ImagePollTimeoutSecs()
 	out["image_poll_interval_secs"] = s.ImagePollIntervalSecs()
@@ -444,6 +475,20 @@ func (s *Store) Update(patch map[string]any) (map[string]any, error) {
 	}
 	for key, value := range patch {
 		next[key] = value
+	}
+
+	// 保留期单位迁移：把旧键换成新键，避免两键共存造成歧义。
+	//
+	// 只在调用方没显式给新键时才从旧键换算 —— 否则会把用户刚设的
+	// 分钟值覆盖掉。
+	if _, hasMinutes := next["image_retention_minutes"]; !hasMinutes {
+		if days := positiveIntOr(next[legacyRetentionDaysKey], 0, 0); days > 0 {
+			next["image_retention_minutes"] = days * 1440
+		}
+	}
+	delete(next, legacyRetentionDaysKey)
+	if raw, present := next["image_retention_minutes"]; present {
+		next["image_retention_minutes"] = positiveIntOr(raw, imageRetentionMinutesDefault, 1)
 	}
 
 	if _, ok := next["backup"]; ok {
@@ -599,6 +644,15 @@ func (s *Store) sectionLocked(key string) map[string]any {
 
 func validateImageStorageSettings(settings map[string]any) error {
 	if !boolOr(settings["enabled"], false) {
+		return nil
+	}
+	// 只有走 WebDAV 的模式才需要 WebDAV 字段。
+	//
+	// 回归点：原实现只看 enabled，于是 `enabled:true, mode:"local"`
+	// 这种完全合法的配置（本地存储，不碰 WebDAV）无法通过 Update 保存 ——
+	// 报「必须填写 WebDAV URL」，而那个字段在本地模式下毫无意义。
+	mode, _ := settings["mode"].(string)
+	if strings.TrimSpace(mode) == "local" {
 		return nil
 	}
 	url, _ := settings["webdav_url"].(string)

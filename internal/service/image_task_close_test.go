@@ -25,8 +25,8 @@ type closeTestConfig struct {
 	dir string
 }
 
-func (c *closeTestConfig) DataDir() string         { return c.dir }
-func (c *closeTestConfig) ImageRetentionDays() int { return 30 }
+func (c *closeTestConfig) DataDir() string            { return c.dir }
+func (c *closeTestConfig) ImageRetentionMinutes() int { return 30 * 1440 }
 
 // Close 必须等任务 goroutine 真正结束才返回。
 //

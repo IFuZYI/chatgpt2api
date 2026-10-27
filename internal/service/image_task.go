@@ -69,7 +69,7 @@ type TaskResult struct {
 type ImageTaskService struct {
 	cfg interface {
 		DataDir() string
-		ImageRetentionDays() int
+		ImageRetentionMinutes() int
 	}
 	path      string
 	generator TaskRunner
@@ -101,7 +101,7 @@ type ImageTaskService struct {
 // NewImageTaskService 构造。runner 为 nil 时任务只会停在 queued（M4 前）。
 func NewImageTaskService(cfg interface {
 	DataDir() string
-	ImageRetentionDays() int
+	ImageRetentionMinutes() int
 }) *ImageTaskService {
 	path := cfg.DataDir() + "/image_tasks.json"
 	s := &ImageTaskService{
@@ -331,11 +331,13 @@ func (s *ImageTaskService) recoverUnfinishedLocked() bool {
 
 // cleanupLocked 删除超过保留期的终态任务。
 func (s *ImageTaskService) cleanupLocked() bool {
-	retention := s.cfg.ImageRetentionDays()
-	if retention < 1 {
-		retention = 30
+	// 用分钟：保留期可以小于 1 天（例如 60 分钟），按天会向上取整成 1 天，
+	// 清理会晚于用户设定。
+	minutes := s.cfg.ImageRetentionMinutes()
+	if minutes < 1 {
+		minutes = 1440
 	}
-	cutoff := time.Now().Add(-time.Duration(retention) * 24 * time.Hour).Unix()
+	cutoff := time.Now().Add(-time.Duration(minutes) * time.Minute).Unix()
 	removed := false
 	for key, task := range s.tasks {
 		if !taskTerminal[stringValue(task["status"])] {

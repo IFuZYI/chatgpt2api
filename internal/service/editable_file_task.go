@@ -155,12 +155,14 @@ const cleanupGiveUpAttempts = 5
 //
 // 保留期复用 image_retention_days：两类产物的生命周期语义一致，
 // 不为它单独加一个配置项。
-func (s *EditableFileTaskService) CleanupExpired(retentionDays int) (tasksRemoved, dirsRemoved int) {
-	retention := retentionDays
+// CleanupExpired 删除超过保留期的产物。retentionMinutes 为分钟
+// （保留期可小于 1 天，按天会向上取整成 1 天，清理晚于用户设定）。
+func (s *EditableFileTaskService) CleanupExpired(retentionMinutes int) (tasksRemoved, dirsRemoved int) {
+	retention := retentionMinutes
 	if retention < 1 {
-		retention = 30
+		retention = 1440
 	}
-	cutoff := time.Now().Add(-time.Duration(retention) * 24 * time.Hour).Unix()
+	cutoff := time.Now().Add(-time.Duration(retention) * time.Minute).Unix()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

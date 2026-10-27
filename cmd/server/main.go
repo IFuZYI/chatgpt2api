@@ -192,7 +192,7 @@ func main() {
 	}
 	// 可编辑文件产物同样需要保留期清理：data/files/ 此前没有任何删除路径，
 	// 实测 ~2 MiB/任务永久累积。
-	if tasks, dirs := deps.EditableTasks.CleanupExpired(cfg.ImageRetentionDays()); tasks > 0 || dirs > 0 {
+	if tasks, dirs := deps.EditableTasks.CleanupExpired(cfg.ImageRetentionMinutes()); tasks > 0 || dirs > 0 {
 		fmt.Printf("[startup] removed %d expired editable tasks, %d artifact dirs\n", tasks, dirs)
 	}
 

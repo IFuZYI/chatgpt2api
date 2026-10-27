@@ -73,7 +73,14 @@ func TestDefaultsMatchPythonConfig(t *testing.T) {
 		want any
 	}{
 		{"refresh_account_interval_minute", 5},
-		{"image_retention_days", 30},
+		// 保留期默认值**有意偏离 Python**：Python 用 30 天，本版改成
+		// 1440 分钟（= 1 天）。理由：天粒度无法表达「保留几小时」，
+		// 而清理本身按时间戳判断。
+		//
+		// 注意 image_retention_days 现在是从分钟派生的只读值
+		// （向上取整），写入时会被迁移成 image_retention_minutes。
+		{"image_retention_minutes", 1440},
+		{"image_retention_days", 1},
 		{"image_poll_timeout_secs", 120},
 		{"image_account_concurrency", 3},
 		{"image_parallel_generation", true},

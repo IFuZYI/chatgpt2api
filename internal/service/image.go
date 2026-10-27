@@ -367,6 +367,58 @@ func dateFromRel(rel string, modTime time.Time) string {
 //
 // 改成按日期调用 DeleteImages，四条清理路径一次走完。
 func (s *ImageService) CleanupExpiredImages() int {
+	minutes := s.cfg.ImageRetentionMinutes()
+	if minutes <= 0 {
+		return 0
+	}
+	return s.cleanupExpiredByModTime(time.Duration(minutes) * time.Minute)
+}
+
+// cleanupExpiredByModTime 按**文件 mtime** 清理，支持分钟级保留期。
+//
+// 为什么不能用原来的日期字符串判断：原实现取
+// `dateFromRel(rel, mtime)`（路径前三段形如 YYYY/MM/DD 时优先用**路径日期**），
+// 再把 cutoff 格式化成 "2006-01-02" 交给 ListItems 比较。两个后果：
+//
+//  1. 保留期小于 1 天无法表达 —— 设 60 分钟时 endDate 就是今天，
+//     当天所有图都被判为过期（实测：刚生成的图也会被删）。
+//  2. 路径日期优先于真实修改时间：一张 30 分钟前生成、但存进
+//     `2020/01/01/` 目录的图会被当成 2020 年的图删掉。
+//
+// 改成收集「mtime 早于 cutoff」的相对路径，再交给 DeleteImages 走
+// 原有的四条清理路径（本地文件 / WebDAV 远端 / 索引 / 缩略图）。
+func (s *ImageService) cleanupExpiredByModTime(retention time.Duration) int {
+	cutoff := time.Now().Add(-retention)
+	root := s.cfg.ImagesDir()
+
+	expired := make([]string, 0)
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !isImageRel(info.Name()) {
+			return nil
+		}
+		if !info.ModTime().Before(cutoff) {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		expired = append(expired, filepath.ToSlash(rel))
+		return nil
+	})
+	if len(expired) == 0 {
+		return 0
+	}
+	result := s.DeleteImages(expired, "", "", false)
+	removed := 0
+	if n, ok := result["removed"].(int); ok {
+		removed = n
+	}
+	return removed
+}
+
+// cleanupExpiredByDate 旧的日期判断路径，保留供 startDate/endDate 端点复用。
+func (s *ImageService) cleanupExpiredByDateLegacy() int {
 	days := s.cfg.ImageRetentionDays()
 	if days <= 0 {
 		return 0

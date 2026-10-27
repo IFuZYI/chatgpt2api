@@ -195,6 +195,9 @@ export type SettingsConfig = {
     prompt?: string;
   };
   refresh_account_interval_minute?: number | string;
+  /** 保留期（分钟）。默认 1440 = 1 天。 */
+  image_retention_minutes?: number | string;
+  /** 旧键（天）。仅兼容读取；写入时后端会迁移成 image_retention_minutes。 */
   image_retention_days?: number | string;
   image_poll_timeout_secs?: number | string;
   image_account_concurrency?: number | string;

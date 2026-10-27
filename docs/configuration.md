@@ -49,7 +49,7 @@
 其余**全部**配置项只能写在 `config.json` 里，或在 Web 面板的设置页改
 （面板保存会写回 `config.json`）。例如：
 
-- `image_retention_days`、`image_account_concurrency`、`image_poll_timeout_secs`
+- `image_retention_minutes`、`image_account_concurrency`、`image_poll_timeout_secs`
 - `proxy`（全局出口代理）
 - `proxy_runtime.*`（WARP / FlareSolverr 代理运行时，**注意见下方例外**）
 - `backup.*`（备份与加密）

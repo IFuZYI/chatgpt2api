@@ -45,18 +45,26 @@ func TestCleanupExpiredImagesReallyDeletes(t *testing.T) {
 func TestCleanupKeepsBoundaryDay(t *testing.T) {
 	svc, cfg := newImageStorageFixture(t, "local", "")
 	root := cfg.ImagesDir()
-	days := cfg.ImageRetentionDays()
+	// 保留期以**分钟**表达，这里用小时做边界测试更直观。
+	// 默认 1440 分钟 = 1 天。
+	if _, err := cfg.Update(map[string]any{"image_retention_minutes": 1440}); err != nil {
+		t.Fatalf("set retention: %v", err)
+	}
 
-	mk := func(offset int) string {
-		day := time.Now().AddDate(0, 0, -offset)
-		rel := fmt.Sprintf("%s/bound-%d.png", day.Format("2006/01/02"), offset)
+	// 判据是**文件 mtime**（保留期可小于 1 天，路径里的日期不足以表达）。
+	// 所以这里必须显式设置 mtime，而不是只把文件放在日期目录里。
+	mk := func(hoursAgo int) string {
+		when := time.Now().Add(-time.Duration(hoursAgo) * time.Hour)
+		rel := fmt.Sprintf("%s/bound-%d.png", when.Format("2006/01/02"), hoursAgo)
 		full := filepath.Join(root, rel)
 		_ = os.MkdirAll(filepath.Dir(full), 0o755)
 		_ = os.WriteFile(full, []byte("png"), 0o644)
+		_ = os.Chtimes(full, when, when)
 		return full
 	}
-	kept := []string{mk(days - 1), mk(days)}
-	gone := []string{mk(days + 1), mk(days + 5)}
+	// 保留期内（< 24h）保留；超过 24h 删除。
+	kept := []string{mk(1), mk(23)}
+	gone := []string{mk(25), mk(120)}
 
 	svc.CleanupExpiredImages()
 

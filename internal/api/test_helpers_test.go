@@ -95,7 +95,7 @@ func newTaskTestService(t *testing.T) *service.ImageTaskService {
 // newTaskTestConfig 给 service 层测试用的最小配置。
 func newTaskTestConfig(t *testing.T) interface {
 	DataDir() string
-	ImageRetentionDays() int
+	ImageRetentionMinutes() int
 } {
 	t.Helper()
 	dir := t.TempDir()

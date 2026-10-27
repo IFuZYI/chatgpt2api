@@ -575,14 +575,22 @@ environment:
 
 ### 图片保留
 
-`image_retention_days` 控制本地图片与任务记录的清理，由内置清理调度器执行。
+`image_retention_minutes` 控制本地图片与任务产物的清理，由内置清理调度器
+执行。**单位是分钟**，默认 **1440**（= 1 天）。
+
+> **从旧版本升级**：旧键是 `image_retention_days`（天）。首次保存设置时
+> 会自动换算成分钟（`天数 × 1440`）并删除旧键，**你的保留时长不会变**。
+> 例：原来 30 天 → 43200 分钟。
+>
+> 判据也从「路径里的日期」改成**文件修改时间** —— 分钟级保留期（例如
+> 60 分钟）无法用日期表达，且路径日期对拷贝/恢复过的图会失真。
 
 > **模板会覆盖代码默认值**。`config.example.json` 里有几项与代码默认不同，
 > 照模板部署得到的是模板值，不是代码值：
 >
 > | 键 | 代码默认 | 模板值 |
 > |:--|:--|:--|
-> | `image_retention_days` | 30 | **15** |
+> | `image_retention_minutes` | 1440（1 天） | **21600**（15 天） |
 > | `auto_remove_invalid_accounts` | false | **true** |
 > | `image_remove_conversation_after_result` | false | **true** |
 > | `backup.interval_minutes` | 360 | **1440** |

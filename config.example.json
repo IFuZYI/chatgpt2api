@@ -56,7 +56,7 @@
   "image_poll_timeout_secs": 120,
   "image_remove_conversation_after_result": true,
   "image_remove_conversation_always": true,
-  "image_retention_days": 15,
+  "image_retention_minutes": 21600,
   "image_settle_enabled": true,
   "image_settle_secs": 2,
   "image_storage": {
