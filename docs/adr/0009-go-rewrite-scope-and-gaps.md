@@ -38,12 +38,12 @@
 |:--|:--|:--|
 | ~~`auto_relogin_after_refresh` 未接线~~ | **已接线**：刷新发现 401/403 后自动密码重登（429 不触发） | — |
 | 后台任务不可取消 | 仍有兜底超时（`backgroundTaskContext`，30 分钟），但**不能主动取消**：`TaskContext` 不带 ctx | `ImageTaskService.Close` 只能等满超时。2.2.3 已修「上游挂起导致槽位永久泄漏」，主动取消仍未做 |
-| 进度对象不淘汰 | `CleanRefreshProgress` / `CleanReloginProgress` 无调用点 | 每次 admin 刷新/重登永久保留一份号池副本，重启才回收 |
-| 可编辑任务无保留策略 | 无 `cleanupLocked`、无删除路由、无配额 | `data/files/` 与任务记录聚合无界（对比 `image_task` 有保留期） |
+| ~~进度对象不淘汰~~ | **已修**：`StartProgressSweeper` 每 `maxAge/4`（默认 90 分钟）清理超过 6 小时的条目 | — |
+| ~~可编辑任务无保留策略~~ | **已修**：`EditableFileTaskService.CleanupExpired` 在启动时按 `image_retention_minutes` 清理任务与产物目录 | — |
 | ~~rt 换 at 未实现~~ | **已实现**：`RefreshAccessToken`，form-urlencoded 换 token | — |
 | ~~入站请求体无上限~~ | **已修（2.2.3）**：`decodeJSONBody` 加 `MaxBytesReader` | — |
 | 备份归档默认不加密 | `backup.encrypt` 默认 false | 归档含号池全部凭据，需操作者显式开启加密 |
-| 图片标签写入非原子 | `saveTags` 直接 truncate + write | 崩溃中途丢全部标签（并发丢更新已修，见下） |
+| ~~图片标签写入非原子~~ | **已修**：`saveTags` 改为写 `.tmp` 再 `os.Rename` | — |
 
 ## 安全审计后的修复（2026-10）
 
