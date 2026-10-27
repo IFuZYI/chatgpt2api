@@ -114,6 +114,17 @@ func saveJSONValue(path string, value any) error {
 		os.Remove(tmpPath)
 		return err
 	}
+	// fsync 父目录：POSIX 下 rename 只保证目录项在内存里变更，
+	// 断电时可能「旧文件已消失、新文件未落盘」—— 账号池整个丢失。
+	// 上面 tmp.Sync() 保证的是**文件内容**，不能替代目录项的持久化。
+	//
+	// 失败只记不报：部分文件系统（overlayfs、某些网络盘）不支持目录
+	// fsync 并返回 EINVAL，此时数据已 rename 到位，把它当错误返回会让
+	// 保存整体失败，反而更糟。
+	if dirHandle, dirErr := os.Open(dir); dirErr == nil {
+		_ = dirHandle.Sync()
+		_ = dirHandle.Close()
+	}
 	return nil
 }
 
