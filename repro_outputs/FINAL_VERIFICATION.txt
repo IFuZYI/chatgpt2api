@@ -526,3 +526,47 @@ VERIFICATION AFTER ROUND 14
 [PASS] TestWebDAVLiveRoundTrip + TestWebDAVLiveOverwriteIsIdempotent against
        real Apache WebDAV: both pass
 [PASS] WebDAV container and image removed afterwards
+
+ROUND 15 — FINAL ACCEPTANCE
+===========================
+Objective 1 — full inspection / bug cleanup:
+  [PASS] go test ./...                     8/8 packages
+  [PASS] go test -race (service, api)      2/2 packages
+  [PASS] go vet ./...                      0 findings
+  [PASS] gofmt -l cmd internal tools       0 files
+  [PASS] 14 rounds of audit: 22 defects fixed (2 Critical, 8 Important,
+         6 Medium, 6 misc), 3 performance optimisations, 2 new test suites
+         that only a real endpoint could exercise (S3, WebDAV).
+  [PASS] All major chains exercised end to end:
+         text chat (real upstream), account lifecycle, proxy egress (socks5),
+         storage backends (json/sqlite/postgres/git + migration round-trip),
+         backup (real S3), WebDAV image storage (real Apache WebDAV),
+         deployment (Docker/compose/HEALTHCHECK/subcommands),
+         observability (metrics + soak test, no leak).
+
+Objective 2 — documentation:
+  [PASS] 36 markdown files, 0 broken relative links
+  [PASS] New: docs/account-lifecycle.md, docs/performance.md,
+         docs/release-notes-2.2.3.md, ADR-0014
+  [PASS] .env.example covers 100% of the environment variables the code reads
+  [PASS] AGENTS.md grown to 13 rules, each with a source reference
+  [PASS] GLOSSARY aligned with the current state machine
+
+Objective 3 — deployment methods:
+  [PASS] docker-compose.yml / .local.yml / .warp.yml validate
+  [PASS] scripts/test-compose.py: 67 checks, 0 failures
+  [PASS] Dockerfile builds; HEALTHCHECK present and container reaches healthy
+  [PASS] single binary + source build both verified (source build needed the
+         frontend step — documented and re-verified from a fresh clone)
+  [PASS] all six release binaries built and checksummed
+
+Objective 4 — commit and release:
+  [PASS] 43 commits on main, tag v2.2.3, local == origin
+  [PASS] release artifacts staged (6 platforms + SHA256SUMS + README)
+  [BLOCKED] GitHub Release not created: Actions are disabled on this fork
+            ("Workflows are not currently being run on this fork due to the
+            scale of GitHub Actions usage"). No API token exists in this
+            environment (only an SSH key, which authenticates as IFuZYI but
+            cannot call the REST API). A maintainer must either re-enable
+            Actions and run the Release workflow, or create the release
+            manually from docs/release-notes-2.2.3.md.
