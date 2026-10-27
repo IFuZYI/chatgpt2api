@@ -789,3 +789,45 @@ VERIFICATION AFTER ROUND 21
 [PASS] gofmt / go vet / go build
 [PASS] go test ./...            (8 packages)
 [PASS] new guard fails when a fabricated test filename is referenced
+
+ROUND 22 — GLOSSARY + DOC CONSISTENCY GUARDS
+-------------------------------------------
+Audited GLOSSARY.md (the project's domain language) — never checked before.
+
+FIXED 1 — three project-specific concepts were missing from the glossary:
+  * **Token Alias**: after rotation the old token string maps to the new one
+    (s.aliases). This is a project mechanism, not a generic programming
+    concept, and its absence from the glossary is plausibly why repeated bugs
+    used the raw token string as an identity for dedup/locking — letting one
+    account take two locks. The entry states the corollary: always resolve
+    through resolveTokenLocked first.
+  * **Invalid Count**: drives the abnormal→disabled threshold and MUST be
+    reset on success (otherwise a recovered account carries history and gets
+    deleted on the next transient failure).
+  * **Retention**: judged by file mtime, not the date in the path (otherwise a
+    sub-day retention deletes everything produced that day); legacy key
+    migrates ×1440.
+  Terms: 22 → 25.
+
+FIXED 2 — stale ADR count. Both READMEs said "13 architecture decision
+  records"; there are 14 (ADR-0014 was added during this audit).
+
+FIXED 3 — inconsistent language labelling in the English README's document
+  table. Round 19 annotated only the feature-status row with "(document is in
+  Chinese)", but every linked document is Chinese. Replaced the one-off
+  annotation with a single note above the table.
+
+[ADDED] TestADRCountMatchesDocumentedNumber, and renamed the guard file to
+  docs_consistency_test.go since it now covers four kinds of doc/reality
+  agreement: route count, route paths, named test files, ADR count.
+  Also fixed relPathForTest: the walk starts at ../.., so paths carried a
+  prefix and README never matched (error messages also showed ../../docs/…).
+
+VERIFICATION AFTER ROUND 22
+---------------------------
+[PASS] 0 broken links
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] all four doc-consistency guards pass, and each fails when its drift is
+       introduced (verified for the route count, endpoint path, test filename
+       and ADR count guards)
