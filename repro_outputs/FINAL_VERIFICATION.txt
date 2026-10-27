@@ -42,3 +42,30 @@ RELEASE CLEANUP
 - Fixed docs/deployment.md source-run steps: fresh clone previously produced
   a binary with no frontend (all pages 404).
 - CI now covers frontend (test/typecheck/build) and Docker (build + health).
+
+RELEASE PUBLICATION
+-------------------
+[PASS] Commit: 7d07d9a "release: 2.2.3 — 账号生命周期审计、全仓整理与部署同步"
+[PASS] Tag: v2.2.3 (annotated)
+[PASS] Working tree clean after release commit
+[PASS] Release verified from a fresh clone of tag v2.2.3:
+         frontend build + backend build + go test ./... (8 packages) all green
+[PASS] Release artifact run: /, /accounts, /health, authenticated API all 200
+
+REVIEW OUTCOME (final whole-branch review)
+------------------------------------------
+Two Important findings and one Minor were raised and ALL fixed:
+1. Refresh concurrency guard was keyed on the raw token string (alias-bypassable,
+   same defect class already fixed for re-login). Now resolves to the account
+   identity and returns that key for release; alias dedup tests added and
+   verified to fail against the old implementation.
+2. RecordInvalidTokenSeen persisted last_refresh_error unredacted — the 4th of
+   4 persistence points. Now redacted; the redaction test was extended to cover
+   it and verified to catch the regression.
+3. Manual re-login on account_deactivated does disable (upstream-declared terminal
+   fact); the contract comment said otherwise. Comment corrected and a boundary
+   test added covering deactivated / invalid-password / need-TOTP.
+
+Also fixed a flaky test introduced during this work: httptest.NewServer followed
+by mutating srv.Config.ConnState is a data race (reproduced with
+`-race -count=10`); switched to NewUnstartedServer → configure → Start.
