@@ -329,10 +329,17 @@ docker compose -f docker-compose.warp.yml up -d --build
 手动跑（不经过 compose）：
 
 ```bash
+# 方式一：--base-dir（推荐，与其它子命令一致）
+./chatgpt2api --base-dir . --init-proxy-config
+
+# 方式二：显式指定配置文件
 CHATGPT2API_CONFIG_FILE=./config.json \
 CHATGPT2API_PROXY_RUNTIME_PROXY_URL=http://127.0.0.1:8118 \
   ./chatgpt2api --init-proxy-config
 ```
+
+> 2.2.3 起 `--base-dir` 生效。此前该子命令只看 `CHATGPT2API_CONFIG_FILE`，
+> 否则硬编码 `/app/config.json` —— 直接跑二进制时会静默写错位置。
 
 > ⚠️ **安全提示**：`warp` 容器需要 `NET_ADMIN` 与 `SYS_MODULE` 能力；
 > `init-config` 与 `init-data` 都以 `user: "0:0"` 运行（前者要写宿主机上的

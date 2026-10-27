@@ -386,3 +386,41 @@ VERIFICATION AFTER ROUND 8
 [PASS] go vet -tags live ./internal/upstream/
 [PASS] .env.example syntax (all keys are valid identifiers)
 [PASS] 6-platform release artifacts rebuilt with SHA256SUMS
+
+ROUND 9-11 — DEPLOYMENT CHAIN AUDIT
+-----------------------------------
+[FIXED] Dockerfile had no HEALTHCHECK instruction.
+        internal/health and docs/deployment.md both say "use the binary's own
+        --healthcheck subcommand for container liveness", and all three compose
+        files declare a healthcheck — but the Dockerfile never did. Verified by
+        building the image: Config.Healthcheck was null. Running the image
+        directly (outside compose) therefore had no liveness probe at all, so
+        `docker ps` always showed "healthy" even when the process was wedged.
+        Added HEALTHCHECK --interval=30s --timeout=5s --start-period=20s
+        --retries=3. Verified: docker inspect shows the probe, and a real
+        container transitions to "healthy" with exit=0.
+[FIXED] `--init-proxy-config` ignored `--base-dir`.
+        RunInitProxyRuntime only consulted CHATGPT2API_CONFIG_FILE, otherwise a
+        hardcoded /app/config.json. Running the binary directly with
+        `--base-dir /srv/chatgpt2api --init-proxy-config` silently wrote to
+        /app/config.json (confirmed: the file was created there while the
+        requested directory was untouched) yet printed "Created proxy_runtime
+        defaults" and exited 0. Added InitProxyRuntimeAt(path); the CLI now uses
+        it when --base-dir is set. Container WARP init-config is unaffected
+        (it sets CHATGPT2API_CONFIG_FILE explicitly).
+
+DEPLOYMENT CHAIN VERIFIED
+-------------------------
+[PASS] Dockerfile builds; image reports 2.2.3; container /health 200
+[PASS] HEALTHCHECK present and container reaches "healthy"
+[PASS] --healthcheck exits 0 on a live server, 1 on a dead port
+[PASS] --init-proxy-config writes proxy_runtime into the given --base-dir
+[PASS] three compose files validate; scripts/test-compose.py 67/67
+[PASS] healthcheck params aligned across Dockerfile and all three compose files
+       (WARP uses start_period=30s because it waits for the tunnel)
+
+VERIFICATION AFTER ROUND 11
+---------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] 6-platform release artifacts rebuilt with SHA256SUMS
