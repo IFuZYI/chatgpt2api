@@ -1031,5 +1031,5 @@ tar czf "backup-$(date +%Y%m%d-%H%M%S).tar.gz" config.json data/ .env
 
 - [README](../README.md) —— 快速开始与 API 概览
 - [ADR 目录](./adr/) —— 架构决策记录
-- [功能清单](./feature-status.en.md) —— 逐项功能状态
+- [功能清单](./feature-status.md) —— 逐项功能状态
 - [术语表](../GLOSSARY.md)

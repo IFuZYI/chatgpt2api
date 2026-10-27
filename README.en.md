@@ -706,7 +706,7 @@ Full list with rationale in
 | [Configuration](./docs/configuration.md) | **How `config.json`, `.env` and compose relate, and which one to edit** |
 | [Image storage modes](./docs/image-storage-modes.md) | `local` / `webdav` / `both` — full write/read/delete flows with measured timings |
 | [Deployment](./docs/deployment.md) | Deployment modes, reverse proxy, storage, backup, upgrade/rollback, hardening, troubleshooting |
-| [Feature status](./docs/feature-status.en.md) | Per-feature status |
+| [Feature status](./docs/feature-status.md) | Per-feature status (document is in Chinese) |
 | [ADR](./docs/adr/) | 13 architecture decision records |
 | [Upstream SSE protocol](./docs/upstream-sse-conversation.md) | Conversation streaming protocol notes |
 | [Python backend archive](./docs/archive-python-backend.md) | Where the 1.x Python implementation lives and why it was removed |

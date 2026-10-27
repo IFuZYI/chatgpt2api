@@ -57,7 +57,12 @@
 - `chat_completion_cache.*`、`log_levels`、`default_upstream_model_name`
 
 > **实测反证**：设 `CHATGPT2API_IMAGE_RETENTION_DAYS=99` 启动后，
-> `/api/settings` 里仍是代码默认值 30 —— 环境变量对这个键无效。
+> `/api/settings` 里仍是代码默认值（`image_retention_minutes = 1440`，
+> 即 1 天）—— 环境变量对这个键无效。
+>
+> 注意保留期的键名与单位：2.2.3 起主键是 `image_retention_minutes`
+> （默认 1440），旧的 `image_retention_days` 仍会被读取并 ×1440 迁移，
+> 只在配置里回显派生值便于外部脚本过渡。
 
 ---
 
@@ -134,7 +139,7 @@ CHATGPT2API_AUTH_KEY=$(openssl rand -hex 32) ./chatgpt2api --addr :8080
 | 误解 | 实际 |
 |:--|:--|
 | 「`.env` 里写什么都能生效」 | 只有 compose `environment:` 白名单里的才会进容器 |
-| 「环境变量能覆盖所有配置项」 | 只有 9 类键支持，其余无效 |
+| 「环境变量能覆盖所有配置项」 | 只有下面那 12 类键支持，其余无效 |
 | 「`config.example.json` 是给程序读的」 | 它只是模板，程序只读 `config.json` |
 | 「改了 `.env` 就不用改 config.json」 | 只有端口、auth-key、存储后端等少数项能这么干 |
 | 「`config.json` 必须存在」 | 不必须。缺失时用空配置 + 环境变量启动（但 `auth-key` 必须有值） |

@@ -50,7 +50,7 @@
 
 | 项 | 状态 | 说明 |
 |:--|:--|:--|
-| 全部 77 条 HTTP 路由 | ✅ | 与 Python 版逐条对齐（Python 78 条，删除 `/api/third-party-apps` 后 77 条），`TestRouteParity` 常驻回归。 |
+| 全部 80 条 HTTP 路由 | ✅ | 与 Python 版逐条对齐（Python 78 条；删除 `/api/third-party-apps`，后续新增 `/api/metrics` 等），`TestRouteParity` 与 `TestRouteCountMatchesDocumentedNumber` 常驻回归。 |
 | 三套错误信封 | ✅ | 管理面 / OpenAI / Anthropic，28 个 golden 用例覆盖。 |
 | 上游 TLS 指纹 | ✅ | `tls-client` + header 顺序，真实上游 sentinel 握手验证通过。 |
 | 图片并行生成与槽位 | ✅ | goroutine + channel 信号量，槽位泄漏有测试。 |
@@ -95,13 +95,21 @@
 原因：上游 `/backend-api/models` **只返回文本模型**，图片模型（`gpt-image-2` 系列）
 完全不在该响应里，无法通过任何接口自动发现，只能实测出图确认后写死。
 
-### 2026-10 实测的上游文本模型（11 个）
+### 上游文本模型（动态，无需改代码）
 
-`auto` / `gpt-5-3-mini` / `gpt-5-6` / `gpt-5-6-mini` / `gpt-5-6-t-mini` /
-`gpt-5-6-t-mini-mini` / `gpt-6` / `gpt-6-mini` / `gpt-6-t-mini` /
-`gpt-6-t-mini-mini` / `research`
+上游 `/backend-api/models` 加了模型，`/v1/models` 下次刷新（TTL 300s）
+就会出现，**不需要动代码**。所以这里列的是某个时间点的快照，不是白名单：
 
-这些是动态拉取的，不需要写代码。**新增文本模型无需改代码**。
+| 时间点 | 数量 | 变化 |
+|:--|:--|:--|
+| 2026-10 初 | 11 | `auto`、`gpt-5-3-mini`、`gpt-5-6{,-mini,-t-mini,-t-mini-mini}`、`gpt-6{,-mini,-t-mini,-t-mini-mini}`、`research` |
+| 2026-10-27 实测 | 13 | 上游新增两条 alpha 占位项 |
+
+**判断「是不是模型丢了」的正确方法**：看 `/v1/models` 返回的数量对不对，
+而不是逐个比对名字 —— 上游改名/增删模型是常态。
+
+若数量明显偏少（例如只剩图片模型），多半是 `ModelCatalog` 的 fetcher
+没注入（见下方「踩过的坑」），不是上游删模型。
 
 ### 踩过的坑
 
