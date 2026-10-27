@@ -222,3 +222,42 @@ VERIFICATION AFTER ROUND 4
 [PASS] npm run typecheck
 [PASS] next build + embed + restart; / and /health both 200
 [PASS] 6-platform release artifacts rebuilt with SHA256SUMS
+
+ROUND 5 — INFORMATION DISCLOSURE FIX
+------------------------------------
+[FIXED] Unauthenticated /health?format=json leaked absolute server paths.
+        It returned storage.backend.file_path =
+        /home/<user>/chatgpt2api/data/accounts.json (plus
+        auth_keys_file_path). /health must stay unauthenticated (Python
+        contract: monitoring probes it), but an attacker could use those paths
+        to locate the deployment directory, detect whether it runs in a
+        container, and infer the host username.
+        redactStoragePaths now reduces both fields to their basename while
+        keeping *_exists and the rest of the structure intact, so operators can
+        still see WHICH file the backend reads without learning WHERE.
+        Verified live: file_path = "accounts.json", auth_keys_file_path =
+        "auth_keys.json". Pool size (total/active/disabled) is retained — it is
+        an operational metric that the Python version exposes too.
+
+SECURITY RE-VERIFICATION (round 5)
+----------------------------------
+[PASS] Path traversal, image endpoint: /api/images/download/../../config.json
+       and encoded variants (..%2f, %2e%2e%2f, ....//) all return 404.
+       Guard rejects "..", verifies prefix, and re-checks after symlink
+       resolution.
+[PASS] Path traversal, files endpoint: same class of payloads return 404 JSON.
+[PASS] Logs contain no raw tokens (scanned logs.jsonl for JWT / rt. / sk-
+       patterns: 0 hits). /api/logs requires admin (401 without a key).
+[PASS] Three error envelopes verified live: admin {"detail":...},
+       OpenAI {"error":{...}}, Anthropic {"error":{message,type}}.
+[PASS] Upstream error text contains only the first 300 chars of the upstream
+       response body — no request headers, access_token or proxy credentials.
+       Documented in deployment.md as an intentional debugging aid with a
+       mitigation note for operators.
+
+VERIFICATION AFTER ROUND 5
+--------------------------
+[PASS] gofmt / go vet / go build
+[PASS] go test ./...            (8 packages)
+[PASS] next build + embed + restart; /health 200
+[PASS] 6-platform release artifacts rebuilt with SHA256SUMS
