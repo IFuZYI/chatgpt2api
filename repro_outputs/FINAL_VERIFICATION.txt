@@ -69,3 +69,18 @@ Two Important findings and one Minor were raised and ALL fixed:
 Also fixed a flaky test introduced during this work: httptest.NewServer followed
 by mutating srv.Config.ConnState is a data race (reproduced with
 `-race -count=10`); switched to NewUnstartedServer → configure → Start.
+
+GIT PUBLICATION
+---------------
+[PASS] main pushed: origin/main = 01b2664
+[PASS] tag pushed:  refs/tags/v2.2.3 → 01b2664 (annotated)
+[BLOCKED] GitHub Actions did not run, so no GitHub Release / Docker image yet.
+          Root cause (from the repository's own Actions page):
+            "Workflows are not currently being run on this fork due to the
+             scale of GitHub Actions usage. A repository maintainer can choose
+             to re-enable these."
+          i.e. this repo is a fork and GitHub has paused workflow runs on it.
+          A maintainer must re-enable Actions, then either re-push the tag or
+          use "Run workflow" (both release.yml and docker-publish.yml declare
+          workflow_dispatch). No API token is available in this environment to
+          dispatch them programmatically.
