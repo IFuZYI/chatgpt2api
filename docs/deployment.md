@@ -87,11 +87,22 @@
 | `security_opt` | `no-new-privileges:true` | 禁止 setuid/setgid 提权 |
 | `logging` | json-file, 10m × 3 | 限制日志大小（默认无限增长会写满磁盘） |
 
-这些约束由 `tools/composecheck` 守卫（67 项检查）：
+这些约束由 `tools/composecheck` 守卫（53 项检查）：
 
 ```bash
 go run ./tools/composecheck
 ```
+
+> **首次部署前跑它会看到一条提示**（不是失败）：`config.json` 与 `data/`
+> 属于部署产物、不在版本库里，缺它们不算缺陷。按提示初始化即可：
+>
+> ```bash
+> cp config.example.json config.json && mkdir -p data
+> ```
+>
+> 真正会失败的是**仓库里的文件被挂载但不存在**（例如曾经的
+> `scripts/privoxy-warp.conf` —— docker 会创建一个同名目录再挂载失败，
+> privoxy 永远起不来）。两类情况必须区分，否则新克隆第一次跑就是一片红。
 
 改 compose 后跑一遍 —— 它会检查每个 compose 的 init-data 是否 chown 了
 `config.json`、app 是否有加固、每个长期运行的服务是否限了日志大小。

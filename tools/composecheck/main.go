@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/goccy/go-yaml"
@@ -232,7 +233,30 @@ func groupDataVolume() {
 // 随 Python 归档被删了。docker 会在该路径创建一个**目录**然后报
 // "not a directory"，privoxy 永远起不来，app 的 depends_on 永不满足。
 // 这条检查当时不存在，所以 43 项全过而故障仍在。
+// deploymentArtifacts 是**部署时才产生**的宿主路径：它们由用户按
+// docs/deployment.md 的步骤创建（cp config.example.json config.json、
+// mkdir -p data），不在版本库里。
+//
+// 这些路径缺失是「还没部署」，不是「仓库坏了」—— 必须与真正的缺陷
+// （例如挂了一个已被删除的 scripts/privoxy-warp.conf）区分开，否则
+// 贡献者克隆后第一次跑检查就得到 12 条红色失败，而提示完全不指向
+// 「你还没初始化部署环境」。
+var deploymentArtifacts = map[string]bool{
+	"config.json": true,
+	"data":        true,
+}
+
+// groupHostPathsExist：所有 bind mount 的宿主源必须存在。
+//
+// 真实缺陷：warp compose 挂了 ./scripts/privoxy-warp.conf，而那个文件
+// 随 Python 归档被删了。docker 会在该路径创建一个**目录**然后报
+// "not a directory"，privoxy 永远起不来，app 的 depends_on 永不满足。
+// 这条检查当时不存在，所以 43 项全过而故障仍在。
+//
+// 部署产物（config.json / data）缺失时**不算失败**，只汇总成一条提示，
+// 告诉你先跑初始化命令。真正该失败的是「仓库里的文件被挂载但不存在」。
 func groupHostPathsExist() {
+	var missingArtifacts []string
 	for _, path := range composeFiles {
 		for name, svc := range load(path) {
 			service, _ := svc.(map[string]any)
@@ -241,10 +265,30 @@ func groupHostPathsExist() {
 				if !strings.HasPrefix(m.src, ".") {
 					continue
 				}
-				_, err := os.Stat(m.src)
-				check(err == nil, fmt.Sprintf("%s: 服务 %s 挂载的宿主路径 %s 不存在（docker 会创建一个同名目录然后挂载失败）", path, name, m.src))
+				if _, err := os.Stat(m.src); err == nil {
+					continue
+				}
+				rel := strings.TrimPrefix(strings.TrimPrefix(m.src, "./"), "/")
+				if deploymentArtifacts[rel] {
+					missingArtifacts = append(missingArtifacts, rel)
+					continue
+				}
+				check(false, fmt.Sprintf("%s: 服务 %s 挂载的宿主路径 %s 不存在（docker 会创建一个同名目录然后挂载失败）", path, name, m.src))
 			}
 		}
+	}
+	if len(missingArtifacts) > 0 {
+		unique := map[string]bool{}
+		for _, a := range missingArtifacts {
+			unique[a] = true
+		}
+		var names []string
+		for a := range unique {
+			names = append(names, a)
+		}
+		sort.Strings(names)
+		fmt.Printf("提示：部署产物 %s 尚未创建（这是首次部署前的正常状态，不算失败）。\n", strings.Join(names, "、"))
+		fmt.Printf("      初始化：cp config.example.json config.json && mkdir -p data\n")
 	}
 }
 

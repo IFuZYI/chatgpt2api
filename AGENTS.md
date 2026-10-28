@@ -132,12 +132,15 @@ go build ./...              # 确认能编译
 go test ./...                                    # 后端（650+ 测试）
 cd web && npm test && npm run typecheck          # 前端（node --test）
 go test -race ./internal/service/ ./internal/api/
-go run ./tools/composecheck                      # Docker 部署配置契约（67 项）
+go run ./tools/composecheck                      # Docker 部署配置契约（53 项）
 ```
 
 改 `docker-compose*.yml` / `.dockerignore` / `Dockerfile` 之后必须跑
 `tools/composecheck`：它的每条用例都对应一个**真实发生过的部署故障**
 （config.json 权限、日志写满磁盘、挂载的宿主路径不存在导致容器起不来…）。
+`config.json` 与 `data/` 缺失时它只打印一条初始化提示、不算失败（它们
+是部署产物）；仓库文件被挂载但不存在才失败。
+
 **注意**：`tools/composecheck` 与本仓库的 Go 代码一样用 go-yaml 解析 YAML，
 不要再用 Python 写这类检查 —— main 上曾经留过一个依赖 PyYAML 的
 Python 脚本，为了跑一个开发检查要求贡献者装 Python 环境（2.2.3 已移植）。
