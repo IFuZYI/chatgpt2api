@@ -78,7 +78,15 @@
   `CHATGPT2API_CONFIG_FILE`，否则硬编码 `/app/config.json`。
 - **本地发布脚本 `scripts/build-release.sh`**：与 CI 同矩阵构建 6 平台产物，
   并拒绝在脏工作区上构建（Go 会把 VCS 信息编进二进制，脏工作区产出的包
-  会自称 `dirty` 且字节不可复现）。六平台产物两次构建字节一致。
+  会自称 `dirty` 且字节不可复现）。**脚本自己构建前端**——前端是 embed 进
+  二进制的，而 `internal/web/web_dist/` 在仓库里只有 `.gitkeep` 占位，
+  少了这步会产出访问 `/` 与 `/accounts` **全 404** 的二进制。
+- **构建可复现**：Next.js 默认的随机 build ID 会让嵌入前端的二进制每次
+  构建都不同（实测 6/6 都不一样）；改为「版本 + 提交号」的
+  `generateBuildId` 后，六平台产物两次构建字节一致。
+- **发布包含多架构镜像**：`docker buildx` 构建 `linux/amd64` +
+  `linux/arm64` 的 OCI 归档（与 `docker-publish.yml` 推送到 ghcr.io 的内容
+  相同），无需 QEMU —— Dockerfile 靠交叉编译。
 
 ### 升级注意
 

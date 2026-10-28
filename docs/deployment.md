@@ -755,16 +755,59 @@ go run ./tools/composecheck
 ### 本地构建发布产物
 
 Actions 被暂停时用 [`scripts/build-release.sh`](../scripts/build-release.sh)
-构建 6 个平台的产物 + 校验和（与 `release.yml` 的矩阵和 ldflags 一致）：
+构建 6 个平台的产物 + 校验和。脚本与 `release.yml` 的矩阵、ldflags 一致
+（有守护测试 `TestReleaseScriptMatchesWorkflow` 防漂移）：
 
 ```bash
 ./scripts/build-release.sh              # 输出到 ./dist-release
 ```
 
+**脚本会自己构建前端**，与 `release.yml` 的 Build frontend + Stage frontend
+两步对应。这不是可选项：前端是 `//go:embed all:web_dist` 编进二进制的，
+而 `internal/web/web_dist/` 在仓库里只有 `.gitkeep` 占位 —— 少了这步会产出
+**访问 `/` 与 `/accounts` 全 404** 的二进制（实测踩过）。脚本在编译前断言
+`index.html` 存在，并把 `.gitkeep` 原样放回（它是被跟踪的占位文件，参与
+embed，删掉会改变产物字节并让工作区变脏）。
+
 **脚本会拒绝在脏工作区上构建**。Go 会把版本控制信息编进二进制
 （`vcs.modified` / 模块版本 `+dirty`），工作区里多一个未提交文件就会让
 产物自称 dirty、且两次构建字节不同 —— 既误导用户，也无法复现。先 commit
 再构建；只想本地试构建时加 `--allow-dirty`。
+
+**构建是可复现的**：同一份源码两次构建的 6 个产物字节完全一致。这依赖
+`web/next.config.ts` 的 `generateBuildId` —— 它返回「版本 + 提交号」而非
+Next.js 默认的随机值。随机值会让前端产物每次不同，进而让 embed 它的二进制
+每次不同（实测：`_next/static/<随机ID>/` 目录名变化，连带所有引用它的
+HTML 与 manifest 都变）。
+
+#### Docker 镜像（发布的一部分）
+
+`docker-publish.yml` 正常会推送多架构镜像到 ghcr.io。Actions 被暂停时
+本地构建同款内容（OCI 归档，含 `linux/amd64` + `linux/arm64`）：
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --target runtime \
+  --output type=oci,dest=chatgpt2api-2.2.3-image-amd64+arm64.oci.tar \
+  --provenance=false \
+  -t ghcr.io/<owner>/chatgpt2api:2.2.3 -t ghcr.io/<owner>/chatgpt2api:v2.2.3 .
+```
+
+不需要 QEMU：Dockerfile 的构建阶段都在 `$BUILDPLATFORM` 上，靠
+`GOOS`/`GOARCH` 交叉编译，只有最终 distroless 层做 COPY。
+
+加载或推送：
+
+```bash
+docker load -i chatgpt2api-2.2.3-image-amd64+arm64.oci.tar
+# 或推到自己的 registry：
+#   crane push chatgpt2api-2.2.3-image-amd64+arm64.oci.tar <ref>
+```
+
+镜像内的前端 build ID 是 `2.2.3-nogit`：Docker 构建上下文里没有 `.git`
+（`.dockerignore` 排除了），`generateBuildId` 退化为「版本-nogit」——
+仍是确定的，且随版本变化。
 
 产物就绪后上传到对应 tag 的 GitHub Release
 （正文模板见 [`release-notes-2.2.3.md`](./release-notes-2.2.3.md)）。
