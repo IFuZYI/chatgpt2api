@@ -1144,3 +1144,65 @@ VERIFICATION AFTER ROUND 29
 ---------------------------
 [PASS] gofmt / go vet / go build / go test ./...   (8 packages)
 [PASS] AGENTS.md at 16 rules; every rule cites its source
+
+ROUND 30 — 2.2.3 RELEASE BUILD COMPLETED
+========================================
+Scope: finish the 2.2.3 release build locally, since the GitHub Actions path
+(release.yml + docker-publish.yml) is unavailable (fork with suspended
+workflows, no API credentials in this environment).
+
+DELIVERED — /home/chatgpt2api-release-v2.2.3/ (9 files, 275 MB):
+  chatgpt2api_2.2.3_{linux_amd64,linux_arm64,linux_armv7,darwin_amd64,
+                     darwin_arm64,windows_amd64.exe}
+  chatgpt2api-2.2.3-image-amd64+arm64.oci.tar   (Docker image, both platforms)
+  SHA256SUMS.txt   (all 6 binaries verify)
+  README.txt       (install / verify / image usage)
+
+VERIFIED
+  * Binaries: two consecutive builds byte-identical (6/6); vcs.revision equals
+    the tag's commit (70819f3) with vcs.modified=false; `/`, `/accounts`,
+    `/health` all 200; startup log reports 2.2.3.
+  * Image: ECR-style OCI archive containing linux/amd64 (x86-64) and
+    linux/arm64 (AArch64); HEALTHCHECK present; nonroot; running it yields
+    200/200/200 and the container reaches `healthy`. Built by cross-compilation
+    (the Dockerfile's stages run on $BUILDPLATFORM), so no QEMU is needed.
+  * Tag v2.2.3 points at the same commit the artifacts were built from.
+
+TWO CRITICAL DEFECTS FOUND AND FIXED WHILE DOING THIS
+-----------------------------------------------------
+1. The release script produced binaries with NO FRONTEND.
+   `scripts/build-release.sh` only ran `go build`. The frontend is embedded via
+   `//go:embed all:web_dist`, and on a fresh clone that directory holds only
+   `.gitkeep` (the rest is gitignored) — so the produced binaries returned 404
+   on `/` and `/accounts`. Reproduced in a fresh clone of tag v2.2.3.
+   The artifacts staged earlier only worked by accident: the working tree
+   happened to have the frontend copied in from a manual build.
+   Fixed by building and staging the frontend inside the script, with an
+   assertion that `index.html` exists before compiling.
+
+2. The build was not reproducible at all.
+   With the frontend now built by the script, two consecutive builds produced
+   six *different* binaries. Cause: Next.js generates a random build ID per
+   build, changing `_next/static/<id>/` and every HTML/manifest that
+   references it — and that directory is embedded into the binary.
+   This also made the CHANGELOG/release-notes claim "six artifacts
+   byte-identical across two builds" false (it was true in round 26, when the
+   script reused a static web_dist).
+   Fixed by pinning `generateBuildId` to `<version>-<commit>`: same source →
+   same ID (reproducible), different commit → different ID (client cache
+   invalidation still correct). Docker builds have no `.git` in context and
+   fall back to `<version>-nogit`, which is still deterministic and
+   version-scoped. Re-verified: 6/6 byte-identical.
+
+Also fixed en route: the script's frontend staging initially deleted the
+tracked `.gitkeep`, which dirtied the tree (so the script could not be run
+twice) and changed the embedded bytes — `.gitkeep` participates in the embed.
+The script now preserves it.
+
+VERIFICATION AFTER ROUND 30
+---------------------------
+[PASS] gofmt / go vet / go build / go test ./...   (8 of 11 packages have tests)
+[PASS] go run ./tools/composecheck                 (67 checks, 0 failures)
+[PASS] npm test 56 pass · typecheck clean · npm audit 0 vulnerabilities
+[PASS] fresh-clone build produces working binaries (was 404 before the fix)
+[PASS] release package: 6 checksums verify; end-to-end 200/200/200
