@@ -44,12 +44,21 @@ out_dir="${1:-dist-release}"
 #
 # 所以这里直接拒绝，而不是静默产出一个带 +dirty 的包。确实要本地试构建时
 # 传 --allow-dirty。
+# 解析参数：--allow-dirty 可以出现在任意位置（早期只认第一个参数，
+# `./script out --allow-dirty` 会被当成「没加 flag」而拒绝，提示还很费解）。
 allow_dirty=false
-if [ "${1:-}" = "--allow-dirty" ]; then
-  allow_dirty=true
-  shift
-  out_dir="${1:-dist-release}"
-fi
+positional=()
+for arg in "$@"; do
+  case "$arg" in
+    --allow-dirty) allow_dirty=true ;;
+    -h|--help)
+      sed -n '1,30p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+      exit 0
+      ;;
+    *) positional+=("$arg") ;;
+  esac
+done
+out_dir="${positional[0]:-dist-release}"
 if [ "$allow_dirty" != "true" ]; then
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     cat >&2 <<'MSG'

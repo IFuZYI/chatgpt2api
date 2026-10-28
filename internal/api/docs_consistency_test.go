@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -121,36 +123,48 @@ func dedupe(in []string) []string {
 	return out
 }
 
-// collectMarkdown 读仓库根下所有 markdown。
+// collectMarkdown 枚举**被 git 跟踪**的 markdown。
 //
-// 跳过 node_modules/.git/构建产物，以及 `.superpowers/`（内部规划与验证
-// 报告目录）—— 那些文件会刻意提到「Python 有但本仓库已删除」的路径
-// （例如 `/api/third-party-apps`），属于历史分析记录，不是用户文档。
+// 为什么不用 filepath.Walk：走文件系统会把 gitignored 的本地文件也读进来，
+// 于是 `go test ./...` 的结果取决于开发机的本地状态 —— 实测在
+// .learnings/ 放一个提到假端点的文件，就能让 TestDocumentedEndpointsExist
+// 在干净检出上失败。这与 AGENTS.md 规则 14（go 的 ./... 吃掉 node_modules）
+// 是同一类 bug：测试输入必须是仓库内容，不是工作区内容。
+//
+// git ls-files 顺带把 .superpowers/、.learnings/、dogfood-output/、
+// repro_outputs/ 全部排除掉 —— 前三个是本地 scratch，最后一个是历史快照
+// （里面会刻意提到已删除的路径）。
 func collectMarkdown(root string) (map[string]string, error) {
-	out := map[string]string{}
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // 忽略无权限的目录
-		}
-		if info.IsDir() {
-			base := filepath.Base(path)
-			switch base {
-			case "node_modules", ".git", "out", ".next", "vendor", "dist", ".superpowers":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".md") {
-			return nil
-		}
-		payload, readErr := os.ReadFile(path)
+	out, err := gitLsFiles(root, "*.md")
+	if err != nil {
+		return nil, err
+	}
+	docs := make(map[string]string, len(out))
+	for _, rel := range out {
+		payload, readErr := os.ReadFile(filepath.Join(root, rel))
 		if readErr != nil {
-			return nil
+			continue
 		}
-		out[relPathForTest(path)] = string(payload)
-		return nil
-	})
-	return out, err
+		docs[rel] = string(payload)
+	}
+	return docs, nil
+}
+
+// gitLsFiles 返回仓库里匹配 pattern 的已跟踪文件（相对仓库根）。
+func gitLsFiles(root, pattern string) ([]string, error) {
+	cmd := exec.Command("git", "ls-files", pattern)
+	cmd.Dir = root
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files: %w", err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(output), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out, nil
 }
 
 // relPathForTest 只保留仓库内相对路径，让失败信息简短、也便于按名字判断
@@ -274,5 +288,65 @@ func TestADRCountMatchesDocumentedNumber(t *testing.T) {
 	}
 	if checked != 2 {
 		t.Errorf("只检查了 %d 份 README（应为 2）—— 文档结构可能变了", checked)
+	}
+}
+
+// ADR-0009 的「测试面」表格数字必须与实际测试数一致。
+//
+// 为什么需要：这份表在 2.2.3 审计里刚被"修正"过，但改的当下就写错了
+// （service 写成 269，实际 266；api 写 130，实际 131；合计 776，实际 774）——
+// 靠人肉数文件必然出错，而且下一个提交就会让它再漂一次。
+//
+// 口径与 ADR 自己声明的一致：顶层 `func Test` 函数数（不是 go test -v 的
+// 用例数，后者含子测试，约 1.4 倍）。
+func TestADRTestCountsMatchReality(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+
+	payload, err := os.ReadFile(filepath.Join(repoRoot, "docs", "adr", "0009-go-rewrite-scope-and-gaps.md"))
+	if err != nil {
+		t.Fatalf("读 ADR-0009: %v", err)
+	}
+	body := string(payload)
+
+	// 只解析「重写时 / 2.2.3 审计后」那张表的数据行。
+	rowRe := regexp.MustCompile(`(?m)^\| ` + "`internal/([a-z]+)`" + ` \| (\d+) \| (\d+) \|`)
+	rows := rowRe.FindAllStringSubmatch(body, -1)
+	if len(rows) == 0 {
+		t.Fatal("ADR-0009 里没解析到测试面表格（格式可能变了）")
+	}
+
+	sumAudited := 0
+	for _, m := range rows {
+		pkg, audited := m[1], atoiOrZero(m[3])
+		sumAudited += audited
+
+		dir := filepath.Join(repoRoot, "internal", pkg)
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			t.Errorf("internal/%s 读不到: %v", pkg, readErr)
+			continue
+		}
+		actual := 0
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			content, fileErr := os.ReadFile(filepath.Join(dir, e.Name()))
+			if fileErr != nil {
+				continue
+			}
+			actual += len(regexp.MustCompile(`(?m)^func Test[A-Za-z0-9_]+`).FindAllString(string(content), -1))
+		}
+		if actual != audited {
+			t.Errorf("internal/%s: ADR 写 %d 个测试，实际 %d —— 请更新 ADR-0009 的表格", pkg, audited, actual)
+		}
+	}
+
+	// 合计行也要对。
+	totalRe := regexp.MustCompile(`\*\*合计\*\* \| \*\*\d+\*\* \| \*\*(\d+)\*\*`)
+	if m := totalRe.FindStringSubmatch(body); m != nil {
+		if docTotal := atoiOrZero(m[1]); docTotal != sumAudited {
+			t.Errorf("ADR 合计写 %d，各行相加为 %d", docTotal, sumAudited)
+		}
 	}
 }

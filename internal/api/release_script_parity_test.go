@@ -9,15 +9,21 @@ import (
 	"testing"
 )
 
-// scripts/build-release.sh 的目标矩阵必须与 release.yml 保持一致。
+// scripts/build-release.sh 与 release.yml 必须产出等价的构建命令。
 //
-// 为什么需要：Actions 被暂停时只能用本地脚本构建产物，而这个脚本是
-// release.yml 的**手工复制品**。两者一旦漂移（有人给 CI 加了新平台、
-// 或改了 ldflags，却没同步脚本），本地构建出的产物就与 CI 的不一致 ——
-// 而本地产物正是拿去发布的那份。
+// 为什么需要：Actions 被暂停时只能用本地脚本构建产物，而脚本是 release.yml
+// 的手工复制品。两者一旦漂移，本地构建出的产物就与 CI 不一致 —— 而本地产物
+// 正是拿去发布的那份。
 //
-// 测试比对的是「平台三元组集合」与「是否含版本注入」这两件最要紧的事，
-// 不去逐字比对 YAML 与 shell（那太脆）。
+// **为什么不用 strings.Contains**：这个测试最初是「文件里有没有出现
+// -trimpath / -s -w / BuildVersion」—— 实测三种破坏都能骗过它：
+//  1. 删掉 go build 行的 -trimpath（注释里仍出现该词）→ 通过
+//  2. 删掉整个 -ldflags="$ldflags"                    → 通过
+//  3. 删掉前端构建与暂存整段                            → 通过
+//
+// 那种断言守的是「文本里提到过」，不是「命令里用了」。现在改成**解析出
+// 两侧实际的 go build 命令**再比 flag 集合，并断言脚本里存在前端暂存与
+// index.html 断言（这正是本项目真实踩过的两个坑）。
 func TestReleaseScriptMatchesWorkflow(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 
@@ -29,46 +35,161 @@ func TestReleaseScriptMatchesWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读 build-release.sh: %v", err)
 	}
+	wf, sh := string(workflow), string(script)
 
-	wfTargets := parseWorkflowTargets(string(workflow))
-	shTargets := parseScriptTargets(string(script))
-
-	if len(wfTargets) == 0 {
-		t.Fatal("从 release.yml 没解析出任何目标 —— 解析逻辑可能过时了")
+	// 1) 平台矩阵必须一致。
+	wfTargets := parseWorkflowTargets(wf)
+	shTargets := parseScriptTargets(sh)
+	if len(wfTargets) == 0 || len(shTargets) == 0 {
+		t.Fatalf("解析平台矩阵失败：release.yml=%v script=%v", wfTargets, shTargets)
 	}
-	if len(shTargets) == 0 {
-		t.Fatal("从 build-release.sh 没解析出任何目标 —— 解析逻辑可能过时了")
-	}
-
-	wfSorted := append([]string(nil), wfTargets...)
-	shSorted := append([]string(nil), shTargets...)
-	sort.Strings(wfSorted)
-	sort.Strings(shSorted)
-
-	if strings.Join(wfSorted, ",") != strings.Join(shSorted, ",") {
-		t.Errorf("平台矩阵不一致\n  release.yml:   %v\n  build-release.sh: %v",
-			wfSorted, shSorted)
+	if join(wfTargets) != join(shTargets) {
+		t.Errorf("平台矩阵不一致\n  release.yml:   %v\n  build-release.sh: %v", wfTargets, shTargets)
 	}
 
-	// 两边都必须注入版本号 —— 漏掉它产出的二进制会显示 0.0.0。
-	if !strings.Contains(string(workflow), "internal/config.BuildVersion=") {
-		t.Error("release.yml 缺少 BuildVersion 注入")
+	// 2) 实际 go build 命令的 flag 集合必须一致（不再看注释里出现过什么）。
+	wfFlags := parseGoBuildFlags(wf, "go build")
+	shFlags := parseGoBuildFlags(sh, "go build")
+	if len(wfFlags) == 0 || len(shFlags) == 0 {
+		t.Fatalf("解析 go build flag 失败：release.yml=%v script=%v", wfFlags, shFlags)
 	}
-	if !strings.Contains(string(script), "internal/config.BuildVersion=") {
-		t.Error("build-release.sh 缺少 BuildVersion 注入")
+	if join(wfFlags) != join(shFlags) {
+		t.Errorf("go build flag 不一致\n  release.yml:   %v\n  build-release.sh: %v", wfFlags, shFlags)
 	}
-	// 两边都必须去符号表、去构建机路径。
-	for name, body := range map[string]string{
-		"release.yml":      string(workflow),
-		"build-release.sh": string(script),
-	} {
-		if !strings.Contains(body, "-trimpath") {
-			t.Errorf("%s 缺少 -trimpath", name)
+	for _, must := range []string{"-trimpath", "-ldflags"} {
+		if !contains(shFlags, must) {
+			t.Errorf("build-release.sh 的 go build 缺少 %s（实际 flag: %v）", must, shFlags)
 		}
-		if !strings.Contains(body, "-s -w") {
-			t.Errorf("%s 缺少 -s -w", name)
+		if !contains(wfFlags, must) {
+			t.Errorf("release.yml 的 go build 缺少 %s（实际 flag: %v）", must, wfFlags)
 		}
 	}
+
+	// 3) -ldflags 的值里必须真的含 -s -w 与 BuildVersion 注入。
+	//    只检查 flag 名不够：`-ldflags=""` 也带 -ldflags。
+	for name, body := range map[string]string{"release.yml": wf, "build-release.sh": sh} {
+		ld := parseLdflagsValue(body)
+		if ld == "" {
+			t.Errorf("%s: 没解析到 -ldflags 的值", name)
+			continue
+		}
+		for _, must := range []string{"-s", "-w", "internal/config.BuildVersion="} {
+			if !strings.Contains(ld, must) {
+				t.Errorf("%s: -ldflags 缺少 %s（实际值 %q）", name, must, ld)
+			}
+		}
+	}
+
+	// 4) 产物命名模板必须一致：脚本里必须按 version/os/arch 顺序拼。
+	if !strings.Contains(sh, `chatgpt2api_${version}_${goos}_${goarch}`) {
+		t.Error("build-release.sh 的产物命名不是 chatgpt2api_${version}_${goos}_${goarch}")
+	}
+	if !strings.Contains(wf, `"${BINARY}_${version}_${GOOS}_${GOARCH}"`) {
+		t.Error("release.yml 的产物命名不是 ${BINARY}_${version}_${GOOS}_${GOARCH}")
+	}
+
+	// 5) 脚本必须构建并暂存前端，且有 index.html 断言。
+	//    少了前端会产出访问 / 与 /accounts 全 404 的二进制（真实踩过）。
+	for _, must := range []string{"npm run build", "cp -r web/out/. internal/web/web_dist/", "internal/web/web_dist/index.html"} {
+		if !strings.Contains(sh, must) {
+			t.Errorf("build-release.sh 缺少前端构建/暂存/断言的关键片段 %q", must)
+		}
+	}
+	// 6) 两侧都必须保住被跟踪的 .gitkeep（删掉它会让产物被标记为 dirty）。
+	for name, body := range map[string]string{"release.yml": wf, "build-release.sh": sh} {
+		if !strings.Contains(body, ".gitkeep") {
+			t.Errorf("%s: 没有保住 .gitkeep —— 暂存前端会删掉被跟踪文件，产物会被标记为 dirty", name)
+		}
+	}
+}
+
+// parseGoBuildFlags 从源码里抽出真正执行的那条 go build 命令的 flag 集合。
+//
+// 只看以 `go build` 开头（允许前置空白/环境变量）的行，跳过注释行 ——
+// 这正是旧实现被注释里的 -trimpath 骗过的原因。
+func parseGoBuildFlags(body, prefix string) []string {
+	flagRe := regexp.MustCompile(`(-[a-zA-Z][a-zA-Z-]*)`)
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		idx := strings.Index(trimmed, prefix)
+		if idx < 0 {
+			continue
+		}
+		cmd := trimmed[idx:]
+		// 截到输出参数之前（-o ... 之后的 ./cmd/server 不含 flag）
+		for _, m := range flagRe.FindAllString(cmd, -1) {
+			if strings.HasPrefix(m, "-X") || m == "-" {
+				continue
+			}
+			out = append(out, m)
+		}
+	}
+	sort.Strings(out)
+	return dedupeStrings(out)
+}
+
+// parseLdflagsValue 抽出 -ldflags 的赋值内容（两种写法都支持：
+// -ldflags="$ldflags" 与 -ldflags="-s -w -X ..."）。
+func parseLdflagsValue(body string) string {
+	// 先找直接赋值：-ldflags="..."
+	re := regexp.MustCompile(`-ldflags="([^"]*)"`)
+	var found []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		for _, m := range re.FindAllStringSubmatch(trimmed, -1) {
+			found = append(found, m[1])
+		}
+	}
+	// 间接引用（-ldflags="$ldflags"）时，回到变量定义处取值。
+	var out []string
+	for _, v := range found {
+		if strings.HasPrefix(v, "$") {
+			// 支持 $name 与 ${name} 两种引用形式。
+			varName := strings.TrimPrefix(v, "$")
+			varName = strings.TrimPrefix(varName, "{")
+			varName = strings.TrimSuffix(varName, "}")
+			// 变量定义可能是 `ldflags="..."`（行首）或 `  ldflags="..."`（缩进），
+			// 也可能带 export。用宽松的 \b 边界。
+			varRe := regexp.MustCompile(`(?m)^\s*(?:export\s+)?` + regexp.QuoteMeta(varName) + `="([^"]*)"`)
+			if m := varRe.FindStringSubmatch(body); m != nil {
+				out = append(out, m[1])
+			}
+			continue
+		}
+		out = append(out, v)
+	}
+	return strings.Join(out, " ")
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+func join(list []string) string { return strings.Join(list, ",") }
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 // parseWorkflowTargets 从 release.yml 的 matrix.include 里取 goos/goarch/goarm。

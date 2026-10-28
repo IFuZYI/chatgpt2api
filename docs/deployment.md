@@ -193,6 +193,12 @@ healthcheck:
 
 distroless 镜像里**没有 curl / wget**，所以用二进制自带的 `--healthcheck` 子命令。
 
+> **这是 liveness 探针，不是号池健康探针。** `/health` 只要进程能响应就返回
+> 200；号池全挂时 `docker inspect` 仍报 `healthy`，而
+> `/health?format=json` 的 `healthy` 会是 `false`。这样设计是有意的：号池
+> 全限流时重启容器没有意义，反而打断恢复。要监控号池健康请轮询
+> `/health?format=json`。
+
 ---
 
 ## 方式二：单二进制
@@ -783,7 +789,14 @@ HTML 与 manifest 都变）。
 #### Docker 镜像（发布的一部分）
 
 `docker-publish.yml` 正常会推送多架构镜像到 ghcr.io。Actions 被暂停时
-本地构建同款内容（OCI 归档，含 `linux/amd64` + `linux/arm64`）：
+本地构建**运行时等价**的内容（OCI 归档，含 `linux/amd64` + `linux/arm64`）。
+
+> 本地镜像与 CI 镜像的差别（明确记录，避免误以为完全一致）：
+> - 没有 OCI `labels`（CI 用 `docker/metadata-action` 生成）与 provenance 证明；
+> - 镜像内二进制**没有 `vcs.revision`**（`.dockerignore` 排除了 `.git`），
+>   因此无法从镜像本身追溯到提交。二进制发布物则有。
+>
+> 需要完整可追溯性时用 ghcr.io 上的镜像。
 
 ```bash
 docker buildx build \

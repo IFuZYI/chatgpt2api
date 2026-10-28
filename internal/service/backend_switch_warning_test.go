@@ -1,23 +1,19 @@
 package service
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/IFuZYI/chatgpt2api/internal/config"
 	"github.com/IFuZYI/chatgpt2api/internal/storage"
 )
 
-// 切到非 json 后端且当前池为空、但 data/accounts.json 有数据时，
-// 必须给出警告（而不是静默显示 0 个账号）。
-//
-// 实测场景：310 个账号的 accounts.json 切到 sqlite 后，/api/accounts 返回
-// 0 条，日志里只有一行正常的 "Initializing storage backend: sqlite" ——
-// 用户会以为号池被清空了。
-//
-// 这里只验证「检测逻辑能找到孤儿数据」，不验证 stdout 文案。
-func TestDetectOrphanJSONAccountsOnOtherBackend(t *testing.T) {
+// newWarningFixture 造一个「非 json 后端 + 空库 + data/accounts.json 有账号」的场景。
+func newWarningFixture(t *testing.T, orphanAccounts string) (*AccountService, *bytes.Buffer) {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"),
 		[]byte(`{"auth-key":"k"}`), 0o644); err != nil {
@@ -27,17 +23,15 @@ func TestDetectOrphanJSONAccountsOnOtherBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 在 data/ 下放一份有账号的 accounts.json
-	accountsPath := filepath.Join(cfg.DataDir(), "accounts.json")
-	if err := os.MkdirAll(filepath.Dir(accountsPath), 0o755); err != nil {
-		t.Fatal(err)
+	if orphanAccounts != "" {
+		accountsPath := filepath.Join(cfg.DataDir(), "accounts.json")
+		if err := os.MkdirAll(filepath.Dir(accountsPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(accountsPath, []byte(orphanAccounts), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(accountsPath,
-		[]byte(`[{"access_token":"at-1"},{"access_token":"at-2"}]`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// 用 sqlite 后端（空库）
 	backend, err := storage.NewDBBackend("sqlite:///" + filepath.Join(cfg.DataDir(), "accounts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -46,28 +40,42 @@ func TestDetectOrphanJSONAccountsOnOtherBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	buf := &bytes.Buffer{}
 	svc := NewAccountService(backend, cfg, logs)
-	if len(svc.ListAccounts()) != 0 {
-		t.Fatal("sqlite 后端应该是空的")
-	}
-
-	// 检测逻辑必须能读出那份孤儿数据
-	payload, readErr := os.ReadFile(accountsPath)
-	if readErr != nil {
-		t.Fatalf("读孤儿数据失败: %v", readErr)
-	}
-	if len(payload) == 0 {
-		t.Fatal("孤儿数据为空")
-	}
-	// 调用不应 panic（stdout 输出由人工核对）
-	svc.warnIfSwitchedBackendHasOrphanData()
+	svc.warnOut = buf
+	return svc, buf
 }
 
-// json 后端时不该警告（它读的就是那个文件，空就是真空）。
-func TestNoWarningForJSONBackend(t *testing.T) {
+// 非 json 后端 + 空池 + data/accounts.json 有账号 → 必须告警，且内容要点齐全。
+//
+// 回归点：早期这个测试只调用函数、不断言输出（注释写「stdout 由人工核对」），
+// 所以它连「告警根本没打印」都发现不了。
+func TestOrphanAccountsTriggersWarning(t *testing.T) {
+	svc, buf := newWarningFixture(t, `[{"access_token":"at-1"},{"access_token":"at-2"},{"access_token":"at-3"}]`)
+
+	svc.warnIfSwitchedBackendHasOrphanData()
+
+	got := buf.String()
+	if got == "" {
+		t.Fatal("检测到孤儿账号但没有输出任何告警")
+	}
+	for _, must := range []string{
+		"WARNING",
+		"accounts.json",
+		"3 个账号",              // 条数要对
+		"不会自动迁移数据",           // 说明原因
+		"POST /api/accounts", // 给出迁移方式
+	} {
+		if !strings.Contains(got, must) {
+			t.Errorf("告警缺少关键信息 %q\n实际输出:\n%s", must, got)
+		}
+	}
+}
+
+// 池子非空时不该告警（否则每次正常启动都刷警告）。
+func TestNoWarningWhenPoolNotEmpty(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "config.json"),
-		[]byte(`{"auth-key":"k"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"auth-key":"k"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := config.NewStore(dir)
@@ -84,7 +92,46 @@ func TestNoWarningForJSONBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	buf := &bytes.Buffer{}
 	svc := NewAccountService(backend, cfg, logs)
-	// 不应 panic，也不应有输出（这里只验证不 panic）
+	svc.warnOut = buf
+	svc.AddAccountItems([]map[string]any{
+		{"access_token": "at-x", "type": "free", "status": StatusNormal, "quota": 1},
+	}, nil)
+	buf.Reset() // 忽略 AddAccountItems 期间的输出
+
 	svc.warnIfSwitchedBackendHasOrphanData()
+	if buf.String() != "" {
+		t.Errorf("池子非空却打了告警:\n%s", buf.String())
+	}
+}
+
+// json 后端不告警：它读的就是那个文件，空就是真空。
+func TestNoWarningForJSONBackend(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"auth-key":"k"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := storage.NewJSONBackend(
+		filepath.Join(cfg.DataDir(), "accounts.json"),
+		filepath.Join(cfg.DataDir(), "auth_keys.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, err := NewLogService(filepath.Join(cfg.DataDir(), "logs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := &bytes.Buffer{}
+	svc := NewAccountService(backend, cfg, logs)
+	svc.warnOut = buf
+
+	svc.warnIfSwitchedBackendHasOrphanData()
+	if buf.String() != "" {
+		t.Errorf("json 后端不该告警（它读的就是那个文件）:\n%s", buf.String())
+	}
 }

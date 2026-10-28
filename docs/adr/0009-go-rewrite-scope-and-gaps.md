@@ -78,14 +78,14 @@ ADR-0003 的 golden 也以 Python 行为准。详见 `docs/archive-python-backen
 | 包 | 重写时 | 2.2.3 审计后 | 覆盖内容 |
 |:--|--:|--:|:--|
 | `internal/protocol` | 225 | 230 | SSE、缓存、token 计费、Anthropic、图片轮询/池、mask 合成 |
-| `internal/service` | 153 | 269 | 备份加密双向 OpenSSL 兼容、R2 SigV4、WebDAV、OAuth PKCE、密码登录/重登、标签并发、账号生命周期 |
-| `internal/api` | 90 | 130 | golden 用例、路由对齐、流式错误、n 校验、任务格式、文档一致性 |
+| `internal/service` | 153 | 267 | 备份加密双向 OpenSSL 兼容、R2 SigV4、WebDAV、OAuth PKCE、密码登录/重登、标签并发、账号生命周期 |
+| `internal/api` | 90 | 132 | golden 用例、路由对齐、流式错误、n 校验、任务格式、文档一致性 |
 | `internal/upstream` | 65 | 72 | PoW 跨语言 golden、sentinel fnv1a golden、TOTP RFC 向量 |
-| `internal/config` | 11 | 49 | 归一化、默认值、cookie 保留、保留期单位迁移 |
+| `internal/config` | 11 | 50 | 归一化、默认值、cookie 保留、保留期单位迁移 |
 | `internal/storage` | 8 | 17 | json/sqlite 后端契约、git 后端、目录 fsync |
 | `internal/web` | 5 | 5 | embed、SPA fallback、路径穿越防护 |
 | `internal/health` | 4 | 4 | 探针 |
-| **合计** | **561** | **776** | |
+| **合计** | **561** | **777** | |
 
 语句覆盖率（`go test -cover ./internal/...`，同样是快照）：
 

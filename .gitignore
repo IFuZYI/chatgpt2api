@@ -19,6 +19,9 @@ internal/web/web_dist/*
 !internal/web/web_dist/.gitkeep
 build/
 dist/
+# build-release.sh 的默认输出目录。必须忽略，否则第二次默认运行会被脚本
+# 自己的「脏工作区」检查拒掉（产物目录本身就是未跟踪文件）。
+dist-release/
 wheels/
 *.egg-info
 

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -97,6 +98,9 @@ type AccountService struct {
 	// 两次 TOTP，几乎是主动邀请上游判定为异常会话。
 	reloginMu  sync.Mutex
 	relogining map[string]bool
+
+	// warnOut 是告警输出目标；nil 时写 stderr。测试用来断言告警内容。
+	warnOut io.Writer
 
 	// textCandidateBuf 复用文本链路的候选切片。
 	//
@@ -1269,6 +1273,14 @@ func (s *AccountService) bumpVersionLocked() {
 	s.version.Add(1)
 }
 
+// warnWriter 返回告警输出目标（测试可替换）。
+func (s *AccountService) warnWriter() io.Writer {
+	if s.warnOut != nil {
+		return s.warnOut
+	}
+	return os.Stderr
+}
+
 // warnIfSwitchedBackendHasOrphanData 在「当前后端是空池、但 data/ 里还躺着
 // 另一份非空账号文件」时给出明确警告。
 //
@@ -1296,7 +1308,10 @@ func (s *AccountService) warnIfSwitchedBackendHasOrphanData() {
 	if json.Unmarshal(payload, &items) != nil || len(items) == 0 {
 		return
 	}
-	fmt.Printf("[storage] WARNING: 当前后端为空，但 %s 里有 %d 个账号。\n", path, len(items))
-	fmt.Printf("[storage] WARNING: 切换 STORAGE_BACKEND 不会自动迁移数据 —— 号池看起来是空的，旧数据仍在那个文件里。\n")
-	fmt.Printf("[storage] WARNING: 迁移方式见 docs/deployment.md 的「存储后端」一节（用 POST /api/accounts 导入）。\n")
+	// 输出到 stderr：这是告警而不是普通日志，且要能在 `docker logs` 里
+	// 与正常启动行区分开。用包级 writer 便于测试断言。
+	out := s.warnWriter()
+	fmt.Fprintf(out, "[storage] WARNING: 当前后端为空，但 %s 里有 %d 个账号。\n", path, len(items))
+	fmt.Fprintf(out, "[storage] WARNING: 切换 STORAGE_BACKEND 不会自动迁移数据 —— 号池看起来是空的，旧数据仍在那个文件里。\n")
+	fmt.Fprintf(out, "[storage] WARNING: 迁移方式见 docs/deployment.md 的「存储后端」一节（用 POST /api/accounts 导入）。\n")
 }

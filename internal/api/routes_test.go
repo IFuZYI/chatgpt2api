@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/IFuZYI/chatgpt2api/internal/api"
@@ -209,8 +211,10 @@ func joinLines(items []string) string {
 // DELETE c）」。这个数字在加 /api/metrics 之后就过时了（79 → 80），
 // 而没有任何测试会发现 —— 文档漂移是静默的。
 //
-// 改路由时如果这条测试失败，请同步更新 README.md 与 README.en.md
-// 的「管理面 / Admin surface」章节。
+// **必须真的读 README**：这个测试最初把期望值写成 Go 常量（wantTotal = 80），
+// 于是它只在守「代码和自己一致」—— 实测把 README 改成 79 之后测试仍然通过，
+// 完全没有起到守护文档的作用。现在解析两版 README 的数字，任何一侧缺失或
+// 与路由不一致都失败。
 func TestRouteCountMatchesDocumentedNumber(t *testing.T) {
 	deps := newTestDeps(t)
 	router := newTestRouter(t, deps)
@@ -228,16 +232,42 @@ func TestRouteCountMatchesDocumentedNumber(t *testing.T) {
 	}
 	total := get + post + del
 
-	// README 声明的数字（两版必须一致）。
-	const (
-		wantTotal = 80
-		wantGet   = 32
-		wantPost  = 43
-		wantDel   = 5
-	)
-	if total != wantTotal || get != wantGet || post != wantPost || del != wantDel {
-		t.Errorf("路由数 = %d (GET %d / POST %d / DELETE %d)，README 声明 %d (GET %d / POST %d / DELETE %d)\n"+
-			"请同步更新 README.md 与 README.en.md 的「管理面」章节",
-			total, get, post, del, wantTotal, wantGet, wantPost, wantDel)
+	repoRoot := filepath.Join("..", "..")
+	// 中文：共 **80 条路由**（GET 32 / POST 43 / DELETE 5）
+	zhRe := regexp.MustCompile(`共\s*\*\*(\d+) 条路由\*\*（GET (\d+) / POST (\d+) / DELETE (\d+)）`)
+	// 英文：**80 routes** total (GET 32 / POST 43 / DELETE 5)
+	enRe := regexp.MustCompile(`\*\*(\d+) routes\*\* total \(GET (\d+) / POST (\d+) / DELETE (\d+)\)`)
+
+	for _, tc := range []struct {
+		file string
+		re   *regexp.Regexp
+	}{
+		{"README.md", zhRe},
+		{"README.en.md", enRe},
+	} {
+		payload, err := os.ReadFile(filepath.Join(repoRoot, tc.file))
+		if err != nil {
+			t.Fatalf("读 %s: %v", tc.file, err)
+		}
+		m := tc.re.FindStringSubmatch(string(payload))
+		if m == nil {
+			t.Errorf("%s: 找不到路由数量声明（正则可能过时了）", tc.file)
+			continue
+		}
+		docTotal := atoiOrZero(m[1])
+		docGet, docPost, docDel := atoiOrZero(m[2]), atoiOrZero(m[3]), atoiOrZero(m[4])
+		if docTotal != total || docGet != get || docPost != post || docDel != del {
+			t.Errorf("%s 声明 %d 条路由 (GET %d / POST %d / DELETE %d)，实际 %d (GET %d / POST %d / DELETE %d)",
+				tc.file, docTotal, docGet, docPost, docDel, total, get, post, del)
+		}
 	}
+}
+
+// atoiOrZero 把数字字符串转 int，失败返回 0（测试里 0 必然不匹配，会报错）。
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
 }

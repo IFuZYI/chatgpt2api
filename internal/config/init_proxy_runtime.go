@@ -122,11 +122,30 @@ func InitProxyRuntime(configPath string) (bool, error) {
 	return changed, nil
 }
 
-// initProxyRuntimeConfigPath 复刻 Python 的 os.getenv(name, default)：
-// 变量存在但为空时保持空字符串，不存在才用 /app/config.json。
+// initProxyRuntimeConfigPath 决定 --init-proxy-config 读写哪个 config.json。
+//
+// 优先级（与主程序的 base-dir 解析保持一致，见 ResolveBaseDir）：
+//
+//	CHATGPT2API_CONFIG_FILE（显式指定，容器里 init-config 用它）
+//	> CHATGPT2API_BASE_DIR/config.json
+//	> ResolveBaseDir()/config.json（exe 旁或 cwd）
+//	> /app/config.json（容器默认）
+//
+// 早期实现只认第一个环境变量、否则硬编码 /app/config.json，于是：
+//   - 设了 CHATGPT2API_BASE_DIR 也不生效（与主程序行为不一致）；
+//   - 变量存在但为空时得到空路径，报错是
+//     `write config : open : no such file or directory` —— 完全不指向
+//     该设哪个变量；
+//   - 在非容器环境里静默往 /app 写（或写失败）。
 func initProxyRuntimeConfigPath() string {
-	if path, ok := os.LookupEnv("CHATGPT2API_CONFIG_FILE"); ok {
+	if path := strings.TrimSpace(os.Getenv("CHATGPT2API_CONFIG_FILE")); path != "" {
 		return path
+	}
+	if dir := strings.TrimSpace(os.Getenv("CHATGPT2API_BASE_DIR")); dir != "" {
+		return filepath.Join(dir, "config.json")
+	}
+	if dir := strings.TrimSpace(ResolveBaseDir()); dir != "" {
+		return filepath.Join(dir, "config.json")
 	}
 	return initProxyConfigDefaultPath
 }
