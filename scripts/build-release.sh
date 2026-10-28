@@ -74,9 +74,24 @@ if [ ! -d web/node_modules ]; then
 fi
 ( cd web && npm run build )
 
+# 保留 .gitkeep：它是**被跟踪**的占位文件（空目录无法 embed），
+# 直接 rm -rf 会让工作区变脏 —— 于是脚本第二次运行会被自己的
+# 「脏工作区」检查拦下，而且产出的字节与标准流程不同
+#（.gitkeep 参与 embed，实测会改变二进制校验和）。
+keep_gitkeep=""
+if [ -f internal/web/web_dist/.gitkeep ]; then
+  keep_gitkeep="$(mktemp)"
+  cp internal/web/web_dist/.gitkeep "$keep_gitkeep"
+fi
+
 rm -rf internal/web/web_dist
 mkdir -p internal/web/web_dist
 cp -r web/out/. internal/web/web_dist/
+
+if [ -n "$keep_gitkeep" ]; then
+  cp "$keep_gitkeep" internal/web/web_dist/.gitkeep
+  rm -f "$keep_gitkeep"
+fi
 
 # 断言真的暂存进去了。这一步是防「npm run build 静默产出空目录」之类，
 # 比等到用户发现 404 再排查便宜得多。
