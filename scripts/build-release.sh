@@ -93,6 +93,14 @@ if [ -n "$keep_gitkeep" ]; then
   rm -f "$keep_gitkeep"
 fi
 
+# 暂存之后工作区必须仍然干净 —— 否则 Go 会把 vcs.modified=true 编进
+# 产物（.gitkeep 就是这样一个坑：删掉它工作区就脏了）。
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  echo "暂存前端后工作区变脏，产物会被标记为 dirty：" >&2
+  git status --short >&2
+  exit 1
+fi
+
 # 断言真的暂存进去了。这一步是防「npm run build 静默产出空目录」之类，
 # 比等到用户发现 404 再排查便宜得多。
 if [ ! -s internal/web/web_dist/index.html ]; then

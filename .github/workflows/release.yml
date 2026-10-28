@@ -73,9 +73,36 @@ jobs:
 
       - name: Stage frontend into embed dir
         run: |
+          # .gitkeep 是**被跟踪**的占位文件（空目录无法 //go:embed），
+          # 直接 rm -rf 会让工作区变脏 —— 而 Go 会把 VCS 状态编进二进制：
+          # 实测 v2.2.3 首次发布的产物就是 `vcs.modified=true` + 模块版本
+          # `+dirty`，用户看到会怀疑它不对应任何提交。
+          # 先备份再放回，工作区保持干净，产物记录真实的 vcs.revision。
+          keep="$(mktemp)"
+          if [ -f internal/web/web_dist/.gitkeep ]; then
+            cp internal/web/web_dist/.gitkeep "$keep"
+          fi
           rm -rf internal/web/web_dist
           mkdir -p internal/web/web_dist
           cp -r web/out/. internal/web/web_dist/
+          cp "$keep" internal/web/web_dist/.gitkeep
+          rm -f "$keep"
+
+          # 断言真的暂存进去了：少了这步会产出访问 / 与 /accounts 全 404
+          # 的二进制（本地脚本踩过同样的坑）。
+          test -s internal/web/web_dist/index.html || {
+            echo "前端暂存失败：index.html 不存在或为空" >&2
+            exit 1
+          }
+
+      - name: Verify tree is clean before building
+        run: |
+          # 工作区必须干净，否则 Go 会写入 vcs.modified=true。
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "工作区在构建前不干净，产物会被标记为 dirty：" >&2
+            git status --short >&2
+            exit 1
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
