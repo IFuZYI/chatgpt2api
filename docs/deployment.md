@@ -741,7 +741,7 @@ R2 是**备份**用的（见下节），不是图片热存储。图片热存储�
 ## 发布流程（维护者）
 
 > 本仓库是 [`basketikun/chatgpt2api`](https://github.com/basketikun/chatgpt2api)
-> 的 fork，版本号独立演进（上游最新 v1.7.0，本 fork 已到 v2.2.3）。
+> 的 fork，版本号独立演进（上游最新 v1.7.0，本 fork 已到 v2.2.4）。
 
 打 tag 会触发 `.github/workflows/release.yml`（跨平台二进制 + GitHub Release）
 与 `docker-publish.yml`（多架构镜像）。
@@ -813,9 +813,9 @@ HTML 与 manifest 都变）。
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   --target runtime \
-  --output type=oci,dest=chatgpt2api-2.2.3-image-amd64+arm64.oci.tar \
+  --output type=oci,dest=chatgpt2api-2.2.4-image-amd64+arm64.oci.tar \
   --provenance=false \
-  -t ghcr.io/<owner>/chatgpt2api:2.2.3 -t ghcr.io/<owner>/chatgpt2api:v2.2.3 .
+  -t ghcr.io/<owner>/chatgpt2api:2.2.4 -t ghcr.io/<owner>/chatgpt2api:v2.2.4 .
 ```
 
 不需要 QEMU：Dockerfile 的构建阶段都在 `$BUILDPLATFORM` 上，靠
@@ -824,17 +824,17 @@ docker buildx build \
 加载或推送：
 
 ```bash
-docker load -i chatgpt2api-2.2.3-image-amd64+arm64.oci.tar
+docker load -i chatgpt2api-2.2.4-image-amd64+arm64.oci.tar
 # 或推到自己的 registry：
-#   crane push chatgpt2api-2.2.3-image-amd64+arm64.oci.tar <ref>
+#   crane push chatgpt2api-2.2.4-image-amd64+arm64.oci.tar <ref>
 ```
 
-镜像内的前端 build ID 是 `2.2.3-nogit`：Docker 构建上下文里没有 `.git`
+镜像内的前端 build ID 是 `2.2.4-nogit`：Docker 构建上下文里没有 `.git`
 （`.dockerignore` 排除了），`generateBuildId` 退化为「版本-nogit」——
 仍是确定的，且随版本变化。
 
 产物就绪后上传到对应 tag 的 GitHub Release
-（正文模板见 [`release-notes-2.2.3.md`](./release-notes-2.2.3.md)）。
+（正文模板见 [`release-notes-2.2.4.md`](./release-notes-2.2.4.md)）。
 
 ## 升级与回滚
 

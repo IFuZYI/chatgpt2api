@@ -8,7 +8,7 @@
 | OpenAI 兼容 `POST /v1/images/edits` | ✅  | 已支持，可上传图片进行编辑。 |
 | 面向图片工作流的 `POST /v1/chat/completions` | ✅ | 图片请求（图片模型或 `modalities` 含 `image`）走生图链路，结果转成 markdown 图片 + annotations；网页搜索请求（`web_search_options` 或 search 模型前缀）走搜索链路并附 `url_citation`。 |
 | 面向图片工作流的 `POST /v1/responses` | ✅ | 请求含 `tools:[{"type":"image_generation"}]` 时走生图链路，输出 Responses 格式事件。 |
-| `GET /v1/models` 接口 | ✅  | 动态聚合：文本模型来自上游 `/backend-api/models`（当前为 `auto`、`gpt-5-6`、`gpt-5-6-mini`、`gpt-6`、`gpt-6-mini`、`research` 等），图片模型为内置表（`gpt-image-2`、`gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`）。具体列表随号池变化。 |
+| `GET /v1/models` 接口 | ✅  | 动态聚合：文本模型来自上游 `/backend-api/models`（随上游与号池变化），图片模型为内置表（`gpt-image-2`、`gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2.6`、`gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`）。具体列表随号池变化。 |
 | 同时生成多张图片 | ✅  | 已支持，后端与前端都可进行多图生成。 |
 | 图片并行生成 | ✅  | 多张图片使用独立线程和账号同时生成，可通过 `image_parallel_generation` 配置关闭。 |
 | 图片生成进度追踪 | ✅  | 任务显示当前步骤（上传/预热/获取token/生成中等），支持耗时统计。 |
@@ -62,7 +62,7 @@
 | 远程图片 URL 拉取 | ⚠️ | 返回 400（data URL 与 multipart 可用）。 |
 | 匿名对话链路 | ❌ | 上游限制，非实现问题（见 `docs/adr/0008`）。 |
 
-## 图片模型清单（2026-10 实测）
+## 图片模型清单（2026-11 更新）
 
 上游 `/backend-api/models` **不返回**图片模型（该端点只暴露文本模型），
 所以图片模型无法自动发现，只能实测确认后写死在代码里
@@ -74,10 +74,15 @@
 | `gpt-image-2.5` | ✅ | 模型名直接作为上游 slug 透传 |
 | `gpt-image-2.5-flare` | ✅ | 同上 |
 | `gpt-image-2.5-sunburst` | ✅ | 同上 |
+| `gpt-image-2.6` | ✅ | ChatGPT Images 2.6；模型名直接作为上游 slug 透传 |
+| `gpt-image-2.6-flare` | ✅ | 同上 |
+| `gpt-image-2.6-sunburst` | ✅ | 同上 |
 | `codex-gpt-image-2` | ⚠️ | Codex 链路专用，带套餐前缀别名；响应格式待真实上游验证（ADR-0010） |
 
 2.5 系列三个变体在同 prompt 下产出字节数各不相同（839KB / 853KB / 943KB，
-均 1254×1254），确认是不同模型而非别名。
+均 1254×1254），确认是不同模型而非别名。2.6 系列于 2026-11 发布：
+ChatGPT 侧为 Images 2.6，API 侧提供 `gpt-image-2.6-flare` /
+`gpt-image-2.6-sunburst` 两个变体；三个模型均已实测出图成功。
 
 **新增模型时必须实测出图再收录**：只把名字加进列表不会让它工作，
 还要确认 `_image_model_settings` 的映射分支是否覆盖（`gpt-image-2` 走配置，

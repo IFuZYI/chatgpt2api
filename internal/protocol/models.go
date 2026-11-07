@@ -11,6 +11,7 @@ const CodexImageModel = "codex-gpt-image-2"
 // 图片模型清单。2026-10 实测：上游除 gpt-image-2 外还有 2.5 系列的三个变体，
 // 三者产出字节数各不相同（839KB / 853KB / 943KB，同 prompt 1254x1254），
 // 确认是不同模型而非别名，因此全部列入。
+// 2026-11 上游新增 2.6 系列（ChatGPT Images 2.6，API 侧为 Flare / Sunburst）。
 //
 // 注意：这些 slug 不在 /backend-api/models 的返回里（该端点只暴露文本模型），
 // 无法通过接口自动发现，只能实测确认后写死。新增模型时同样要实测出图再收录。
@@ -19,6 +20,9 @@ var baseImageModels = map[string]bool{
 	"gpt-image-2.5":          true,
 	"gpt-image-2.5-flare":    true,
 	"gpt-image-2.5-sunburst": true,
+	"gpt-image-2.6":          true,
+	"gpt-image-2.6-flare":    true,
+	"gpt-image-2.6-sunburst": true,
 	"codex-gpt-image-2":      true,
 }
 

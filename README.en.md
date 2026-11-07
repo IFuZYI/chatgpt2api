@@ -381,13 +381,12 @@ environment:
 
 ### Models
 
-`GET /v1/models` returns 15 models, varying with pool capability:
+`GET /v1/models` returns the text models currently visible upstream plus 7 built-in image models;
+the text list varies with upstream and the account pool and is not enumerated here.
 
-- **Text** (11): `auto`, `gpt-5-3-mini`, `gpt-5-6`, `gpt-5-6-mini`,
-  `gpt-5-6-t-mini`, `gpt-5-6-t-mini-mini`, `gpt-6`, `gpt-6-mini`,
-  `gpt-6-t-mini`, `gpt-6-t-mini-mini`, `research`
-- **Image** (4): `gpt-image-2`, `gpt-image-2.5`, `gpt-image-2.5-flare`,
-  `gpt-image-2.5-sunburst`
+- **Image** (7): `gpt-image-2`, `gpt-image-2.5`, `gpt-image-2.5-flare`,
+  `gpt-image-2.5-sunburst`, `gpt-image-2.6`, `gpt-image-2.6-flare`,
+  `gpt-image-2.6-sunburst`
 
 Text models are fetched at runtime from upstream `/backend-api/models`
 (TTL 300s, invalidated on pool change), so new text models need no code change.

@@ -374,13 +374,12 @@ environment:
 
 ### 模型
 
-`GET /v1/models` 返回 15 个模型，随号池能力变化：
+`GET /v1/models` 返回上游当前可见的文本模型，以及 7 个内置图片模型；
+文本列表随上游与号池变化，不在文档中穷举。
 
-- **文本**（11）：`auto`、`gpt-5-3-mini`、`gpt-5-6`、`gpt-5-6-mini`、
-  `gpt-5-6-t-mini`、`gpt-5-6-t-mini-mini`、`gpt-6`、`gpt-6-mini`、
-  `gpt-6-t-mini`、`gpt-6-t-mini-mini`、`research`
-- **图片**（4）：`gpt-image-2`、`gpt-image-2.5`、`gpt-image-2.5-flare`、
-  `gpt-image-2.5-sunburst`
+- **图片**（7）：`gpt-image-2`、`gpt-image-2.5`、`gpt-image-2.5-flare`、
+  `gpt-image-2.5-sunburst`、`gpt-image-2.6`、`gpt-image-2.6-flare`、
+  `gpt-image-2.6-sunburst`
 
 文本模型从上游 `/backend-api/models` 运行时拉取（TTL 300s，账号变更即失效），
 新增文本模型不需要改代码。图片模型是内置表。

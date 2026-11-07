@@ -67,6 +67,18 @@ func TestListModelsWebOnly(t *testing.T) {
 	if !ids["gpt-image-2"] {
 		t.Error("web account should expose gpt-image-2")
 	}
+	for _, model := range []string{
+		"gpt-image-2.5",
+		"gpt-image-2.5-flare",
+		"gpt-image-2.5-sunburst",
+		"gpt-image-2.6",
+		"gpt-image-2.6-flare",
+		"gpt-image-2.6-sunburst",
+	} {
+		if !ids[model] {
+			t.Errorf("web account should expose %s", model)
+		}
+	}
 	if ids["codex-gpt-image-2"] {
 		t.Error("web Plus account must not expose codex-gpt-image-2")
 	}

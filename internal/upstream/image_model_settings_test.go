@@ -35,6 +35,21 @@ func TestImageModelSettingsGPTImage2UsesDefault(t *testing.T) {
 	}
 }
 
+// 2.6 系列同样必须把模型名原样透传给上游，不能被 defaultUpstream 吃掉。
+func TestImageModelSettings26SeriesPassThrough(t *testing.T) {
+	c := &Client{}
+	for _, model := range []string{
+		"gpt-image-2.6",
+		"gpt-image-2.6-flare",
+		"gpt-image-2.6-sunburst",
+	} {
+		upstream, _ := c.imageModelSettings(model, "gpt-5-6", "auto")
+		if upstream != model {
+			t.Errorf("%q -> upstream %q, want pass-through %q", model, upstream, model)
+		}
+	}
+}
+
 // 未收录的模型名必须返回 auto（不透传）。
 func TestImageModelSettingsUnknownModel(t *testing.T) {
 	c := &Client{}
